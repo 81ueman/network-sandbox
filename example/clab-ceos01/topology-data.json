@@ -1,0 +1,101 @@
+{
+  "name": "ceos01",
+  "type": "clab",
+  "clab": {
+    "config": {
+      "prefix": "clab",
+      "mgmt": {
+        "network": "clab",
+        "bridge": "br-a0975e828313",
+        "ipv4-subnet": "172.20.20.0/24",
+        "ipv4-gw": "172.20.20.1",
+        "ipv6-subnet": "3fff:172:20:20::/64",
+        "ipv6-gw": "3fff:172:20:20::1",
+        "external-access": true
+      }
+    }
+  },
+  "ssh-pub-keys": ["ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBG6LVu5cK19+s3ns+yRTZiLZjsMql+7DNKYzMz29BzRzNSvv+wS2Q5BtVraO1Y0KgmH1o/N3VdKaGP/eMPWmPWw="],
+  "nodes": {
+    "ceos1": {
+      "index": "0",
+      "shortname": "ceos1",
+      "longname": "clab-ceos01-ceos1",
+      "fqdn": "ceos1.ceos01.io",
+      "group": "",
+      "labdir": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/clab-ceos01/ceos1",
+      "kind": "arista_ceos",
+      "image": "ceos:latest",
+      "mgmt-net": "",
+      "mgmt-intf": "Management0",
+      "mgmt-ipv4-address": "172.20.20.2",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::2",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "00:1c:73:27:61:32",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-a0975e828313",
+        "clab-node-group": "",
+        "clab-node-kind": "arista_ceos",
+        "clab-node-lab-dir": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/clab-ceos01/ceos1",
+        "clab-node-longname": "clab-ceos01-ceos1",
+        "clab-node-name": "ceos1",
+        "clab-node-type": "",
+        "clab-owner": "vscode",
+        "clab-topo-file": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/example.clab.yml",
+        "containerlab": "ceos01"
+      },
+      "port-bindings": [
+      ]
+    },
+    "ceos2": {
+      "index": "1",
+      "shortname": "ceos2",
+      "longname": "clab-ceos01-ceos2",
+      "fqdn": "ceos2.ceos01.io",
+      "group": "",
+      "labdir": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/clab-ceos01/ceos2",
+      "kind": "arista_ceos",
+      "image": "ceos:latest",
+      "mgmt-net": "",
+      "mgmt-intf": "Management0",
+      "mgmt-ipv4-address": "172.20.20.3",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::3",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "00:1c:73:df:66:2c",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-a0975e828313",
+        "clab-node-group": "",
+        "clab-node-kind": "arista_ceos",
+        "clab-node-lab-dir": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/clab-ceos01/ceos2",
+        "clab-node-longname": "clab-ceos01-ceos2",
+        "clab-node-name": "ceos2",
+        "clab-node-type": "",
+        "clab-owner": "vscode",
+        "clab-topo-file": "/Users/81ueman/ghq/github.com/81ueman/network-sandbox/example/example.clab.yml",
+        "containerlab": "ceos01"
+      },
+      "port-bindings": [
+      ]
+    }
+  },
+  "links": [
+    {
+      "endpoints": {
+        "a": {
+          "node": "ceos1",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:98:04:f5",
+          "peer": "z"
+        },
+        "z": {
+          "node": "ceos2",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:ee:60:f8",
+          "peer": "a"
+        }
+      }
+    }
+  ]
+}

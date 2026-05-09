@@ -1,0 +1,19 @@
+# topology documentation: http://containerlab.dev/lab-examples/single-srl/
+name: ceos01
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+
+  nodes:
+    ceos1:
+      kind: arista_ceos
+      startup-config: configs/ceos1.cfg
+
+    ceos2:
+      kind: arista_ceos
+      startup-config: configs/ceos2.cfg
+
+  links:
+    - endpoints: ["ceos1:eth1", "ceos2:eth1"]
