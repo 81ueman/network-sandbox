@@ -1,5 +1,5 @@
 {
-    "image": "ghcr.io/srl-labs/containerlab/devcontainer-dood-slim:0.75.0", 
+    "image": "ghcr.io/srl-labs/containerlab/devcontainer-dood-slim:0.75.0",
     "runArgs": [
         "--network=host",
         "--pid=host",
@@ -8,8 +8,15 @@
     "mounts": [
         "type=bind,src=/run/docker/netns,dst=/run/docker/netns",
         "type=bind,src=/var/lib/docker,dst=/var/lib/docker",
-        "type=bind,src=/lib/modules,dst=/lib/modules"
+        "type=bind,src=/lib/modules,dst=/lib/modules",
+        "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
     ],
     "workspaceFolder": "${localWorkspaceFolder}",
-    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind"
+    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "lts"
+        }
+    },
+    "postCreateCommand": "bash .devcontainer/postCreate.sh"
 }
