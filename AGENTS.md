@@ -7,6 +7,10 @@
 - Some commands can exit successfully without printing useful output when run
   without a TTY. If a command should produce output but returns an empty result,
   retry with `-it` before assuming the command failed or produced no data.
+- Run SR Linux `sr_cli` show commands serially, not in parallel. Parallel
+  `sr_cli` sessions can contend for CLI/candidate state and return errors such
+  as "There is a commit already in progress for this candidate" even when the
+  requested show command is read-only.
 
 Example:
 
