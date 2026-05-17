@@ -1,0 +1,6 @@
+**/clab-*/
+**/.containerlab/
+**/*.clab.y*ml.bak
+**/.*.clab.y*ml.bak
+srl-telemetry-lab/
+tools/yang/srlinux-yang-models/

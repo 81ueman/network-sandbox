@@ -1,0 +1,62 @@
+# OSPF lab with Nokia SR Linux routers and Linux clients.
+name: ospf
+prefix: ""
+
+mgmt:
+  network: ospf
+  ipv4-subnet: 172.81.81.0/24
+
+topology:
+  defaults:
+    kind: nokia_srlinux
+
+  kinds:
+    nokia_srlinux:
+      image: ghcr.io/nokia/srlinux:25.10
+      type: ixr-d2l
+    linux:
+      image: ghcr.io/srl-labs/network-multitool
+
+  nodes:
+    r1:
+      startup-config: configs/fabric/r1.cfg
+      mgmt-ipv4: 172.81.81.11
+      group: router
+    r2:
+      startup-config: configs/fabric/r2.cfg
+      mgmt-ipv4: 172.81.81.12
+      group: router
+    r3:
+      startup-config: configs/fabric/r3.cfg
+      mgmt-ipv4: 172.81.81.13
+      group: router
+
+    client1:
+      kind: linux
+      mgmt-ipv4: 172.81.81.21
+      exec:
+        - ip address add 172.16.1.10/24 dev eth1
+        - ip route replace default via 172.16.1.1
+      group: client
+    client2:
+      kind: linux
+      mgmt-ipv4: 172.81.81.22
+      exec:
+        - ip address add 172.16.2.10/24 dev eth1
+        - ip route replace default via 172.16.2.1
+      group: client
+    client3:
+      kind: linux
+      mgmt-ipv4: 172.81.81.23
+      exec:
+        - ip address add 172.16.3.10/24 dev eth1
+        - ip route replace default via 172.16.3.1
+      group: client
+
+  links:
+    - endpoints: [ "r1:e1-1", "r2:e1-1" ]
+    - endpoints: [ "r2:e1-2", "r3:e1-1" ]
+    - endpoints: [ "r3:e1-2", "r1:e1-2" ]
+    - endpoints: [ "r1:e1-3", "client1:eth1" ]
+    - endpoints: [ "r2:e1-3", "client2:eth1" ]
+    - endpoints: [ "r3:e1-3", "client3:eth1" ]
