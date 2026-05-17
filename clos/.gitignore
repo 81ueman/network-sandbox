@@ -1,0 +1,6 @@
+clab-*/
+.containerlab/
+*.key
+*.log
+*.clab.y*ml.bak
+.*.clab.y*ml.bak

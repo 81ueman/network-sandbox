@@ -1,0 +1,148 @@
+# Multi-DC IP CLOS lab with Nokia SR Linux fabric switches and FRR edge/client routers.
+name: clos
+prefix: ""
+
+mgmt:
+  network: clos
+  ipv4-subnet: 172.82.82.0/24
+
+topology:
+  defaults:
+    kind: nokia_srlinux
+
+  kinds:
+    nokia_srlinux:
+      image: ghcr.io/nokia/srlinux:25.10
+      type: ixr-d2l
+    linux:
+      image: quay.io/frrouting/frr:10.6.1
+
+  nodes:
+    dc1-external:
+      kind: linux
+      mgmt-ipv4: 172.82.82.11
+      binds:
+        - configs/dc1-external/daemons:/etc/frr/daemons:ro
+        - configs/dc1-external/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: external
+    dc1-spine1:
+      startup-config: configs/fabric/dc1-spine1.cfg
+      mgmt-ipv4: 172.82.82.21
+      group: spine
+    dc1-leaf1:
+      startup-config: configs/fabric/dc1-leaf1.cfg
+      mgmt-ipv4: 172.82.82.31
+      group: leaf
+    dc1-leaf2:
+      startup-config: configs/fabric/dc1-leaf2.cfg
+      mgmt-ipv4: 172.82.82.32
+      group: leaf
+    dc1-client1:
+      kind: linux
+      mgmt-ipv4: 172.82.82.41
+      binds:
+        - configs/dc1-client1/daemons:/etc/frr/daemons:ro
+        - configs/dc1-client1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+    dc1-client2:
+      kind: linux
+      mgmt-ipv4: 172.82.82.42
+      binds:
+        - configs/dc1-client2/daemons:/etc/frr/daemons:ro
+        - configs/dc1-client2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+    dc2-external:
+      kind: linux
+      mgmt-ipv4: 172.82.82.12
+      binds:
+        - configs/dc2-external/daemons:/etc/frr/daemons:ro
+        - configs/dc2-external/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: external
+    dc2-spine1:
+      startup-config: configs/fabric/dc2-spine1.cfg
+      mgmt-ipv4: 172.82.82.22
+      group: spine
+    dc2-leaf1:
+      startup-config: configs/fabric/dc2-leaf1.cfg
+      mgmt-ipv4: 172.82.82.33
+      group: leaf
+    dc2-leaf2:
+      startup-config: configs/fabric/dc2-leaf2.cfg
+      mgmt-ipv4: 172.82.82.34
+      group: leaf
+    dc2-client1:
+      kind: linux
+      mgmt-ipv4: 172.82.82.43
+      binds:
+        - configs/dc2-client1/daemons:/etc/frr/daemons:ro
+        - configs/dc2-client1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+    dc2-client2:
+      kind: linux
+      mgmt-ipv4: 172.82.82.44
+      binds:
+        - configs/dc2-client2/daemons:/etc/frr/daemons:ro
+        - configs/dc2-client2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+    dc3-external:
+      kind: linux
+      mgmt-ipv4: 172.82.82.13
+      binds:
+        - configs/dc3-external/daemons:/etc/frr/daemons:ro
+        - configs/dc3-external/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: external
+    dc3-spine1:
+      startup-config: configs/fabric/dc3-spine1.cfg
+      mgmt-ipv4: 172.82.82.23
+      group: spine
+    dc3-leaf1:
+      startup-config: configs/fabric/dc3-leaf1.cfg
+      mgmt-ipv4: 172.82.82.35
+      group: leaf
+    dc3-leaf2:
+      startup-config: configs/fabric/dc3-leaf2.cfg
+      mgmt-ipv4: 172.82.82.36
+      group: leaf
+    dc3-client1:
+      kind: linux
+      mgmt-ipv4: 172.82.82.45
+      binds:
+        - configs/dc3-client1/daemons:/etc/frr/daemons:ro
+        - configs/dc3-client1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+    dc3-client2:
+      kind: linux
+      mgmt-ipv4: 172.82.82.46
+      binds:
+        - configs/dc3-client2/daemons:/etc/frr/daemons:ro
+        - configs/dc3-client2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: client
+
+  links:
+    - endpoints: [ "dc1-external:eth1", "dc1-spine1:e1-48" ]
+    - endpoints: [ "dc1-spine1:e1-1", "dc1-leaf1:e1-49" ]
+    - endpoints: [ "dc1-spine1:e1-2", "dc1-leaf2:e1-49" ]
+    - endpoints: [ "dc1-leaf1:e1-1", "dc1-client1:eth1" ]
+    - endpoints: [ "dc1-leaf2:e1-1", "dc1-client2:eth1" ]
+    - endpoints: [ "dc2-external:eth1", "dc2-spine1:e1-48" ]
+    - endpoints: [ "dc2-spine1:e1-1", "dc2-leaf1:e1-49" ]
+    - endpoints: [ "dc2-spine1:e1-2", "dc2-leaf2:e1-49" ]
+    - endpoints: [ "dc2-leaf1:e1-1", "dc2-client1:eth1" ]
+    - endpoints: [ "dc2-leaf2:e1-1", "dc2-client2:eth1" ]
+    - endpoints: [ "dc3-external:eth1", "dc3-spine1:e1-48" ]
+    - endpoints: [ "dc3-spine1:e1-1", "dc3-leaf1:e1-49" ]
+    - endpoints: [ "dc3-spine1:e1-2", "dc3-leaf2:e1-49" ]
+    - endpoints: [ "dc3-leaf1:e1-1", "dc3-client1:eth1" ]
+    - endpoints: [ "dc3-leaf2:e1-1", "dc3-client2:eth1" ]
+    - endpoints: [ "dc1-external:eth2", "dc2-external:eth2" ]
+    - endpoints: [ "dc2-external:eth3", "dc3-external:eth2" ]
+    - endpoints: [ "dc3-external:eth3", "dc1-external:eth3" ]
