@@ -1,0 +1,4 @@
+interface:
+  display_name: "Packet Capture"
+  short_description: "Capture packets with tcpdump and Wireshark"
+  default_prompt: "Use $packet-capture to inspect packets in a containerized network lab."

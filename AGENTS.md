@@ -1,5 +1,16 @@
 # Agent Notes
 
+## Repository Overview
+
+- This repository is a collection of network sandbox labs built with
+  containerlab.
+- Each top-level lab directory contains a containerlab topology and related
+  configuration files for that lab. Treat each directory as a separate lab
+  workspace unless the user explicitly asks for cross-lab changes.
+- When working inside a lab directory, inspect its `*.clab.yml` topology file,
+  local `README.md`, scripts, and `configs/` before making assumptions about
+  node names, links, addressing, or routing behavior.
+
 ## docker exec
 
 - Use `docker exec -it` when running interactive network OS CLIs or commands
@@ -17,29 +28,3 @@ Example:
 ```bash
 docker exec -it <container> <cli-command>
 ```
-
-## YANG Models and gNMI Paths
-
-- Do not rely on memory when building gNMI paths. Use the device's matching
-  YANG model version to discover paths, key names, config/state status, and
-  value types.
-- For `gnmic`, use `--file` to specify the main YANG module you want to inspect
-  and `--dir` to provide directories containing imported dependency modules.
-- After loading the YANG files, use `gnmic path` to generate candidate gNMI
-  paths. Add `--config-only` for writable config leaves and `--types` to show
-  leaf value types.
-
-Example:
-
-```bash
-gnmic \
-  --file <path-to-main-model.yang> \
-  --dir <path-to-vendor-model-dir> \
-  --dir <path-to-ietf-model-dir> \
-  --dir <path-to-iana-model-dir> \
-  path --config-only --types
-```
-
-- Generated paths often contain wildcard keys such as `[name=*]`. Replace those
-  wildcards with real key values before using the path with `gnmic get` or
-  `gnmic set`.

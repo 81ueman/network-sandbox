@@ -1,0 +1,4 @@
+interface:
+  display_name: "gNMI YANG"
+  short_description: "Discover YANG paths and use gnmic get/set"
+  default_prompt: "Use $gnmi-yang to discover the correct YANG-backed gNMI path and run gnmic get or set."
