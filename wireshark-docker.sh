@@ -47,6 +47,23 @@ if ! docker inspect "$container" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! docker exec "$container" sh -lc 'command -v tcpdump >/dev/null 2>&1'; then
+  echo "tcpdump not found in container: $container" >&2
+  echo "Trying to install tcpdump in the container..." >&2
+  if ! docker exec "$container" sh -lc '
+    if command -v apk >/dev/null 2>&1; then
+      apk add --no-cache tcpdump
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update && apt-get install -y tcpdump
+    else
+      exit 127
+    fi
+  ' >&2; then
+    echo "failed to install tcpdump in container: $container" >&2
+    exit 1
+  fi
+fi
+
 echo "Starting live capture: container=$container interface=$interface filter=${*:-<none>}" >&2
 echo "Press Ctrl-C in this terminal to stop the capture." >&2
 

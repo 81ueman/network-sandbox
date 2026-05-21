@@ -1,0 +1,121 @@
+# FRR based SRv6 VPN lab with intent based transport selection.
+name: srv6-vpn-frr
+prefix: ""
+
+mgmt:
+  network: srv6-vpn-frr
+  ipv4-subnet: 172.83.83.0/24
+
+topology:
+  defaults:
+    kind: linux
+
+  kinds:
+    linux:
+      image: quay.io/frrouting/frr:10.6.1
+
+  nodes:
+    pe1:
+      mgmt-ipv4: 172.83.83.11
+      binds:
+        - configs/frr/pe1/daemons:/etc/frr/daemons:ro
+        - configs/frr/pe1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: pe
+    p1:
+      mgmt-ipv4: 172.83.83.12
+      binds:
+        - configs/frr/p1/daemons:/etc/frr/daemons:ro
+        - configs/frr/p1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: p
+    p2:
+      mgmt-ipv4: 172.83.83.13
+      binds:
+        - configs/frr/p2/daemons:/etc/frr/daemons:ro
+        - configs/frr/p2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: p
+    p3:
+      mgmt-ipv4: 172.83.83.14
+      binds:
+        - configs/frr/p3/daemons:/etc/frr/daemons:ro
+        - configs/frr/p3/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: p
+    p4:
+      mgmt-ipv4: 172.83.83.15
+      binds:
+        - configs/frr/p4/daemons:/etc/frr/daemons:ro
+        - configs/frr/p4/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: p
+    pe2:
+      mgmt-ipv4: 172.83.83.16
+      binds:
+        - configs/frr/pe2/daemons:/etc/frr/daemons:ro
+        - configs/frr/pe2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: pe
+
+    a1:
+      mgmt-ipv4: 172.83.83.21
+      binds:
+        - configs/frr/a1/daemons:/etc/frr/daemons:ro
+        - configs/frr/a1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      exec:
+        - ip address add 10.10.1.10/24 dev eth1
+        - ip route replace default via 10.10.1.1
+      group: customer-a
+    a2:
+      mgmt-ipv4: 172.83.83.22
+      binds:
+        - configs/frr/a2/daemons:/etc/frr/daemons:ro
+        - configs/frr/a2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      exec:
+        - ip address add 10.10.2.10/24 dev eth1
+        - ip route replace default via 10.10.2.1
+      group: customer-a
+    b1:
+      mgmt-ipv4: 172.83.83.23
+      binds:
+        - configs/frr/b1/daemons:/etc/frr/daemons:ro
+        - configs/frr/b1/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      exec:
+        - ip address add 10.20.1.10/24 dev eth1
+        - ip route replace default via 10.20.1.1
+      group: customer-b
+    b2:
+      mgmt-ipv4: 172.83.83.24
+      binds:
+        - configs/frr/b2/daemons:/etc/frr/daemons:ro
+        - configs/frr/b2/frr.conf:/etc/frr/frr.conf:ro
+        - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+      exec:
+        - ip address add 10.20.2.10/24 dev eth1
+        - ip route replace default via 10.20.2.1
+      group: customer-b
+
+  links:
+    # Low-delay path for customer A.
+    - endpoints: [ "pe1:eth1", "p1:eth1" ]
+    - endpoints: [ "p1:eth2", "p2:eth1" ]
+    - endpoints: [ "p2:eth2", "pe2:eth1" ]
+
+    # High-bandwidth path for customer B.
+    - endpoints: [ "pe1:eth2", "p3:eth1" ]
+    - endpoints: [ "p3:eth2", "p4:eth1" ]
+    - endpoints: [ "p4:eth2", "pe2:eth2" ]
+
+    # Cross-links provide alternate paths for dynamic recomputation.
+    - endpoints: [ "p1:eth3", "p4:eth3" ]
+    - endpoints: [ "p3:eth3", "p2:eth3" ]
+
+    # Customer attachments.
+    - endpoints: [ "pe1:eth3", "a1:eth1" ]
+    - endpoints: [ "pe2:eth3", "a2:eth1" ]
+    - endpoints: [ "pe1:eth4", "b1:eth1" ]
+    - endpoints: [ "pe2:eth4", "b2:eth1" ]
