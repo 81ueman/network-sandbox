@@ -1,0 +1,13 @@
+[project]
+name = "batfish-firewall-lab"
+version = "0.1.0"
+description = "Containerlab and Batfish firewall validation lab"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0.0",
+    "pybatfish==2025.7.7.2423",
+    "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+collect-snapshot = "collect_snapshot:main"

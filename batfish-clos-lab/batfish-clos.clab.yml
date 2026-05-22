@@ -1,0 +1,60 @@
+name: batfish-clos
+prefix: ""
+
+mgmt:
+  network: batfish-clos
+  ipv4-subnet: 172.85.85.0/24
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+    linux:
+      image: quay.io/frrouting/frr:10.6.1
+
+  nodes:
+    spine1:
+      kind: arista_ceos
+      mgmt-ipv4: 172.85.85.11
+      startup-config: configs/ceos/spine1.cfg
+      group: spine
+    spine2:
+      kind: arista_ceos
+      mgmt-ipv4: 172.85.85.12
+      startup-config: configs/ceos/spine2.cfg
+      group: spine
+    leaf1:
+      kind: arista_ceos
+      mgmt-ipv4: 172.85.85.21
+      startup-config: configs/ceos/leaf1.cfg
+      group: leaf
+    leaf2:
+      kind: arista_ceos
+      mgmt-ipv4: 172.85.85.22
+      startup-config: configs/ceos/leaf2.cfg
+      group: leaf
+    client1:
+      kind: linux
+      mgmt-ipv4: 172.85.85.31
+      binds:
+        - configs/frr/daemons:/etc/frr/daemons:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - configs/frr/client1.conf:/etc/frr/frr.conf:ro
+      group: client
+    client2:
+      kind: linux
+      mgmt-ipv4: 172.85.85.32
+      binds:
+        - configs/frr/daemons:/etc/frr/daemons:ro
+        - configs/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - configs/frr/client2.conf:/etc/frr/frr.conf:ro
+      group: client
+
+  links:
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+    - endpoints: ["leaf1:eth3", "client1:eth1"]
+    - endpoints: ["leaf2:eth3", "client2:eth1"]
+

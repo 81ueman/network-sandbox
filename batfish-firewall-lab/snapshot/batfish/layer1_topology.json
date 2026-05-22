@@ -1,0 +1,28 @@
+{
+  "edges": [
+    {
+      "node1": "client",
+      "interface1": "eth1",
+      "node2": "r1",
+      "interface2": "Ethernet1"
+    },
+    {
+      "node1": "r1",
+      "interface1": "Ethernet2",
+      "node2": "fw",
+      "interface2": "eth1"
+    },
+    {
+      "node1": "fw",
+      "interface1": "eth2",
+      "node2": "r2",
+      "interface2": "Ethernet1"
+    },
+    {
+      "node1": "r2",
+      "interface1": "Ethernet2",
+      "node2": "server",
+      "interface2": "eth1"
+    }
+  ]
+}

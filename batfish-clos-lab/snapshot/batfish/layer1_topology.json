@@ -1,0 +1,40 @@
+{
+  "edges": [
+    {
+      "node1": "spine1",
+      "interface1": "Ethernet1",
+      "node2": "leaf1",
+      "interface2": "Ethernet1"
+    },
+    {
+      "node1": "spine1",
+      "interface1": "Ethernet2",
+      "node2": "leaf2",
+      "interface2": "Ethernet1"
+    },
+    {
+      "node1": "spine2",
+      "interface1": "Ethernet1",
+      "node2": "leaf1",
+      "interface2": "Ethernet2"
+    },
+    {
+      "node1": "spine2",
+      "interface1": "Ethernet2",
+      "node2": "leaf2",
+      "interface2": "Ethernet2"
+    },
+    {
+      "node1": "leaf1",
+      "interface1": "Ethernet3",
+      "node2": "client1",
+      "interface2": "eth1"
+    },
+    {
+      "node1": "leaf2",
+      "interface1": "Ethernet3",
+      "node2": "client2",
+      "interface2": "eth1"
+    }
+  ]
+}

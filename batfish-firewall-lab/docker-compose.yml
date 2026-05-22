@@ -1,0 +1,13 @@
+services:
+  batfish:
+    image: batfish/allinone:latest
+    container_name: batfish-firewall-lab
+    ports:
+      - "8888:8888"
+      - "9996:9996"
+    volumes:
+      - batfish-data:/data
+
+volumes:
+  batfish-data:
+

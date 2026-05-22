@@ -1,0 +1,70 @@
+name: batfish-firewall
+prefix: ""
+
+mgmt:
+  network: batfish-firewall
+  ipv4-subnet: 172.84.84.0/24
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+    linux:
+      image: quay.io/frrouting/frr:10.6.1
+
+  nodes:
+    client:
+      kind: linux
+      mgmt-ipv4: 172.84.84.11
+      binds:
+        - live/frr/daemons:/etc/frr/daemons:ro
+        - live/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - live/frr/client.conf:/etc/frr/frr.conf:ro
+      group: host
+
+    r1:
+      kind: arista_ceos
+      mgmt-ipv4: 172.84.84.12
+      startup-config: snapshot/configs/r1.cfg
+      group: router
+
+    fw:
+      kind: linux
+      image: nicolaka/netshoot:latest
+      mgmt-ipv4: 172.84.84.13
+      exec:
+        - ip address add 10.0.12.2/30 dev eth1
+        - ip address add 10.0.23.1/30 dev eth2
+        - ip link set eth1 up
+        - ip link set eth2 up
+        - sysctl -w net.ipv4.ip_forward=1
+        - ip route replace 10.10.10.0/24 via 10.0.12.1
+        - ip route replace 10.20.20.0/24 via 10.0.23.2
+        - iptables -P FORWARD DROP
+        - iptables -F FORWARD
+        - iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+        - iptables -A FORWARD -s 10.10.10.10/32 -d 10.20.20.10/32 -p tcp --dport 80 -j ACCEPT
+        - iptables -A FORWARD -s 10.10.10.10/32 -d 10.20.20.10/32 -p tcp --dport 22 -j DROP
+        - iptables -A FORWARD -s 10.10.10.0/24 -d 10.20.20.0/24 -p icmp -j ACCEPT
+      group: firewall
+
+    r2:
+      kind: arista_ceos
+      mgmt-ipv4: 172.84.84.14
+      startup-config: snapshot/configs/r2.cfg
+      group: router
+
+    server:
+      kind: linux
+      mgmt-ipv4: 172.84.84.15
+      binds:
+        - live/frr/daemons:/etc/frr/daemons:ro
+        - live/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - live/frr/server.conf:/etc/frr/frr.conf:ro
+      group: host
+
+  links:
+    - endpoints: ["client:eth1", "r1:eth1"]
+    - endpoints: ["r1:eth2", "fw:eth1"]
+    - endpoints: ["fw:eth2", "r2:eth1"]
+    - endpoints: ["r2:eth2", "server:eth1"]

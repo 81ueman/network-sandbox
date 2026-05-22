@@ -1,0 +1,10 @@
+{
+  "hostname": "fw-policy",
+  "iptablesFile": "iptables/fw.iptables",
+  "hostInterfaces": {
+    "eth1": {
+      "name": "eth1",
+      "prefix": "192.0.2.254/32"
+    }
+  }
+}
