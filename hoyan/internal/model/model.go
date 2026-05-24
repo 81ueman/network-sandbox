@@ -1,0 +1,210 @@
+package model
+
+import (
+	"fmt"
+	"net/netip"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Topology struct {
+	Name             string   `yaml:"name"`
+	ManagementSubnet string   `yaml:"management_subnet"`
+	Nodes            []Node   `yaml:"nodes"`
+	Links            []Link   `yaml:"links"`
+	Policies         []Policy `yaml:"policies"`
+}
+
+type Node struct {
+	Name       string        `yaml:"name"`
+	Kind       string        `yaml:"kind"`
+	Role       string        `yaml:"role"`
+	ASN        uint32        `yaml:"asn"`
+	MgmtIPv4   string        `yaml:"mgmt_ipv4"`
+	Loopback   string        `yaml:"loopback"`
+	ConfigPath string        `yaml:"config_path"`
+	Prefixes   []string      `yaml:"prefixes"`
+	Interfaces []Interface   `yaml:"interfaces"`
+	Neighbors  []BGPNeighbor `yaml:"neighbors"`
+}
+
+type Link struct {
+	Name   string `yaml:"name"`
+	A      string `yaml:"a"`
+	B      string `yaml:"b"`
+	Cost   int    `yaml:"cost"`
+	Subnet string `yaml:"subnet"`
+	AIntf  string `yaml:"a_intf"`
+	BIntf  string `yaml:"b_intf"`
+}
+
+type Interface struct {
+	Name    string `yaml:"name"`
+	Address string `yaml:"address"`
+}
+
+type BGPNeighbor struct {
+	Address     string `yaml:"address"`
+	RemoteAS    uint32 `yaml:"remote_as"`
+	Activated   bool   `yaml:"activated"`
+	NextHopSelf bool   `yaml:"next_hop_self"`
+	PeerNode    string `yaml:"peer_node"`
+}
+
+type Policy struct {
+	Name      string `yaml:"name"`
+	Node      string `yaml:"node"`
+	Plane     string `yaml:"plane"`
+	Stage     string `yaml:"stage"`
+	Peer      string `yaml:"peer"`
+	Action    string `yaml:"action"`
+	Protocol  string `yaml:"protocol"`
+	DstPrefix string `yaml:"dst_prefix"`
+}
+
+type Queries struct {
+	RouteChecks   []RouteCheck   `yaml:"route_checks"`
+	PacketChecks  []PacketCheck  `yaml:"packet_checks"`
+	FailureChecks []FailureCheck `yaml:"failure_checks"`
+}
+
+type RouteCheck struct {
+	Name        string `yaml:"name"`
+	From        string `yaml:"from"`
+	Prefix      string `yaml:"prefix"`
+	MaxFailures int    `yaml:"max_failures"`
+}
+
+type PacketCheck struct {
+	Name            string `yaml:"name"`
+	From            string `yaml:"from"`
+	To              string `yaml:"to"`
+	Protocol        string `yaml:"protocol"`
+	ExpectReachable *bool  `yaml:"expect_reachable"`
+	MaxFailures     int    `yaml:"max_failures"`
+}
+
+type FailureCheck struct {
+	Name            string `yaml:"name"`
+	From            string `yaml:"from"`
+	To              string `yaml:"to"`
+	Prefix          string `yaml:"prefix"`
+	Protocol        string `yaml:"protocol"`
+	ExpectReachable *bool  `yaml:"expect_reachable"`
+	MaxFailures     int    `yaml:"max_failures"`
+}
+
+func LoadQueries(path string) (*Queries, error) {
+	var queries Queries
+	if err := loadYAML(path, &queries); err != nil {
+		return nil, err
+	}
+	return &queries, nil
+}
+
+func loadYAML(path string, dst any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := yaml.Unmarshal(data, dst); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func (t *Topology) Validate() error {
+	seen := map[string]bool{}
+	for _, n := range t.Nodes {
+		if n.Name == "" {
+			return fmt.Errorf("node name is required")
+		}
+		if seen[n.Name] {
+			return fmt.Errorf("duplicate node %q", n.Name)
+		}
+		seen[n.Name] = true
+		for _, p := range append([]string{}, n.Prefixes...) {
+			if _, err := netip.ParsePrefix(p); err != nil {
+				return fmt.Errorf("node %s prefix %s: %w", n.Name, p, err)
+			}
+		}
+		if n.Loopback != "" {
+			if _, err := netip.ParsePrefix(n.Loopback); err != nil {
+				return fmt.Errorf("node %s loopback %s: %w", n.Name, n.Loopback, err)
+			}
+		}
+	}
+	for _, l := range t.Links {
+		if l.Name == "" || l.A == "" || l.B == "" {
+			return fmt.Errorf("link must have name, a, and b")
+		}
+		if !seen[l.A] || !seen[l.B] {
+			return fmt.Errorf("link %s references unknown node %s-%s", l.Name, l.A, l.B)
+		}
+		if l.Cost <= 0 {
+			return fmt.Errorf("link %s cost must be positive", l.Name)
+		}
+		if _, err := netip.ParsePrefix(l.Subnet); err != nil {
+			return fmt.Errorf("link %s subnet %s: %w", l.Name, l.Subnet, err)
+		}
+	}
+	for _, p := range t.Policies {
+		if !seen[p.Node] {
+			return fmt.Errorf("policy %s references unknown node %s", p.Name, p.Node)
+		}
+		if p.DstPrefix != "" {
+			if _, err := netip.ParsePrefix(p.DstPrefix); err != nil {
+				return fmt.Errorf("policy %s dst prefix %s: %w", p.Name, p.DstPrefix, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (t *Topology) Node(name string) (Node, bool) {
+	for _, n := range t.Nodes {
+		if n.Name == name {
+			return n, true
+		}
+	}
+	return Node{}, false
+}
+
+func (t *Topology) OriginForPrefix(prefix string) (string, bool) {
+	want, err := netip.ParsePrefix(prefix)
+	if err != nil {
+		return "", false
+	}
+	for _, n := range t.Nodes {
+		for _, raw := range n.Prefixes {
+			got, err := netip.ParsePrefix(raw)
+			if err == nil && got == want {
+				return n.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (t *Topology) OriginForIP(addr string) (string, netip.Prefix, bool) {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return "", netip.Prefix{}, false
+	}
+	var bestNode string
+	var bestPrefix netip.Prefix
+	for _, n := range t.Nodes {
+		for _, raw := range n.Prefixes {
+			pfx, err := netip.ParsePrefix(raw)
+			if err != nil || !pfx.Contains(ip) {
+				continue
+			}
+			if bestNode == "" || pfx.Bits() > bestPrefix.Bits() {
+				bestNode = n.Name
+				bestPrefix = pfx
+			}
+		}
+	}
+	return bestNode, bestPrefix, bestNode != ""
+}

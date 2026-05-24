@@ -1,0 +1,33 @@
+route_checks:
+  - name: bj-to-hz-aggregate
+    from: bj-edge1
+    prefix: 10.4.0.0/16
+    max_failures: 1
+  - name: gz-to-sh-customer
+    from: cust-gz
+    prefix: 10.2.1.10/32
+    max_failures: 1
+packet_checks:
+  - name: bj-client-to-hz-client-icmp
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: icmp
+    max_failures: 1
+  - name: bj-client-to-hz-http-denied
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: tcp
+    expect_reachable: false
+    max_failures: 0
+failure_checks:
+  - name: bj-client-gz-has-one-core-failure-counterexample
+    from: cust-bj
+    to: 10.3.1.10
+    protocol: icmp
+    expect_reachable: false
+    max_failures: 1
+  - name: hz-aggregate-survives-two-failures
+    from: bj-edge1
+    prefix: 10.4.0.0/16
+    expect_reachable: false
+    max_failures: 2
