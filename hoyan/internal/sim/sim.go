@@ -365,7 +365,16 @@ func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int
 }
 
 func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts FailureSearchOptions) ([]solver.FailureElement, bool) {
+	if opts.MaxFailures < 0 {
+		return nil, false
+	}
+	if !opts.IncludeLinks && !opts.IncludeNodes {
+		return nil, false
+	}
 	elements := g.failureSearchElements(opts)
+	if len(elements) == 0 {
+		return nil, false
+	}
 	var forbidden [][]solver.FailureElement
 	for k := 0; k <= opts.MaxFailures; k++ {
 		findElementCombo(elements, k, 0, nil, func(combo []solver.FailureElement) bool {

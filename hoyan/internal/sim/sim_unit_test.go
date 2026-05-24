@@ -612,29 +612,96 @@ func TestFindBreakingFailuresWithOptionsFindsOneNodeCut(t *testing.T) {
 	}
 }
 
-func TestFindBreakingFailuresWithOptionsMixedElements(t *testing.T) {
+func TestFindBreakingFailuresWithOptionsRejectsInvalidOptions(t *testing.T) {
 	g := NewGraph(&model.Topology{
 		Nodes: []model.Node{
-			{Name: "cust-a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
-			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{
-				{PeerNode: "cust-a", RemoteAS: 65001, Activated: true},
-				{PeerNode: "cust-dst", RemoteAS: 65003, Activated: true},
-			}},
-			{Name: "cust-dst", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{{PeerNode: "a", RemoteAS: 65001, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"}},
+	})
+
+	if cut, ok := g.FindBreakingFailuresWithOptions("a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{MaxFailures: 1}); ok || cut != nil {
+		t.Fatalf("empty search options = %v %v, want nil false", cut, ok)
+	}
+	if cut, ok := g.FindBreakingFailuresWithOptions("a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{
+		IncludeLinks: true,
+		MaxFailures:  -1,
+	}); ok || cut != nil {
+		t.Fatalf("negative MaxFailures = %v %v, want nil false", cut, ok)
+	}
+}
+
+func TestFailureSearchElementsRespectsOptionsAndEligibility(t *testing.T) {
+	g := testGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "a"},
+			{Name: "cust-a"},
+			{Name: "b"},
 		},
 		Links: []model.Link{
-			{Name: "cust-a-b", A: "cust-a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
-			{Name: "b-cust-dst", A: "b", B: "cust-dst", Cost: 1, Subnet: "192.0.2.2/31"},
+			{Name: "a-b", A: "a", B: "b"},
+			{Name: "cust-a-b", A: "cust-a", B: "b"},
 		},
 	})
 
-	cut, ok := g.FindBreakingFailuresWithOptions("cust-a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{
+	assertKinds := func(name string, opts FailureSearchOptions, want []solver.FailureElement) {
+		t.Helper()
+		if got := g.failureSearchElements(opts); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s elements = %#v, want %#v", name, got, want)
+		}
+	}
+
+	assertKinds("link-only", FailureSearchOptions{IncludeLinks: true}, []solver.FailureElement{
+		{Kind: solver.FailureLink, Name: "a-b"},
+	})
+	assertKinds("node-only", FailureSearchOptions{IncludeNodes: true}, []solver.FailureElement{
+		{Kind: solver.FailureNode, Name: "a"},
+		{Kind: solver.FailureNode, Name: "b"},
+	})
+	assertKinds("mixed", FailureSearchOptions{IncludeLinks: true, IncludeNodes: true}, []solver.FailureElement{
+		{Kind: solver.FailureLink, Name: "a-b"},
+		{Kind: solver.FailureNode, Name: "a"},
+		{Kind: solver.FailureNode, Name: "b"},
+	})
+}
+
+func TestFindBreakingFailuresWithOptionsMixedElements(t *testing.T) {
+	g := NewGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{
+				{PeerNode: "a", RemoteAS: 65001, Activated: true},
+				{PeerNode: "d", RemoteAS: 65003, Activated: true},
+			}},
+			{Name: "d", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{
+			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
+			{Name: "b-d", A: "b", B: "d", Cost: 1, Subnet: "192.0.2.2/31"},
+		},
+	})
+
+	elements := g.failureSearchElements(FailureSearchOptions{IncludeLinks: true, IncludeNodes: true})
+	var hasLink, hasNode bool
+	for _, element := range elements {
+		hasLink = hasLink || element.Kind == solver.FailureLink
+		hasNode = hasNode || element.Kind == solver.FailureNode
+	}
+	if !hasLink || !hasNode {
+		t.Fatalf("mixed elements = %#v, want both link and node candidates", elements)
+	}
+
+	cut, ok := g.FindBreakingFailuresWithOptions("a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{
 		IncludeLinks: true,
 		IncludeNodes: true,
 		MaxFailures:  1,
 	})
-	if !ok || len(cut) != 1 || cut[0].Kind != solver.FailureNode || cut[0].Name != "b" {
-		t.Fatalf("FindBreakingFailuresWithOptions() = %v %v, want mixed search to find node:b", cut, ok)
+	if !ok || len(cut) != 1 {
+		t.Fatalf("FindBreakingFailuresWithOptions() = %v %v, want one mixed candidate", cut, ok)
+	}
+	if _, reachable := g.RouteReachable("a", "10.0.0.0/24", FailureSetFromElements(cut)); reachable {
+		t.Fatalf("returned failure should make target unreachable: %v", cut)
 	}
 }
 
