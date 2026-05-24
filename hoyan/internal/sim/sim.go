@@ -353,6 +353,7 @@ func (g *Graph) parentRoute(route RIBEntry) (RIBEntry, bool) {
 func (g *Graph) walkBGP(route RIBEntry) {
 	current := route.Nodes[len(route.Nodes)-1]
 	curNode, _ := g.topo.Node(current)
+	curBehavior := behaviorFor(curNode.Kind)
 	for _, e := range g.adj[current] {
 		next := e.to
 		session, ok := g.bgpSession(current, next)
@@ -362,45 +363,37 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if containsString(route.Nodes, next) {
 			continue
 		}
-		if !behaviorFor(curNode.Kind).CheckControlEgress(curNode, ControlMessage{From: current, To: next, Prefix: route.Prefix, Route: route}, g.topo.Policies) {
-			continue
-		}
 		nextNode, _ := g.topo.Node(next)
-		exportedASPath := append([]uint32(nil), route.ASPath...)
-		if curNode.ASN != nextNode.ASN {
-			exportedASPath = prependASN(curNode.ASN, exportedASPath)
-		}
-		if containsASN(exportedASPath, nextNode.ASN) {
+		nextBehavior := behaviorFor(nextNode.Kind)
+		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix, Route: route}
+		if !curBehavior.CheckControlEgress(curNode, exportMsg, g.topo.Policies) {
 			continue
 		}
-		if !behaviorFor(nextNode.Kind).CheckControlIngress(nextNode, ControlMessage{From: current, To: next, Prefix: route.Prefix, Route: route}, g.topo.Policies) {
+		exported := curBehavior.ExportRoute(curNode, nextNode, session, route)
+		if !exported.Accept {
 			continue
 		}
-		nextLinks := append(append([]string(nil), route.Links...), e.link.Name)
-		nextNodes := append(append([]string(nil), route.Nodes...), next)
-		nextCond := And(route.Condition, Var(e.link.Name))
-		isIBGP := curNode.ASN == nextNode.ASN
-		if isIBGP && route.LearnedIBGP {
+		importMsg := ControlMessage{From: current, To: next, Prefix: exported.Route.Prefix, Route: exported.Route}
+		if !nextBehavior.CheckControlIngress(nextNode, importMsg, g.topo.Policies) {
 			continue
 		}
-		nextHop := route.NextHop
-		if !isIBGP || session.NextHopSelf || nextHop == "" {
-			nextHop = current
+		imported := nextBehavior.ImportRoute(nextNode, curNode, session, exported.Route)
+		if !imported.Accept {
+			continue
 		}
-		entry := RIBEntry{
-			Prefix:      route.Prefix,
-			Origin:      route.Origin,
-			From:        current,
-			NextHop:     nextHop,
-			Nodes:       nextNodes,
-			Links:       nextLinks,
-			ASPath:      exportedASPath,
-			LocalPref:   g.localPref(next, route.Prefix),
-			LearnedIBGP: isIBGP,
-			BaseCond:    nextCond,
-			Condition:   nextCond,
-		}
-		g.addRIB(next, route.Prefix, entry)
+		nextLinks := append(append([]string(nil), imported.Route.Links...), e.link.Name)
+		nextNodes := append(append([]string(nil), imported.Route.Nodes...), next)
+		nextCond := And(imported.Route.Condition, Var(e.link.Name))
+
+		entry := imported.Route
+		entry.From = current
+		entry.Nodes = nextNodes
+		entry.Links = nextLinks
+		entry.BaseCond = nextCond
+		entry.Condition = nextCond
+		entry.LocalPref = g.localPref(next, entry.Prefix)
+
+		g.addRIB(next, entry.Prefix, entry)
 		g.walkBGP(entry)
 	}
 }

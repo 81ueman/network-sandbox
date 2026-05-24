@@ -51,6 +51,7 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []ExpectedRoute 
 
 func expected(topo *model.Topology, allowed map[string]bool) []ExpectedRoute {
 	g := sim.NewGraph(topo)
+	decision := sim.DefaultBGPDecisionProcess()
 	var out []ExpectedRoute
 	for _, n := range topo.Nodes {
 		if allowed != nil && !allowed[n.Name] {
@@ -66,7 +67,7 @@ func expected(topo *model.Topology, allowed map[string]bool) []ExpectedRoute {
 					if alt.Condition == nil || !alt.Condition.Eval(nil) {
 						continue
 					}
-					if bgpDecisionEquivalent(n, route, alt) {
+					if decision.Equivalent(n, route, alt) {
 						nextHops = appendUnique(nextHops, routeNextHopAddress(topo, n.Name, alt))
 					}
 				}
@@ -282,32 +283,6 @@ func expectedNextHops(r ExpectedRoute) []string {
 		return r.NextHops
 	}
 	return []string{r.NextHop}
-}
-
-func bgpDecisionEquivalent(receiver model.Node, a, b sim.RIBEntry) bool {
-	if a.LocalPref != b.LocalPref {
-		return false
-	}
-	if (a.Origin == receiver.Name) != (b.Origin == receiver.Name) {
-		return false
-	}
-	if len(a.ASPath) != len(b.ASPath) {
-		return false
-	}
-	if a.MED != b.MED {
-		return false
-	}
-	if firstHopExternal(receiver.ASN, a.ASPath) != firstHopExternal(receiver.ASN, b.ASPath) {
-		return false
-	}
-	return true
-}
-
-func firstHopExternal(localASN uint32, path []uint32) bool {
-	if len(path) == 0 {
-		return false
-	}
-	return path[0] != localASN
 }
 
 func containsString(xs []string, x string) bool {
