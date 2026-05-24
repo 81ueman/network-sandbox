@@ -18,11 +18,75 @@ func testPrefix(t *testing.T, raw string) netip.Prefix {
 }
 
 func testGraph(topo *model.Topology) *Graph {
-	return &Graph{
-		topo: topo,
-		adj:  map[string][]edge{},
-		rib:  map[string]map[string][]RIBEntry{},
-		fib:  map[string][]FIBEntry{},
+	g := &Graph{
+		topo:        topo,
+		adj:         map[string][]edge{},
+		rib:         map[string]map[string][]RIBEntry{},
+		fib:         map[string][]FIBEntry{},
+		linksByName: map[string]model.Link{},
+	}
+	for _, link := range topo.Links {
+		g.linksByName[link.Name] = link
+	}
+	return g
+}
+
+func TestFailureSetAndContext(t *testing.T) {
+	failures := FailureSetFromMap(map[string]bool{
+		"raw-link":      true,
+		"link:prefixed": true,
+		"node:a":        true,
+		"ignored":       false,
+	})
+	if !failures.Links["raw-link"] || !failures.Links["prefixed"] || !failures.Nodes["a"] {
+		t.Fatalf("FailureSetFromMap() = %#v", failures)
+	}
+	if failures.Links["ignored"] {
+		t.Fatalf("false raw entries should be ignored")
+	}
+
+	ctx := FailureContext{
+		Failures: failures,
+		LinksByName: map[string]model.Link{
+			"a-b":        {Name: "a-b", A: "a", B: "b"},
+			"b-c":        {Name: "b-c", A: "b", B: "c"},
+			"prefixed":   {Name: "prefixed", A: "x", B: "y"},
+			"raw-link":   {Name: "raw-link", A: "x", B: "z"},
+			"unaffected": {Name: "unaffected", A: "b", B: "c"},
+		},
+	}
+	if !ctx.NodeFailed("a") || ctx.NodeFailed("b") {
+		t.Fatalf("NodeFailed returned unexpected values")
+	}
+	for _, link := range []string{"raw-link", "prefixed", "a-b"} {
+		if !ctx.LinkFailed(link) {
+			t.Fatalf("LinkFailed(%q) = false, want true", link)
+		}
+	}
+	if ctx.LinkFailed("unaffected") || ctx.LinkFailed("missing") {
+		t.Fatalf("LinkFailed returned true for unaffected or missing link")
+	}
+}
+
+func TestTypedConditionEvaluation(t *testing.T) {
+	ctx := FailureContext{
+		Failures: NodeFailures("a"),
+		LinksByName: map[string]model.Link{
+			"a-b": {Name: "a-b", A: "a", B: "b"},
+			"b-c": {Name: "b-c", A: "b", B: "c"},
+		},
+	}
+	if LinkVar("a-b").Eval(ctx) {
+		t.Fatalf("LinkVar should be false when endpoint node is failed")
+	}
+	if !LinkVar("b-c").Eval(ctx) {
+		t.Fatalf("LinkVar should be true when link and endpoints are up")
+	}
+	if NodeVar("a").Eval(ctx) || !NodeVar("b").Eval(ctx) {
+		t.Fatalf("NodeVar returned unexpected values")
+	}
+	if Var("a-b").Eval(ctx) {
+		t.Fatalf("Var should remain a backward-compatible link condition")
 	}
 }
 
@@ -65,13 +129,13 @@ func TestApplyAdvertisementConditionsPropagatesParentSelectedCond(t *testing.T) 
 		t.Fatalf("applyAdvertisementConditions() did not report a change")
 	}
 	child := g.rib["down"]["10.0.0.0/24"][0]
-	if child.Condition.Eval(map[string]bool{"best": true}) {
+	if child.Condition.Eval(FailureContext{Failures: LinkFailures("best")}) {
 		t.Fatalf("child condition should depend on parent selected condition: %s", child.Condition.String())
 	}
-	if child.Condition.Eval(map[string]bool{"mid-down": true}) {
+	if child.Condition.Eval(FailureContext{Failures: LinkFailures("mid-down")}) {
 		t.Fatalf("child condition should depend on child base condition: %s", child.Condition.String())
 	}
-	if !child.Condition.Eval(nil) {
+	if !child.Condition.Eval(FailureContext{}) {
 		t.Fatalf("child condition should be true when parent and child conditions are true")
 	}
 }
@@ -122,11 +186,110 @@ func TestApplyAdvertisementConditionsSuppressesBackupAdvertisement(t *testing.T)
 
 	g.applyAdvertisementConditions()
 	child := g.rib["down"]["10.0.0.0/24"][0]
-	if child.Condition.Eval(nil) {
+	if child.Condition.Eval(FailureContext{}) {
 		t.Fatalf("backup child route should not be advertised while higher-priority parent is selected: %s", child.Condition.String())
 	}
-	if !child.Condition.Eval(map[string]bool{"best-link": true}) {
+	if !child.Condition.Eval(FailureContext{Failures: LinkFailures("best-link")}) {
 		t.Fatalf("backup child route should be advertised when best parent is unavailable: %s", child.Condition.String())
+	}
+}
+
+func TestAdvertisementConditionsFixedPointPropagatesMultipleHops(t *testing.T) {
+	g := testGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "origin", Kind: "frr", ASN: 65001},
+			{Name: "mid1", Kind: "frr", ASN: 65002},
+			{Name: "mid2", Kind: "frr", ASN: 65003},
+			{Name: "down", Kind: "frr", ASN: 65004},
+		},
+	})
+	g.rib["origin"] = map[string][]RIBEntry{
+		"10.0.0.0/24": {
+			{Prefix: "10.0.0.0/24", Origin: "origin", Nodes: []string{"origin"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
+		},
+	}
+	g.rib["mid1"] = map[string][]RIBEntry{
+		"10.0.0.0/24": {
+			{Prefix: "10.0.0.0/24", Origin: "origin", From: "origin", Nodes: []string{"origin", "mid1"}, LocalPref: 200, Condition: Var("origin-mid1")},
+		},
+	}
+	g.rib["mid2"] = map[string][]RIBEntry{
+		"10.0.0.0/24": {
+			{Prefix: "10.0.0.0/24", Origin: "origin", From: "mid1", Nodes: []string{"origin", "mid1", "mid2"}, BaseCond: Var("mid1-mid2"), Condition: Var("mid1-mid2")},
+		},
+	}
+	g.rib["down"] = map[string][]RIBEntry{
+		"10.0.0.0/24": {
+			{Prefix: "10.0.0.0/24", Origin: "origin", From: "mid2", Nodes: []string{"origin", "mid1", "mid2", "down"}, BaseCond: Var("mid2-down"), Condition: Var("mid2-down")},
+		},
+	}
+
+	g.selectRoutes()
+	for i := 0; i < 8; i++ {
+		if !g.applyAdvertisementConditions() {
+			break
+		}
+		g.selectRoutes()
+	}
+
+	child := g.rib["down"]["10.0.0.0/24"][0]
+	if !child.Condition.Eval(FailureContext{}) {
+		t.Fatalf("downstream condition should be true with all parent conditions true: %s", child.Condition.String())
+	}
+	for _, failed := range []string{"origin-mid1", "mid1-mid2", "mid2-down"} {
+		if child.Condition.Eval(FailureContext{Failures: LinkFailures(failed)}) {
+			t.Fatalf("downstream condition should depend on %s: %s", failed, child.Condition.String())
+		}
+	}
+}
+
+func TestConvergeAdvertisementConditionsHandlesDeepRouteChain(t *testing.T) {
+	const depth = 12
+	topo := &model.Topology{}
+	for i := 0; i < depth; i++ {
+		topo.Nodes = append(topo.Nodes, model.Node{Name: string(rune('a' + i)), Kind: "frr", ASN: uint32(65000 + i)})
+	}
+	g := testGraph(topo)
+	prefix := "10.0.0.0/24"
+	g.rib["a"] = map[string][]RIBEntry{
+		prefix: {
+			{Prefix: prefix, Origin: "a", Nodes: []string{"a"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
+		},
+	}
+	nodes := []string{"a"}
+	for i := 1; i < depth; i++ {
+		node := string(rune('a' + i))
+		parent := string(rune('a' + i - 1))
+		nodes = append(nodes, node)
+		linkCond := Var(parent + "-" + node)
+		g.rib[node] = map[string][]RIBEntry{
+			prefix: {
+				{
+					Prefix:    prefix,
+					Origin:    "a",
+					From:      parent,
+					Nodes:     append([]string(nil), nodes...),
+					BaseCond:  linkCond,
+					Condition: linkCond,
+				},
+			},
+		}
+	}
+
+	g.selectRoutes()
+	g.convergeAdvertisementConditions()
+
+	deepest := g.rib[string(rune('a'+depth-1))][prefix][0]
+	if !deepest.Condition.Eval(FailureContext{}) {
+		t.Fatalf("deep chain condition should converge true with no failures: %s", deepest.Condition.String())
+	}
+	for _, failed := range []string{"a-b", "f-g", "k-l"} {
+		if deepest.Condition.Eval(FailureContext{Failures: LinkFailures(failed)}) {
+			t.Fatalf("deep chain condition should include %s: %s", failed, deepest.Condition.String())
+		}
+	}
+	if got := g.maxRouteDepth(); got != depth {
+		t.Fatalf("maxRouteDepth() = %d, want %d", got, depth)
 	}
 }
 
@@ -168,16 +331,16 @@ func TestSelectRoutesBuildsMutuallyExclusiveSelectedConditions(t *testing.T) {
 	routes := g.rib["r1"]["10.0.0.0/24"]
 	best := routes[0].SelectedCond
 	fallback := routes[1].SelectedCond
-	if !best.Eval(nil) {
+	if !best.Eval(FailureContext{}) {
 		t.Fatalf("best route should be selected when its condition is true")
 	}
-	if fallback.Eval(nil) {
+	if fallback.Eval(FailureContext{}) {
 		t.Fatalf("fallback should not be selected while best route condition is true")
 	}
-	if !fallback.Eval(map[string]bool{"best": true}) {
+	if !fallback.Eval(FailureContext{Failures: LinkFailures("best")}) {
 		t.Fatalf("fallback should be selected when best condition is false and fallback is true")
 	}
-	if fallback.Eval(map[string]bool{"best": true, "backup": true}) {
+	if fallback.Eval(FailureContext{Failures: LinkFailures("best", "backup")}) {
 		t.Fatalf("fallback should not be selected when its own condition is false")
 	}
 }
@@ -189,13 +352,44 @@ func TestLookupFIBLongestPrefixAndConditionalFallback(t *testing.T) {
 		{Prefix: testPrefix(t, "10.0.0.0/16"), NextHop: "aggregate", Condition: True()},
 	}
 
-	got, ok := g.lookupFIB("r1", "10.0.1.10", nil)
+	got, ok := g.lookupFIB("r1", "10.0.1.10", g.FailureContext(NoFailures()))
 	if !ok || got.NextHop != "specific" {
 		t.Fatalf("lookupFIB() = %#v %v, want specific route", got, ok)
 	}
-	got, ok = g.lookupFIB("r1", "10.0.1.10", map[string]bool{"specific": true})
+	got, ok = g.lookupFIB("r1", "10.0.1.10", g.FailureContext(LinkFailures("specific")))
 	if !ok || got.NextHop != "aggregate" {
 		t.Fatalf("lookupFIB() = %#v %v, want aggregate fallback", got, ok)
+	}
+}
+
+func TestRouteConditionsIncludeNodeLiveness(t *testing.T) {
+	g := NewGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{
+				{PeerNode: "a", RemoteAS: 65001, Activated: true},
+				{PeerNode: "c", RemoteAS: 65003, Activated: true},
+			}},
+			{Name: "c", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{
+			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
+			{Name: "b-c", A: "b", B: "c", Cost: 1, Subnet: "192.0.2.2/31"},
+		},
+	})
+
+	origin := g.RIB("c", "10.0.0.0/24")[0]
+	if !origin.Condition.Eval(g.FailureContext(NoFailures())) {
+		t.Fatalf("origin route should be valid without failures")
+	}
+	if origin.Condition.Eval(g.FailureContext(NodeFailures("c"))) {
+		t.Fatalf("origin route should be invalid when origin node fails: %s", origin.Condition.String())
+	}
+	if _, ok := g.RouteReachable("a", "10.0.0.0/24", NodeFailures("b")); ok {
+		t.Fatalf("route should be unreachable when intermediate node fails")
+	}
+	if _, ok := g.RouteReachable("a", "10.0.0.0/24", NodeFailures("a")); ok {
+		t.Fatalf("route should be unreachable when source node fails")
 	}
 }
 
@@ -211,9 +405,41 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 	g.fib["a"] = []FIBEntry{{Prefix: testPrefix(t, "10.0.0.0/24"), NextHop: "b", Condition: True()}}
 	g.fib["b"] = []FIBEntry{{Prefix: testPrefix(t, "10.0.0.0/24"), NextHop: "a", Condition: True()}}
 
-	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", nil)
+	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", NoFailures())
 	if ok || reason != "forwarding loop" {
 		t.Fatalf("PacketReachable() = ok %v reason %q, want forwarding loop", ok, reason)
+	}
+}
+
+func TestPacketReachableNodeFailures(t *testing.T) {
+	g := testGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "a", Kind: "frr"},
+			{Name: "b", Kind: "frr"},
+			{Name: "dst", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{
+			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
+			{Name: "b-dst", A: "b", B: "dst", Cost: 1, Subnet: "192.0.2.2/31"},
+		},
+	})
+	g.fib["a"] = []FIBEntry{{Prefix: testPrefix(t, "10.0.0.0/24"), NextHop: "b", Condition: True()}}
+	g.fib["b"] = []FIBEntry{{Prefix: testPrefix(t, "10.0.0.0/24"), NextHop: "dst", Condition: True()}}
+
+	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", NodeFailures("a"))
+	if ok || reason != "source node is down" {
+		t.Fatalf("PacketReachable() = ok %v reason %q, want source node is down", ok, reason)
+	}
+	_, ok, reason = g.PacketReachable("a", "10.0.0.10", "icmp", NodeFailures("dst"))
+	if ok || reason != "destination node is down" {
+		t.Fatalf("PacketReachable() = ok %v reason %q, want destination node is down", ok, reason)
+	}
+	_, ok, reason = g.PacketReachable("a", "10.0.0.10", "icmp", NodeFailures("b"))
+	if ok || reason != "next-hop node is down" {
+		t.Fatalf("PacketReachable() = ok %v reason %q, want next-hop node is down", ok, reason)
+	}
+	if !g.FailureContext(NodeFailures("b")).LinkFailed("a-b") {
+		t.Fatalf("node failure should make incident next-hop link failed")
 	}
 }
 
@@ -228,7 +454,7 @@ func TestPacketReachableNextHopLinkDown(t *testing.T) {
 	})
 	g.fib["a"] = []FIBEntry{{Prefix: testPrefix(t, "10.0.0.0/24"), NextHop: "b", Condition: True()}}
 
-	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", map[string]bool{"a-b": true})
+	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", LinkFailures("a-b"))
 	if ok || reason != "next-hop link is down" {
 		t.Fatalf("PacketReachable() = ok %v reason %q, want next-hop link is down", ok, reason)
 	}
@@ -242,7 +468,7 @@ func TestPacketReachableNoForwardingRoute(t *testing.T) {
 		},
 	})
 
-	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", nil)
+	_, ok, reason := g.PacketReachable("a", "10.0.0.10", "icmp", NoFailures())
 	if ok || reason != "no forwarding route" {
 		t.Fatalf("PacketReachable() = ok %v reason %q, want no forwarding route", ok, reason)
 	}
@@ -270,8 +496,15 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 	if len(g.fib["a"]) != 2 {
 		t.Fatalf("FIB entries = %d, want 2", len(g.fib["a"]))
 	}
-	if g.fib["a"][0].Condition.String() != r1.SelectedCond.String() {
-		t.Fatalf("FIB condition = %s, want %s", g.fib["a"][0].Condition.String(), r1.SelectedCond.String())
+	found := false
+	for _, entry := range g.fib["a"] {
+		if entry.Condition.String() == r1.SelectedCond.String() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("FIB did not preserve selected condition %s", r1.SelectedCond.String())
 	}
 
 	if _, ok := g.linkBetween("b", "a"); !ok {
@@ -279,6 +512,26 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 	}
 	if got := g.pathCost([]string{"a-b", "b-c"}); got != 8 {
 		t.Fatalf("pathCost() = %d, want 8", got)
+	}
+}
+
+func TestFailureEligibleLinksExcludesCustomerLinks(t *testing.T) {
+	links := []model.Link{
+		{Name: "core-a-b", A: "a", B: "b"},
+		{Name: "cust-a", A: "a", B: "cust-a"},
+		{Name: "edge-b-c", A: "b", B: "c"},
+	}
+
+	got := failureEligibleLinks(links)
+
+	var names []string
+	for _, link := range got {
+		names = append(names, link.Name)
+	}
+
+	want := []string{"core-a-b", "edge-b-c"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("failureEligibleLinks() = %v, want %v", names, want)
 	}
 }
 
@@ -332,22 +585,22 @@ func TestFindBreakingFailuresNoSingleLinkCutInRedundantTopology(t *testing.T) {
 }
 
 func TestConditionHelpers(t *testing.T) {
-	if !True().Eval(map[string]bool{"x": true}) {
+	if !True().Eval(FailureContext{Failures: LinkFailures("x")}) {
 		t.Fatalf("True() should always evaluate true")
 	}
-	if False().Eval(nil) {
+	if False().Eval(FailureContext{}) {
 		t.Fatalf("False() should evaluate false")
 	}
-	if !Var("x").Eval(nil) || Var("x").Eval(map[string]bool{"x": true}) {
+	if !Var("x").Eval(FailureContext{}) || Var("x").Eval(FailureContext{Failures: LinkFailures("x")}) {
 		t.Fatalf("Var() should mean link-up unless failed")
 	}
-	if !And(True(), Var("x")).Eval(nil) || And(True(), Var("x")).Eval(map[string]bool{"x": true}) {
+	if !And(True(), Var("x")).Eval(FailureContext{}) || And(True(), Var("x")).Eval(FailureContext{Failures: LinkFailures("x")}) {
 		t.Fatalf("And() evaluation is wrong")
 	}
-	if !Or(False(), Var("x")).Eval(nil) || Or(False(), Var("x")).Eval(map[string]bool{"x": true}) {
+	if !Or(False(), Var("x")).Eval(FailureContext{}) || Or(False(), Var("x")).Eval(FailureContext{Failures: LinkFailures("x")}) {
 		t.Fatalf("Or() evaluation is wrong")
 	}
-	if Not(Var("x")).Eval(nil) || !Not(Var("x")).Eval(map[string]bool{"x": true}) {
+	if Not(Var("x")).Eval(FailureContext{}) || !Not(Var("x")).Eval(FailureContext{Failures: LinkFailures("x")}) {
 		t.Fatalf("Not() evaluation is wrong")
 	}
 
@@ -360,7 +613,7 @@ func TestConditionHelpers(t *testing.T) {
 	if _, ok := Or(Or(Var("a"), Var("b")), Var("c")).(orCond); !ok {
 		t.Fatalf("Or() should flatten nested or")
 	}
-	if Or().Eval(nil) {
+	if Or().Eval(FailureContext{}) {
 		t.Fatalf("empty Or() should evaluate false")
 	}
 }

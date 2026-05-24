@@ -13,7 +13,7 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	g := sim.NewGraph(topo)
 	report := Report{}
 	for _, q := range queries.RouteChecks {
-		path, reachable := g.RouteReachable(q.From, q.Prefix, nil)
+		path, reachable := g.RouteReachable(q.From, q.Prefix, sim.NoFailures())
 		result := sim.Result{Name: q.Name, Reachable: reachable, Expected: true, Path: path}
 		if cut, ok := g.FindBreakingFailures(q.From, sim.PrefixTarget(q.Prefix), q.MaxFailures); ok {
 			result.Counterexample = cut
@@ -22,7 +22,7 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 		report.Results = append(report.Results, result)
 	}
 	for _, q := range queries.PacketChecks {
-		path, reachable, reason := g.PacketReachable(q.From, q.To, q.Protocol, nil)
+		path, reachable, reason := g.PacketReachable(q.From, q.To, q.Protocol, sim.NoFailures())
 		expected := true
 		if q.ExpectReachable != nil {
 			expected = *q.ExpectReachable

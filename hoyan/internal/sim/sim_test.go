@@ -18,7 +18,7 @@ func loadGraph(t *testing.T) *Graph {
 
 func TestRouteReachable(t *testing.T) {
 	g := loadGraph(t)
-	path, ok := g.RouteReachable("bj-edge1", "10.4.0.0/16", nil)
+	path, ok := g.RouteReachable("bj-edge1", "10.4.0.0/16", NoFailures())
 	if !ok {
 		t.Fatalf("route not reachable")
 	}
@@ -33,12 +33,12 @@ func TestBGPBuildsRankedExtendedRIB(t *testing.T) {
 	if len(rib) < 2 {
 		t.Fatalf("RIB entries = %d, want multiple alternatives", len(rib))
 	}
-	if !rib[0].Condition.Eval(nil) || !rib[0].SelectedCond.Eval(nil) {
+	if !rib[0].Condition.Eval(FailureContext{}) || !rib[0].SelectedCond.Eval(FailureContext{}) {
 		t.Fatalf("best route should exist and be selected with no failures")
 	}
 	var fallback bool
 	for _, link := range rib[0].Links {
-		failed := map[string]bool{link: true}
+		failed := g.FailureContext(LinkFailures(link))
 		if rib[0].SelectedCond.Eval(failed) {
 			continue
 		}
@@ -82,14 +82,14 @@ func TestIBGPSplitHorizon(t *testing.T) {
 
 func TestPacketPolicyDeny(t *testing.T) {
 	g := loadGraph(t)
-	_, ok, reason := g.PacketReachable("cust-bj", "10.4.1.10", "tcp", nil)
+	_, ok, reason := g.PacketReachable("cust-bj", "10.4.1.10", "tcp", NoFailures())
 	if ok {
 		t.Fatalf("tcp packet unexpectedly reachable")
 	}
 	if reason != "denied by policy block-http-to-hz" {
 		t.Fatalf("reason = %q", reason)
 	}
-	_, ok, reason = g.PacketReachable("cust-bj", "10.4.1.10", "icmp", nil)
+	_, ok, reason = g.PacketReachable("cust-bj", "10.4.1.10", "icmp", NoFailures())
 	if !ok {
 		t.Fatalf("icmp packet not reachable: %s", reason)
 	}
@@ -97,7 +97,7 @@ func TestPacketPolicyDeny(t *testing.T) {
 
 func TestSingleFailureStillReachable(t *testing.T) {
 	g := loadGraph(t)
-	failed := map[string]bool{"core-bj-sh": true}
+	failed := LinkFailures("core-bj-sh")
 	if _, ok := g.RouteReachable("bj-edge1", "10.4.0.0/16", failed); !ok {
 		t.Fatalf("route should survive core-bj-sh failure")
 	}

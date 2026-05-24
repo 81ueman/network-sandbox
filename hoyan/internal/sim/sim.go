@@ -11,10 +11,11 @@ import (
 )
 
 type Graph struct {
-	topo *model.Topology
-	adj  map[string][]edge
-	rib  map[string]map[string][]RIBEntry
-	fib  map[string][]FIBEntry
+	topo        *model.Topology
+	adj         map[string][]edge
+	rib         map[string]map[string][]RIBEntry
+	fib         map[string][]FIBEntry
+	linksByName map[string]model.Link
 }
 
 type edge struct {
@@ -60,57 +61,147 @@ type FIBEntry struct {
 	Condition Cond
 }
 
+type FailureSet struct {
+	Links map[string]bool
+	Nodes map[string]bool
+}
+
+type FailureContext struct {
+	Failures    FailureSet
+	LinksByName map[string]model.Link
+}
+
 type Cond interface {
-	Eval(failed map[string]bool) bool
+	Eval(ctx FailureContext) bool
 	String() string
 }
 
+type condVarKind string
+
+const (
+	condVarLink condVarKind = "link"
+	condVarNode condVarKind = "node"
+)
+
 type trueCond struct{}
-type varCond string
+type varCond struct {
+	kind condVarKind
+	name string
+}
 type andCond []Cond
 type orCond []Cond
 type notCond struct{ c Cond }
 
-func True() Cond                           { return trueCond{} }
-func False() Cond                          { return notCond{c: trueCond{}} }
-func Var(name string) Cond                 { return varCond(name) }
-func And(cs ...Cond) Cond                  { return flattenAnd(cs) }
-func Or(cs ...Cond) Cond                   { return flattenOr(cs) }
-func Not(c Cond) Cond                      { return notCond{c: c} }
-func (trueCond) Eval(map[string]bool) bool { return true }
-func (trueCond) String() string            { return "true" }
-func (c varCond) Eval(failed map[string]bool) bool {
-	return !failed[string(c)]
+func NoFailures() FailureSet {
+	return FailureSet{Links: map[string]bool{}, Nodes: map[string]bool{}}
 }
-func (c varCond) String() string { return string(c) }
-func (c andCond) Eval(failed map[string]bool) bool {
+
+func LinkFailures(names ...string) FailureSet {
+	return NewFailureSet(names, nil)
+}
+
+func NodeFailures(names ...string) FailureSet {
+	return NewFailureSet(nil, names)
+}
+
+func NewFailureSet(links []string, nodes []string) FailureSet {
+	out := NoFailures()
+	for _, name := range links {
+		out.Links[name] = true
+	}
+	for _, name := range nodes {
+		out.Nodes[name] = true
+	}
+	return out
+}
+
+func FailureSetFromMap(raw map[string]bool) FailureSet {
+	out := NoFailures()
+	for key, failed := range raw {
+		if !failed {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(key, "link:"):
+			out.Links[strings.TrimPrefix(key, "link:")] = true
+		case strings.HasPrefix(key, "node:"):
+			out.Nodes[strings.TrimPrefix(key, "node:")] = true
+		default:
+			out.Links[key] = true
+		}
+	}
+	return out
+}
+
+func (ctx FailureContext) NodeFailed(node string) bool {
+	return ctx.Failures.Nodes[node]
+}
+
+func (ctx FailureContext) LinkFailed(linkName string) bool {
+	if ctx.Failures.Links[linkName] {
+		return true
+	}
+	link, ok := ctx.LinksByName[linkName]
+	if !ok {
+		return false
+	}
+	return ctx.Failures.Nodes[link.A] || ctx.Failures.Nodes[link.B]
+}
+
+func True() Cond           { return trueCond{} }
+func False() Cond          { return notCond{c: trueCond{}} }
+func Var(name string) Cond { return LinkVar(name) }
+func LinkVar(name string) Cond {
+	return varCond{kind: condVarLink, name: name}
+}
+func NodeVar(name string) Cond {
+	return varCond{kind: condVarNode, name: name}
+}
+func And(cs ...Cond) Cond                 { return flattenAnd(cs) }
+func Or(cs ...Cond) Cond                  { return flattenOr(cs) }
+func Not(c Cond) Cond                     { return notCond{c: c} }
+func (trueCond) Eval(FailureContext) bool { return true }
+func (trueCond) String() string           { return "true" }
+func (c varCond) Eval(ctx FailureContext) bool {
+	switch c.kind {
+	case condVarNode:
+		return !ctx.NodeFailed(c.name)
+	case condVarLink:
+		return !ctx.LinkFailed(c.name)
+	default:
+		return true
+	}
+}
+func (c varCond) String() string { return string(c.kind) + ":" + c.name }
+func (c andCond) Eval(ctx FailureContext) bool {
 	for _, x := range c {
-		if !x.Eval(failed) {
+		if !x.Eval(ctx) {
 			return false
 		}
 	}
 	return true
 }
 func (c andCond) String() string { return joinCond(" && ", c) }
-func (c orCond) Eval(failed map[string]bool) bool {
+func (c orCond) Eval(ctx FailureContext) bool {
 	for _, x := range c {
-		if x.Eval(failed) {
+		if x.Eval(ctx) {
 			return true
 		}
 	}
 	return false
 }
 func (c orCond) String() string { return joinCond(" || ", c) }
-func (c notCond) Eval(failed map[string]bool) bool {
-	return !c.c.Eval(failed)
+func (c notCond) Eval(ctx FailureContext) bool {
+	return !c.c.Eval(ctx)
 }
 func (c notCond) String() string { return "!(" + c.c.String() + ")" }
 
 func NewGraph(topo *model.Topology) *Graph {
-	g := &Graph{topo: topo, adj: map[string][]edge{}, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}}
+	g := &Graph{topo: topo, adj: map[string][]edge{}, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}, linksByName: map[string]model.Link{}}
 	for _, l := range topo.Links {
 		g.adj[l.A] = append(g.adj[l.A], edge{to: l.B, link: l})
 		g.adj[l.B] = append(g.adj[l.B], edge{to: l.A, link: l})
+		g.linksByName[l.Name] = l
 	}
 	for node := range g.adj {
 		sort.Slice(g.adj[node], func(i, j int) bool {
@@ -141,10 +232,31 @@ func (g *Graph) FIB(node string) []FIBEntry {
 	return append([]FIBEntry(nil), g.fib[node]...)
 }
 
-func (g *Graph) RouteReachable(from, prefix string, failed map[string]bool) (Path, bool) {
+func (g *Graph) FailureContext(failures FailureSet) FailureContext {
+	if failures.Links == nil {
+		failures.Links = map[string]bool{}
+	}
+	if failures.Nodes == nil {
+		failures.Nodes = map[string]bool{}
+	}
+	linksByName := g.linksByName
+	if linksByName == nil {
+		linksByName = map[string]model.Link{}
+		for _, link := range g.topo.Links {
+			linksByName[link.Name] = link
+		}
+	}
+	return FailureContext{Failures: failures, LinksByName: linksByName}
+}
+
+func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, bool) {
+	ctx := g.FailureContext(failures)
+	if ctx.NodeFailed(from) {
+		return Path{}, false
+	}
 	var best *RIBEntry
 	for _, r := range g.rib[from][prefix] {
-		if r.SelectedCond.Eval(failed) {
+		if r.SelectedCond != nil && r.SelectedCond.Eval(ctx) {
 			cp := r
 			best = &cp
 			break
@@ -160,15 +272,25 @@ func (g *Graph) RouteReachable(from, prefix string, failed map[string]bool) (Pat
 	return Path{Nodes: nodes, Links: links, Cost: g.pathCost(best.Links)}, true
 }
 
-func (g *Graph) PacketReachable(from, to, protocol string, failed map[string]bool) (Path, bool, string) {
-	_, dstPrefix, ok := g.topo.OriginForIP(to)
+func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) (Path, bool, string) {
+	ctx := g.FailureContext(failures)
+	dstNode, dstPrefix, ok := g.topo.OriginForIP(to)
 	if !ok {
 		return Path{}, false, "destination prefix not advertised"
+	}
+	if ctx.NodeFailed(from) {
+		return Path{}, false, "source node is down"
+	}
+	if ctx.NodeFailed(dstNode) {
+		return Path{}, false, "destination node is down"
 	}
 	current := from
 	visited := map[string]bool{}
 	full := Path{Nodes: []string{from}}
 	for {
+		if ctx.NodeFailed(current) {
+			return full, false, "current node is down"
+		}
 		if visited[current] {
 			return full, false, "forwarding loop"
 		}
@@ -180,7 +302,7 @@ func (g *Graph) PacketReachable(from, to, protocol string, failed map[string]boo
 		if pol, ok := behaviorFor(currentNode.Kind).CheckDataIngress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix, Protocol: protocol}, g.topo.Policies); ok {
 			return full, false, "denied by policy " + pol
 		}
-		rule, ok := g.lookupFIB(current, to, failed)
+		rule, ok := g.lookupFIB(current, to, ctx)
 		if !ok {
 			return full, false, "no forwarding route"
 		}
@@ -190,8 +312,11 @@ func (g *Graph) PacketReachable(from, to, protocol string, failed map[string]boo
 		if rule.NextHop == "" {
 			return full, false, "selected route has no next-hop"
 		}
+		if ctx.NodeFailed(rule.NextHop) {
+			return full, false, "next-hop node is down"
+		}
 		link, ok := g.linkBetween(current, rule.NextHop)
-		if !ok || failed[link.Name] {
+		if !ok || ctx.LinkFailed(link.Name) {
 			return full, false, "next-hop link is down"
 		}
 		full.Links = append(full.Links, link.Name)
@@ -212,11 +337,7 @@ func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int
 	var forbidden [][]string
 	for k := 0; k <= maxFailures; k++ {
 		findCombo(links, k, 0, nil, func(combo []string) bool {
-			failed := map[string]bool{}
-			for _, name := range combo {
-				failed[name] = true
-			}
-			if !target.Reachable(g, from, failed) {
+			if !target.Reachable(g, from, LinkFailures(combo...)) {
 				forbidden = append(forbidden, append([]string(nil), combo...))
 			}
 			return false
@@ -234,13 +355,13 @@ func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int
 }
 
 type Target interface {
-	Reachable(g *Graph, from string, failed map[string]bool) bool
+	Reachable(g *Graph, from string, failures FailureSet) bool
 }
 
 type PrefixTarget string
 
-func (t PrefixTarget) Reachable(g *Graph, from string, failed map[string]bool) bool {
-	_, ok := g.RouteReachable(from, string(t), failed)
+func (t PrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	_, ok := g.RouteReachable(from, string(t), failures)
 	return ok
 }
 
@@ -249,22 +370,23 @@ type PacketTarget struct {
 	Protocol string
 }
 
-func (t PacketTarget) Reachable(g *Graph, from string, failed map[string]bool) bool {
-	_, ok, _ := g.PacketReachable(from, t.To, t.Protocol, failed)
+func (t PacketTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	_, ok, _ := g.PacketReachable(from, t.To, t.Protocol, failures)
 	return ok
 }
 
 func (g *Graph) simulateControlPlane() {
 	for _, origin := range g.topo.Nodes {
 		for _, prefix := range origin.Prefixes {
+			originCond := NodeVar(origin.Name)
 			g.addRIB(origin.Name, prefix, RIBEntry{
 				Prefix:    prefix,
 				Origin:    origin.Name,
 				Nodes:     []string{origin.Name},
 				ASPath:    nil,
 				LocalPref: 200,
-				BaseCond:  True(),
-				Condition: True(),
+				BaseCond:  originCond,
+				Condition: originCond,
 			})
 			g.walkBGP(RIBEntry{
 				Prefix:    prefix,
@@ -272,18 +394,13 @@ func (g *Graph) simulateControlPlane() {
 				NextHop:   "",
 				Nodes:     []string{origin.Name},
 				ASPath:    nil,
-				BaseCond:  True(),
-				Condition: True(),
+				BaseCond:  originCond,
+				Condition: originCond,
 			})
 		}
 	}
 	g.selectRoutes()
-	for i := 0; i < 8; i++ {
-		if !g.applyAdvertisementConditions() {
-			break
-		}
-		g.selectRoutes()
-	}
+	g.convergeAdvertisementConditions()
 }
 
 func (g *Graph) selectRoutes() {
@@ -337,6 +454,34 @@ func (g *Graph) applyAdvertisementConditions() bool {
 	return changed
 }
 
+func (g *Graph) convergeAdvertisementConditions() {
+	maxIterations := g.maxRouteDepth() + 1
+	if maxIterations < 1 {
+		maxIterations = 1
+	}
+	for i := 0; i < maxIterations; i++ {
+		if !g.applyAdvertisementConditions() {
+			return
+		}
+		g.selectRoutes()
+	}
+	panic(fmt.Sprintf("advertisement conditions did not converge within %d iterations", maxIterations))
+}
+
+func (g *Graph) maxRouteDepth() int {
+	maxDepth := 0
+	for _, byPrefix := range g.rib {
+		for _, routes := range byPrefix {
+			for _, route := range routes {
+				if len(route.Nodes) > maxDepth {
+					maxDepth = len(route.Nodes)
+				}
+			}
+		}
+	}
+	return maxDepth
+}
+
 func (g *Graph) parentRoute(route RIBEntry) (RIBEntry, bool) {
 	if route.From == "" || len(route.Nodes) < 2 {
 		return RIBEntry{}, false
@@ -383,7 +528,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		}
 		nextLinks := append(append([]string(nil), imported.Route.Links...), e.link.Name)
 		nextNodes := append(append([]string(nil), imported.Route.Nodes...), next)
-		nextCond := And(imported.Route.Condition, Var(e.link.Name))
+		nextCond := And(imported.Route.Condition, LinkVar(e.link.Name), NodeVar(next))
 
 		entry := imported.Route
 		entry.From = current
@@ -450,13 +595,13 @@ func (g *Graph) addRIB(node, prefix string, entry RIBEntry) {
 	g.rib[node][prefix] = append(g.rib[node][prefix], entry)
 }
 
-func (g *Graph) lookupFIB(node, dst string, failed map[string]bool) (FIBEntry, bool) {
+func (g *Graph) lookupFIB(node, dst string, ctx FailureContext) (FIBEntry, bool) {
 	ip, err := netip.ParseAddr(dst)
 	if err != nil {
 		return FIBEntry{}, false
 	}
 	for _, rule := range g.fib[node] {
-		if rule.Prefix.Contains(ip) && rule.Condition.Eval(failed) {
+		if rule.Prefix.Contains(ip) && rule.Condition.Eval(ctx) {
 			return rule, true
 		}
 	}

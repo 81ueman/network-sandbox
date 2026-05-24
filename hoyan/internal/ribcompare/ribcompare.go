@@ -38,7 +38,7 @@ type Runner interface {
 }
 
 func Expected(topo *model.Topology) []ExpectedRoute {
-	return expected(topo, nil)
+	return ExpectedWithFailureSet(topo, sim.NoFailures())
 }
 
 func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []ExpectedRoute {
@@ -46,25 +46,33 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []ExpectedRoute 
 	for _, n := range nodes {
 		allowed[n.Name] = true
 	}
-	return expected(topo, allowed)
+	return expected(topo, allowed, sim.NoFailures())
 }
 
-func expected(topo *model.Topology, allowed map[string]bool) []ExpectedRoute {
+func ExpectedWithFailureSet(topo *model.Topology, failures sim.FailureSet) []ExpectedRoute {
+	return expected(topo, nil, failures)
+}
+
+func expected(topo *model.Topology, allowed map[string]bool, failures sim.FailureSet) []ExpectedRoute {
 	g := sim.NewGraph(topo)
+	ctx := g.FailureContext(failures)
 	var out []ExpectedRoute
 	for _, n := range topo.Nodes {
 		if allowed != nil && !allowed[n.Name] {
 			continue
 		}
+		if ctx.NodeFailed(n.Name) {
+			continue
+		}
 		decision := sim.BehaviorFor(n.Kind).DecisionProcess()
 		for prefix, rib := range g.RIBTable(n.Name) {
 			for i, route := range rib {
-				if route.SelectedCond == nil || !route.SelectedCond.Eval(nil) {
+				if route.SelectedCond == nil || !route.SelectedCond.Eval(ctx) {
 					continue
 				}
 				nextHops := []string{routeNextHopAddress(topo, n.Name, route)}
 				for _, alt := range rib[i+1:] {
-					if alt.Condition == nil || !alt.Condition.Eval(nil) {
+					if alt.Condition == nil || !alt.Condition.Eval(ctx) {
 						continue
 					}
 					if decision.Equivalent(n, route, alt) {

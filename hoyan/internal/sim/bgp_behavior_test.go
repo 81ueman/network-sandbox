@@ -169,13 +169,13 @@ func TestCEOSSelectRoutesFiltersUnreachableNextHop(t *testing.T) {
 }
 
 func TestRegisterBehaviorReturnsRestoreFunction(t *testing.T) {
-	restore := RegisterBehavior("test-kind", NewGenericBehavior("test-kind"))
-	if BehaviorFor("test-kind").Kind() != "test-kind" {
+	restore := RegisterBehavior("test-kind", NewGenericBehavior("registered-kind"))
+	if BehaviorFor("test-kind").Kind() != "registered-kind" {
 		t.Fatalf("registered behavior was not returned")
 	}
 	restore()
 	if BehaviorFor("test-kind").Kind() != "test-kind" {
-		t.Fatalf("fallback generic behavior changed after restore")
+		t.Fatalf("fallback generic behavior was not restored")
 	}
 
 	old := BehaviorFor("frr")
