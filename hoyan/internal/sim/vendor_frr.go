@@ -1,7 +1,7 @@
 package sim
 
-type frrBehavior struct{ baseBGPBehavior }
+type frrBehavior struct{ baseDeviceBehavior }
 
 func NewFRRBehavior() DeviceBehavior {
-	return frrBehavior{baseBGPBehavior{kind: "frr", decision: DefaultBGPDecisionProcess()}}
+	return frrBehavior{baseDeviceBehavior{kind: "frr", decision: DefaultBGPDecisionProcess()}}
 }

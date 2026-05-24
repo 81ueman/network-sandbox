@@ -16,26 +16,27 @@ type BGPBehavior interface {
 	SelectRoutes(device model.Node, routes []RIBEntry) []RIBEntry
 	ExportRoute(from model.Node, to model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision
 	ImportRoute(to model.Node, from model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision
+	DecisionProcess() BGPDecisionProcess
 }
 
-type baseBGPBehavior struct {
+type baseDeviceBehavior struct {
 	kind     string
 	decision BGPDecisionProcess
 }
 
 func NewGenericBehavior(kind string) DeviceBehavior {
-	return baseBGPBehavior{kind: kind, decision: DefaultBGPDecisionProcess()}
+	return baseDeviceBehavior{kind: kind, decision: DefaultBGPDecisionProcess()}
 }
 
-func (b baseBGPBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEntry {
+func (b baseDeviceBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEntry {
 	out := append([]RIBEntry(nil), routes...)
 	sort.Slice(out, func(i, j int) bool {
-		return b.decisionProcess().Less(device, out[i], out[j])
+		return b.DecisionProcess().Less(device, out[i], out[j])
 	})
 	return out
 }
 
-func (b baseBGPBehavior) ExportRoute(from model.Node, to model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
+func (b baseDeviceBehavior) ExportRoute(from model.Node, to model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
 	isIBGP := from.ASN == to.ASN
 	if isIBGP && route.LearnedIBGP {
 		return BGPRouteDecision{Route: route, Accept: false, Reason: "ibgp readvertisement"}
@@ -54,14 +55,14 @@ func (b baseBGPBehavior) ExportRoute(from model.Node, to model.Node, session mod
 	return BGPRouteDecision{Route: out, Accept: true}
 }
 
-func (b baseBGPBehavior) ImportRoute(to model.Node, from model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
+func (b baseDeviceBehavior) ImportRoute(to model.Node, from model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
 	if containsASN(route.ASPath, to.ASN) {
 		return BGPRouteDecision{Route: route, Accept: false, Reason: "as loop"}
 	}
 	return BGPRouteDecision{Route: route, Accept: true}
 }
 
-func (b baseBGPBehavior) decisionProcess() BGPDecisionProcess {
+func (b baseDeviceBehavior) DecisionProcess() BGPDecisionProcess {
 	if b.decision == nil {
 		return DefaultBGPDecisionProcess()
 	}

@@ -482,60 +482,6 @@ func (g *Graph) localPref(node, prefix string) int {
 	return localPref
 }
 
-func (g *Graph) deniesControl(node, peer, prefix, stage string) bool {
-	for _, pol := range g.topo.Policies {
-		if pol.Node != node || pol.Action != "deny" {
-			continue
-		}
-		if pol.Plane != "" && pol.Plane != "control" {
-			continue
-		}
-		if pol.Plane == "" {
-			continue
-		}
-		if pol.Stage != "" && pol.Stage != stage {
-			continue
-		}
-		if pol.Peer != "" && pol.Peer != peer {
-			continue
-		}
-		if pol.DstPrefix != "" {
-			want, err := netip.ParsePrefix(pol.DstPrefix)
-			got, err2 := netip.ParsePrefix(prefix)
-			if err != nil || err2 != nil || !prefixesOverlap(want, got) {
-				continue
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func (g *Graph) deniedAtNode(node string, dst netip.Prefix, protocol, stage string) (string, bool) {
-	for _, pol := range g.topo.Policies {
-		if pol.Node != node || pol.Action != "deny" {
-			continue
-		}
-		if pol.Plane != "" && pol.Plane != "data" {
-			continue
-		}
-		if pol.Stage != "" && pol.Stage != stage {
-			continue
-		}
-		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, protocol) {
-			continue
-		}
-		if pol.DstPrefix != "" {
-			pfx, err := netip.ParsePrefix(pol.DstPrefix)
-			if err != nil || !pfx.Contains(dst.Addr()) {
-				continue
-			}
-		}
-		return pol.Name, true
-	}
-	return "", false
-}
-
 func (g *Graph) originates(node string, prefix netip.Prefix) bool {
 	n, ok := g.topo.Node(node)
 	if !ok {

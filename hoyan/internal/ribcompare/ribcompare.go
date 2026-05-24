@@ -51,12 +51,12 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []ExpectedRoute 
 
 func expected(topo *model.Topology, allowed map[string]bool) []ExpectedRoute {
 	g := sim.NewGraph(topo)
-	decision := sim.DefaultBGPDecisionProcess()
 	var out []ExpectedRoute
 	for _, n := range topo.Nodes {
 		if allowed != nil && !allowed[n.Name] {
 			continue
 		}
+		decision := sim.BehaviorFor(n.Kind).DecisionProcess()
 		for prefix, rib := range g.RIBTable(n.Name) {
 			for i, route := range rib {
 				if route.SelectedCond == nil || !route.SelectedCond.Eval(nil) {

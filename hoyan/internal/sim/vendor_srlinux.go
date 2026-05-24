@@ -1,7 +1,7 @@
 package sim
 
-type srlinuxBehavior struct{ baseBGPBehavior }
+type srlinuxBehavior struct{ baseDeviceBehavior }
 
 func NewSRLinuxBehavior() DeviceBehavior {
-	return srlinuxBehavior{baseBGPBehavior{kind: "srlinux", decision: DefaultBGPDecisionProcess()}}
+	return srlinuxBehavior{baseDeviceBehavior{kind: "srlinux", decision: DefaultBGPDecisionProcess()}}
 }

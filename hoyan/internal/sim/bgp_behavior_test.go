@@ -167,3 +167,24 @@ func TestCEOSSelectRoutesFiltersUnreachableNextHop(t *testing.T) {
 		t.Fatalf("selected routes = %#v", selected)
 	}
 }
+
+func TestRegisterBehaviorReturnsRestoreFunction(t *testing.T) {
+	restore := RegisterBehavior("test-kind", NewGenericBehavior("test-kind"))
+	if BehaviorFor("test-kind").Kind() != "test-kind" {
+		t.Fatalf("registered behavior was not returned")
+	}
+	restore()
+	if BehaviorFor("test-kind").Kind() != "test-kind" {
+		t.Fatalf("fallback generic behavior changed after restore")
+	}
+
+	old := BehaviorFor("frr")
+	restore = RegisterBehavior("frr", NewGenericBehavior("temporary-frr"))
+	if BehaviorFor("frr").Kind() != "temporary-frr" {
+		t.Fatalf("replacement behavior was not returned")
+	}
+	restore()
+	if BehaviorFor("frr") != old {
+		t.Fatalf("original behavior was not restored")
+	}
+}

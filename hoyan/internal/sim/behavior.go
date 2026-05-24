@@ -29,23 +29,23 @@ type DeviceBehavior interface {
 	CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
 }
 
-func (b baseBGPBehavior) Kind() string {
+func (b baseDeviceBehavior) Kind() string {
 	return b.kind
 }
 
-func (b baseBGPBehavior) CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
+func (b baseDeviceBehavior) CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
 	return !matchesDenyPolicy(device.Name, msg.From, msg.Prefix, "", "control", "ingress", policies)
 }
 
-func (b baseBGPBehavior) CheckControlEgress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
+func (b baseDeviceBehavior) CheckControlEgress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
 	return !matchesDenyPolicy(device.Name, msg.To, msg.Prefix, "", "control", "egress", policies)
 }
 
-func (b baseBGPBehavior) CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
+func (b baseDeviceBehavior) CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
 	return deniedPolicyName(device.Name, "", pkt.Prefix, pkt.Protocol, "data", "ingress", policies)
 }
 
-func (b baseBGPBehavior) CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
+func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
 	return deniedPolicyName(device.Name, "", pkt.Prefix, pkt.Protocol, "data", "egress", policies)
 }
 
