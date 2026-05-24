@@ -71,6 +71,12 @@ type FailureContext struct {
 	LinksByName map[string]model.Link
 }
 
+type FailureSearchOptions struct {
+	IncludeLinks bool
+	IncludeNodes bool
+	MaxFailures  int
+}
+
 type Cond interface {
 	Eval(ctx FailureContext) bool
 	String() string
@@ -128,6 +134,19 @@ func FailureSetFromMap(raw map[string]bool) FailureSet {
 			out.Nodes[strings.TrimPrefix(key, "node:")] = true
 		default:
 			out.Links[key] = true
+		}
+	}
+	return out
+}
+
+func FailureSetFromElements(elements []solver.FailureElement) FailureSet {
+	out := NoFailures()
+	for _, element := range elements {
+		switch element.Kind {
+		case solver.FailureLink:
+			out.Links[element.Name] = true
+		case solver.FailureNode:
+			out.Nodes[element.Name] = true
 		}
 	}
 	return out
@@ -327,31 +346,77 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 }
 
 func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int) ([]string, bool) {
-	links := append([]model.Link(nil), g.topo.Links...)
-	sort.Slice(links, func(i, j int) bool { return links[i].Name < links[j].Name })
-	links = failureEligibleLinks(links)
-	var linkNames []string
-	for _, l := range links {
-		linkNames = append(linkNames, l.Name)
+	ans, ok := g.FindBreakingFailuresWithOptions(from, target, FailureSearchOptions{
+		IncludeLinks: true,
+		MaxFailures:  maxFailures,
+	})
+	if !ok {
+		return nil, false
 	}
-	var forbidden [][]string
-	for k := 0; k <= maxFailures; k++ {
-		findCombo(links, k, 0, nil, func(combo []string) bool {
-			if !target.Reachable(g, from, LinkFailures(combo...)) {
-				forbidden = append(forbidden, append([]string(nil), combo...))
+	out := make([]string, 0, len(ans))
+	for _, element := range ans {
+		if element.Kind == solver.FailureLink {
+			out = append(out, element.Name)
+			continue
+		}
+		out = append(out, element.String())
+	}
+	return out, true
+}
+
+func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts FailureSearchOptions) ([]solver.FailureElement, bool) {
+	elements := g.failureSearchElements(opts)
+	var forbidden [][]solver.FailureElement
+	for k := 0; k <= opts.MaxFailures; k++ {
+		findElementCombo(elements, k, 0, nil, func(combo []solver.FailureElement) bool {
+			if !target.Reachable(g, from, FailureSetFromElements(combo)) {
+				forbidden = append(forbidden, append([]solver.FailureElement(nil), combo...))
 			}
 			return false
 		})
 	}
 	ans, err := solver.DefaultBackend().Solve(solver.FailureProblem{
-		Links:       linkNames,
-		MaxFailures: maxFailures,
+		Elements:    elements,
+		MaxFailures: opts.MaxFailures,
 		Forbidden:   forbidden,
 	})
 	if err != nil || !ans.Sat {
 		return nil, false
 	}
 	return ans.Failures, true
+}
+
+func (g *Graph) failureSearchElements(opts FailureSearchOptions) []solver.FailureElement {
+	var elements []solver.FailureElement
+	if opts.IncludeLinks {
+		links := append([]model.Link(nil), g.topo.Links...)
+		sort.Slice(links, func(i, j int) bool { return links[i].Name < links[j].Name })
+		for _, link := range failureEligibleLinks(links) {
+			elements = append(elements, solver.FailureElement{Kind: solver.FailureLink, Name: link.Name})
+		}
+	}
+	if opts.IncludeNodes {
+		nodes := append([]model.Node(nil), g.topo.Nodes...)
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+		for _, node := range failureEligibleNodes(nodes) {
+			elements = append(elements, solver.FailureElement{Kind: solver.FailureNode, Name: node.Name})
+		}
+	}
+	return elements
+}
+
+func findElementCombo(elements []solver.FailureElement, want, start int, cur []solver.FailureElement, fn func([]solver.FailureElement) bool) bool {
+	if len(cur) == want {
+		return fn(cur)
+	}
+	for i := start; i < len(elements); i++ {
+		cur = append(cur, elements[i])
+		if findElementCombo(elements, want, i+1, cur, fn) {
+			return true
+		}
+		cur = cur[:len(cur)-1]
+	}
+	return false
 }
 
 type Target interface {
@@ -678,18 +743,15 @@ func failureEligibleLinks(links []model.Link) []model.Link {
 	return out
 }
 
-func findCombo(links []model.Link, want, start int, cur []string, fn func([]string) bool) bool {
-	if len(cur) == want {
-		return fn(cur)
-	}
-	for i := start; i < len(links); i++ {
-		cur = append(cur, links[i].Name)
-		if findCombo(links, want, i+1, cur, fn) {
-			return true
+func failureEligibleNodes(nodes []model.Node) []model.Node {
+	var out []model.Node
+	for _, n := range nodes {
+		if strings.Contains(n.Name, "cust") {
+			continue
 		}
-		cur = cur[:len(cur)-1]
+		out = append(out, n)
 	}
-	return false
+	return out
 }
 
 func FormatPath(p Path) string {

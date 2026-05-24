@@ -25,11 +25,14 @@ func (Z3Backend) Solve(problem FailureProblem) (Answer, error) {
 	defer C.Z3_solver_dec_ref(ctx, solver)
 
 	vars := map[string]C.Z3_ast{}
-	for _, name := range problem.Links {
+	var elementNames []string
+	for _, element := range problem.Elements {
+		name := element.String()
+		elementNames = append(elementNames, name)
 		vars[name] = boolConst(ctx, name)
 	}
 	if problem.MaxFailures >= 0 {
-		C.Z3_solver_assert(ctx, solver, atMost(ctx, vars, problem.Links, problem.MaxFailures))
+		C.Z3_solver_assert(ctx, solver, atMost(ctx, vars, elementNames, problem.MaxFailures))
 	}
 	if len(problem.Forbidden) == 0 {
 		C.Z3_solver_assert(ctx, solver, C.Z3_mk_false(ctx))
@@ -37,8 +40,8 @@ func (Z3Backend) Solve(problem FailureProblem) (Answer, error) {
 		var clauses []C.Z3_ast
 		for _, clause := range problem.Forbidden {
 			var lits []C.Z3_ast
-			for _, name := range clause {
-				lits = append(lits, vars[name])
+			for _, element := range clause {
+				lits = append(lits, vars[element.String()])
 			}
 			clauses = append(clauses, mkAnd(ctx, lits))
 		}
@@ -49,15 +52,16 @@ func (Z3Backend) Solve(problem FailureProblem) (Answer, error) {
 		model := C.Z3_solver_get_model(ctx, solver)
 		C.Z3_model_inc_ref(ctx, model)
 		defer C.Z3_model_dec_ref(ctx, model)
-		var failed []string
-		for _, name := range problem.Links {
+		var failed []FailureElement
+		for _, element := range problem.Elements {
+			name := element.String()
 			var value C.Z3_ast
 			ok := C.Z3_model_eval(ctx, model, vars[name], C.bool(true), &value)
 			if !bool(ok) {
 				continue
 			}
 			if C.Z3_get_bool_value(ctx, value) == C.Z3_L_TRUE {
-				failed = append(failed, name)
+				failed = append(failed, element)
 			}
 		}
 		return Answer{Sat: true, Failures: failed, Backend: "z3"}, nil

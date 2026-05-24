@@ -42,11 +42,15 @@ func Expected(topo *model.Topology) []ExpectedRoute {
 }
 
 func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []ExpectedRoute {
+	return ExpectedForNodesWithFailureSet(topo, nodes, sim.NoFailures())
+}
+
+func ExpectedForNodesWithFailureSet(topo *model.Topology, nodes []model.Node, failures sim.FailureSet) []ExpectedRoute {
 	allowed := map[string]bool{}
 	for _, n := range nodes {
 		allowed[n.Name] = true
 	}
-	return expected(topo, allowed, sim.NoFailures())
+	return expected(topo, allowed, failures)
 }
 
 func ExpectedWithFailureSet(topo *model.Topology, failures sim.FailureSet) []ExpectedRoute {

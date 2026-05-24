@@ -1,15 +1,39 @@
 package solver
 
+type FailureElementKind string
+
+const (
+	FailureLink FailureElementKind = "link"
+	FailureNode FailureElementKind = "node"
+)
+
+type FailureElement struct {
+	Kind FailureElementKind
+	Name string
+}
+
+func (e FailureElement) String() string {
+	return string(e.Kind) + ":" + e.Name
+}
+
 type FailureProblem struct {
-	Links       []string
+	Elements    []FailureElement
 	MaxFailures int
-	Forbidden   [][]string
+	Forbidden   [][]FailureElement
 }
 
 type Answer struct {
 	Sat      bool
-	Failures []string
+	Failures []FailureElement
 	Backend  string
+}
+
+func (a Answer) FailureStrings() []string {
+	out := make([]string, 0, len(a.Failures))
+	for _, f := range a.Failures {
+		out = append(out, f.String())
+	}
+	return out
 }
 
 type Backend interface {
@@ -20,10 +44,10 @@ type EnumeratingBackend struct{}
 
 func (EnumeratingBackend) Solve(problem FailureProblem) (Answer, error) {
 	for k := 0; k <= problem.MaxFailures; k++ {
-		var out []string
-		if findCombo(problem.Links, k, 0, nil, func(combo []string) bool {
+		var out []FailureElement
+		if findCombo(problem.Elements, k, 0, nil, func(combo []FailureElement) bool {
 			if satisfiesForbidden(combo, problem.Forbidden) {
-				out = append([]string(nil), combo...)
+				out = append([]FailureElement(nil), combo...)
 				return true
 			}
 			return false
@@ -34,15 +58,15 @@ func (EnumeratingBackend) Solve(problem FailureProblem) (Answer, error) {
 	return Answer{Sat: false, Backend: "enumerating"}, nil
 }
 
-func satisfiesForbidden(combo []string, forbidden [][]string) bool {
+func satisfiesForbidden(combo []FailureElement, forbidden [][]FailureElement) bool {
 	set := map[string]bool{}
-	for _, name := range combo {
-		set[name] = true
+	for _, element := range combo {
+		set[element.String()] = true
 	}
 	for _, clause := range forbidden {
 		ok := true
-		for _, name := range clause {
-			if !set[name] {
+		for _, element := range clause {
+			if !set[element.String()] {
 				ok = false
 				break
 			}
@@ -54,13 +78,13 @@ func satisfiesForbidden(combo []string, forbidden [][]string) bool {
 	return false
 }
 
-func findCombo(links []string, want, start int, cur []string, fn func([]string) bool) bool {
+func findCombo(elements []FailureElement, want, start int, cur []FailureElement, fn func([]FailureElement) bool) bool {
 	if len(cur) == want {
 		return fn(cur)
 	}
-	for i := start; i < len(links); i++ {
-		cur = append(cur, links[i])
-		if findCombo(links, want, i+1, cur, fn) {
+	for i := start; i < len(elements); i++ {
+		cur = append(cur, elements[i])
+		if findCombo(elements, want, i+1, cur, fn) {
 			return true
 		}
 		cur = cur[:len(cur)-1]

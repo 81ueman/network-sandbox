@@ -65,16 +65,15 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		return err
 	}
 	fmt.Fprintln(opts.Out, "waiting for FRR BGP routes")
-	actual, err := WaitForExpectedRoutes(deadlineCtx, runner, frrNodes, expected, opts.PollInterval, opts.MaxPolls)
+	actual, diffs, err := WaitForMatchingRIBs(deadlineCtx, runner, frrNodes, expected, opts.PollInterval, opts.MaxPolls)
 	if err != nil {
 		if len(actual) > 0 {
-			for _, d := range ribcompare.Compare(expected, actual) {
+			for _, d := range diffs {
 				fmt.Fprintf(opts.Out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
 			}
 		}
 		return err
 	}
-	diffs := ribcompare.Compare(expected, actual)
 	for _, d := range diffs {
 		fmt.Fprintf(opts.Out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
 	}
@@ -143,11 +142,62 @@ func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes 
 	return last, nil
 }
 
+func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.ExpectedRoute, interval time.Duration, maxPolls int) ([]ribcompare.ActualRoute, []ribcompare.Diff, error) {
+	var last []ribcompare.ActualRoute
+	var lastDiffs []ribcompare.Diff
+	var lastErr error
+	bestSeen := 0
+	bestDiffCount := -1
+	polls := 0
+	err := poll(ctx, interval, func() (bool, error) {
+		polls++
+		actual, err := ribcompare.CollectFRRWithRunner(ctx, runner, nodes)
+		if err != nil {
+			lastErr = err
+			if maxPolls > 0 && polls >= maxPolls {
+				return false, ribMatchConvergenceError(lastErr, bestSeen, len(expected), bestDiffCount)
+			}
+			return false, nil
+		}
+		last = actual
+		if seen := CountExpectedRoutes(expected, actual); seen > bestSeen {
+			bestSeen = seen
+		}
+		lastDiffs = ribcompare.Compare(expected, actual)
+		if bestDiffCount == -1 || len(lastDiffs) < bestDiffCount {
+			bestDiffCount = len(lastDiffs)
+		}
+		if len(lastDiffs) == 0 {
+			return true, nil
+		}
+		if maxPolls > 0 && polls >= maxPolls {
+			return false, ribMatchConvergenceError(lastErr, bestSeen, len(expected), bestDiffCount)
+		}
+		return false, nil
+	}, func() error {
+		return ribMatchConvergenceError(lastErr, bestSeen, len(expected), bestDiffCount)
+	})
+	if err != nil {
+		return last, lastDiffs, err
+	}
+	return last, lastDiffs, nil
+}
+
 func convergenceError(lastErr error, seen, total int) error {
 	if lastErr != nil {
 		return fmt.Errorf("expected BGP routes did not converge; last collection error: %w", lastErr)
 	}
 	return fmt.Errorf("expected BGP routes did not converge: saw %d/%d expected routes", seen, total)
+}
+
+func ribMatchConvergenceError(lastErr error, seen, total, bestDiffCount int) error {
+	if lastErr != nil {
+		return fmt.Errorf("BGP RIBs did not converge to modeled best paths; last collection error: %w", lastErr)
+	}
+	if bestDiffCount < 0 {
+		return fmt.Errorf("BGP RIBs did not converge to modeled best paths: saw %d/%d expected routes", seen, total)
+	}
+	return fmt.Errorf("BGP RIBs did not converge to modeled best paths: saw %d/%d expected routes, best diff count %d", seen, total, bestDiffCount)
 }
 
 func HasExpectedRoutes(expected []ribcompare.ExpectedRoute, actual []ribcompare.ActualRoute) bool {

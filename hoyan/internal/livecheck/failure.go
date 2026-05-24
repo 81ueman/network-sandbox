@@ -1,0 +1,150 @@
+package livecheck
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/81ueman/network-sandbox/hoyan/internal/model"
+	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
+	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
+)
+
+type RIBFailureScenario struct {
+	Name        string
+	Failures    sim.FailureSet
+	ActiveNodes []model.Node
+	Inject      func(context.Context, ribcompare.Runner) error
+	Cleanup     func(context.Context, ribcompare.Runner) error
+}
+
+type RIBFailureCheckOptions struct {
+	Interval time.Duration
+	MaxPolls int
+	Out      io.Writer
+}
+
+func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo *model.Topology, scenario RIBFailureScenario, opts RIBFailureCheckOptions) error {
+	if opts.Interval == 0 {
+		opts.Interval = 25 * time.Second
+	}
+	if opts.MaxPolls == 0 {
+		opts.MaxPolls = 3
+	}
+	if opts.Out == nil {
+		opts.Out = io.Discard
+	}
+	activeNodes := scenario.ActiveNodes
+	if activeNodes == nil {
+		activeNodes = ribcompare.FRRNodes(topo.Nodes)
+	}
+	expected := ribcompare.ExpectedForNodesWithFailureSet(topo, activeNodes, scenario.Failures)
+	if scenario.Inject != nil {
+		fmt.Fprintf(opts.Out, "injecting failure scenario %s\n", scenario.Name)
+		if err := scenario.Inject(ctx, runner); err != nil {
+			return err
+		}
+	}
+	if scenario.Cleanup != nil {
+		defer func() {
+			_ = scenario.Cleanup(context.Background(), runner)
+		}()
+	}
+	actual, diffs, err := WaitForMatchingRIBs(ctx, runner, activeNodes, expected, opts.Interval, opts.MaxPolls)
+	if err != nil {
+		printRIBDiffs(opts.Out, expected, actual)
+		return err
+	}
+	printDiffs(opts.Out, diffs)
+	if len(diffs) > 0 {
+		return fmt.Errorf("failure scenario %s found %d live RIB diff(s)", scenario.Name, len(diffs))
+	}
+	fmt.Fprintf(opts.Out, "failure scenario %s live FRR RIBs match modeled best paths\n", scenario.Name)
+	return nil
+}
+
+func LinkFailureScenario(topo *model.Topology, linkName string) (RIBFailureScenario, error) {
+	link, ok := findLink(topo, linkName)
+	if !ok {
+		return RIBFailureScenario{}, fmt.Errorf("link %s not found", linkName)
+	}
+	if link.AIntf == "" || link.BIntf == "" {
+		return RIBFailureScenario{}, fmt.Errorf("link %s is missing endpoint interface names", linkName)
+	}
+	return RIBFailureScenario{
+		Name:     "link-" + link.Name,
+		Failures: sim.LinkFailures(link.Name),
+		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.A, "-i", link.AIntf, "--loss", "100"); err != nil {
+				return fmt.Errorf("netem set %s:%s: %w", link.A, link.AIntf, err)
+			}
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.B, "-i", link.BIntf, "--loss", "100"); err != nil {
+				return fmt.Errorf("netem set %s:%s: %w", link.B, link.BIntf, err)
+			}
+			return nil
+		},
+		Cleanup: func(ctx context.Context, runner ribcompare.Runner) error {
+			var firstErr error
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.A, "-i", link.AIntf); err != nil {
+				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.A, link.AIntf, err)
+			}
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.B, "-i", link.BIntf); firstErr == nil && err != nil {
+				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.B, link.BIntf, err)
+			}
+			return firstErr
+		},
+	}, nil
+}
+
+func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScenario, error) {
+	if _, ok := topo.Node(nodeName); !ok {
+		return RIBFailureScenario{}, fmt.Errorf("node %s not found", nodeName)
+	}
+	return RIBFailureScenario{
+		Name:        "node-" + nodeName,
+		Failures:    sim.NodeFailures(nodeName),
+		ActiveNodes: activeFRRNodes(topo.Nodes, map[string]bool{nodeName: true}),
+		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
+			if _, err := runner.Run(ctx, "docker", "stop", nodeName); err != nil {
+				return fmt.Errorf("docker stop %s: %w", nodeName, err)
+			}
+			return nil
+		},
+	}, nil
+}
+
+func activeFRRNodes(nodes []model.Node, failed map[string]bool) []model.Node {
+	var out []model.Node
+	for _, node := range nodes {
+		if node.Kind == "frr" && !failed[node.Name] {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+func findLink(topo *model.Topology, name string) (model.Link, bool) {
+	for _, link := range topo.Links {
+		if link.Name == name {
+			return link, true
+		}
+	}
+	return model.Link{}, false
+}
+
+func printRIBDiffs(out io.Writer, expected []ribcompare.ExpectedRoute, actual []ribcompare.ActualRoute) {
+	if out == nil {
+		return
+	}
+	printDiffs(out, ribcompare.Compare(expected, actual))
+}
+
+func printDiffs(out io.Writer, diffs []ribcompare.Diff) {
+	if out == nil {
+		return
+	}
+	for _, d := range diffs {
+		fmt.Fprintf(out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
+	}
+}

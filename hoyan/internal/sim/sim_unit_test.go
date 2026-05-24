@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
+	"github.com/81ueman/network-sandbox/hoyan/internal/solver"
 )
 
 func testPrefix(t *testing.T, raw string) netip.Prefix {
@@ -65,6 +66,16 @@ func TestFailureSetAndContext(t *testing.T) {
 	}
 	if ctx.LinkFailed("unaffected") || ctx.LinkFailed("missing") {
 		t.Fatalf("LinkFailed returned true for unaffected or missing link")
+	}
+}
+
+func TestFailureSetFromElements(t *testing.T) {
+	failures := FailureSetFromElements([]solver.FailureElement{
+		{Kind: solver.FailureLink, Name: "a-b"},
+		{Kind: solver.FailureNode, Name: "b"},
+	})
+	if !failures.Links["a-b"] || !failures.Nodes["b"] {
+		t.Fatalf("FailureSetFromElements() = %#v", failures)
 	}
 }
 
@@ -535,6 +546,26 @@ func TestFailureEligibleLinksExcludesCustomerLinks(t *testing.T) {
 	}
 }
 
+func TestFailureEligibleNodesExcludesCustomerNodes(t *testing.T) {
+	nodes := []model.Node{
+		{Name: "core-a"},
+		{Name: "cust-a"},
+		{Name: "edge-b"},
+	}
+
+	got := failureEligibleNodes(nodes)
+
+	var names []string
+	for _, node := range got {
+		names = append(names, node.Name)
+	}
+
+	want := []string{"core-a", "edge-b"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("failureEligibleNodes() = %v, want %v", names, want)
+	}
+}
+
 func TestFindBreakingFailuresFindsOneLinkCut(t *testing.T) {
 	g := NewGraph(&model.Topology{
 		Nodes: []model.Node{
@@ -547,6 +578,63 @@ func TestFindBreakingFailuresFindsOneLinkCut(t *testing.T) {
 	cut, ok := g.FindBreakingFailures("a", PrefixTarget("10.0.0.0/24"), 1)
 	if !ok || !reflect.DeepEqual(cut, []string{"a-b"}) {
 		t.Fatalf("FindBreakingFailures() = %v %v, want a-b cut", cut, ok)
+	}
+}
+
+func TestFindBreakingFailuresWithOptionsFindsOneNodeCut(t *testing.T) {
+	g := NewGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "cust-a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{
+				{PeerNode: "cust-a", RemoteAS: 65001, Activated: true},
+				{PeerNode: "cust-dst", RemoteAS: 65003, Activated: true},
+			}},
+			{Name: "cust-dst", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{
+			{Name: "cust-a-b", A: "cust-a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
+			{Name: "b-cust-dst", A: "b", B: "cust-dst", Cost: 1, Subnet: "192.0.2.2/31"},
+		},
+	})
+
+	cut, ok := g.FindBreakingFailuresWithOptions("cust-a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{
+		IncludeNodes: true,
+		MaxFailures:  1,
+	})
+	if !ok || len(cut) != 1 || cut[0] != (solver.FailureElement{Kind: solver.FailureNode, Name: "b"}) {
+		t.Fatalf("FindBreakingFailuresWithOptions() = %v %v, want node:b", cut, ok)
+	}
+	if _, reachable := g.RouteReachable("cust-a", "10.0.0.0/24", FailureSetFromElements(cut)); reachable {
+		t.Fatalf("returned node failure should make target unreachable")
+	}
+	if len(cut) != 1 {
+		t.Fatalf("node failure should count as one selected failure, got %d", len(cut))
+	}
+}
+
+func TestFindBreakingFailuresWithOptionsMixedElements(t *testing.T) {
+	g := NewGraph(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "cust-a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{
+				{PeerNode: "cust-a", RemoteAS: 65001, Activated: true},
+				{PeerNode: "cust-dst", RemoteAS: 65003, Activated: true},
+			}},
+			{Name: "cust-dst", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+		},
+		Links: []model.Link{
+			{Name: "cust-a-b", A: "cust-a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
+			{Name: "b-cust-dst", A: "b", B: "cust-dst", Cost: 1, Subnet: "192.0.2.2/31"},
+		},
+	})
+
+	cut, ok := g.FindBreakingFailuresWithOptions("cust-a", PrefixTarget("10.0.0.0/24"), FailureSearchOptions{
+		IncludeLinks: true,
+		IncludeNodes: true,
+		MaxFailures:  1,
+	})
+	if !ok || len(cut) != 1 || cut[0].Kind != solver.FailureNode || cut[0].Name != "b" {
+		t.Fatalf("FindBreakingFailuresWithOptions() = %v %v, want mixed search to find node:b", cut, ok)
 	}
 }
 
