@@ -63,14 +63,15 @@ type fibInspectRow struct {
 }
 
 type symbolicPacketInspect struct {
-	From        string                      `json:"from"`
-	To          string                      `json:"to"`
-	Protocol    string                      `json:"protocol"`
-	Reachable   string                      `json:"reachable_condition"`
-	Unreachable string                      `json:"unreachable_condition"`
-	Reason      string                      `json:"reason,omitempty"`
-	Paths       []symbolicPacketInspectPath `json:"paths,omitempty"`
-	Blocked     []symbolicPacketBlockedPath `json:"blocked_paths,omitempty"`
+	From               string                               `json:"from"`
+	To                 string                               `json:"to"`
+	Protocol           string                               `json:"protocol"`
+	Reachable          string                               `json:"reachable_condition"`
+	Unreachable        string                               `json:"unreachable_condition"`
+	Reason             string                               `json:"reason,omitempty"`
+	Paths              []symbolicPacketInspectPath          `json:"paths,omitempty"`
+	Blocked            []symbolicPacketBlockedPath          `json:"blocked_paths,omitempty"`
+	UnreachableReasons []symbolicPacketInspectBlockedReason `json:"unreachable_reasons,omitempty"`
 }
 
 type symbolicPacketInspectPath struct {
@@ -101,6 +102,20 @@ type symbolicPacketBlockedPath struct {
 	Interface string             `json:"interface,omitempty"`
 	Stage     string             `json:"stage,omitempty"`
 	Source    model.PolicySource `json:"source,omitempty"`
+}
+
+type symbolicPacketInspectBlockedReason struct {
+	Kind       string   `json:"kind"`
+	Node       string   `json:"node,omitempty"`
+	Link       string   `json:"link,omitempty"`
+	Interface  string   `json:"interface,omitempty"`
+	PolicyName string   `json:"policy_name,omitempty"`
+	PolicyRaw  string   `json:"policy_raw,omitempty"`
+	PathNodes  []string `json:"path_nodes,omitempty"`
+	PathLinks  []string `json:"path_links,omitempty"`
+	Cost       int      `json:"cost"`
+	Condition  string   `json:"condition,omitempty"`
+	Message    string   `json:"message,omitempty"`
 }
 
 type symbolicRouteInspect struct {
@@ -466,6 +481,21 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 			Source:    path.Source,
 		})
 	}
+	for _, reason := range result.UnreachableReasons {
+		out.UnreachableReasons = append(out.UnreachableReasons, symbolicPacketInspectBlockedReason{
+			Kind:       string(reason.Kind),
+			Node:       reason.Node,
+			Link:       reason.Link,
+			Interface:  reason.Interface,
+			PolicyName: reason.PolicyName,
+			PolicyRaw:  reason.PolicyRaw,
+			PathNodes:  append([]string(nil), reason.Path.Nodes...),
+			PathLinks:  append([]string(nil), reason.Path.Links...),
+			Cost:       reason.Path.Cost,
+			Condition:  condString(reason.Cond),
+			Message:    reason.Message,
+		})
+	}
 	return out
 }
 
@@ -537,6 +567,26 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 	fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
 	if result.Reason != "" {
 		fmt.Fprintf(out, "reason: %s\n", result.Reason)
+	}
+	if len(result.UnreachableReasons) > 0 {
+		fmt.Fprintln(out, "blocked/unreachable reasons:")
+		rtw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(rtw, "KIND\tNODE\tLINK\tINTERFACE\tPOLICY\tCONDITION\tPATH\tMESSAGE")
+		for _, reason := range result.UnreachableReasons {
+			fmt.Fprintf(rtw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				reason.Kind,
+				reason.Node,
+				reason.Link,
+				reason.Interface,
+				reason.PolicyName,
+				reason.Condition,
+				strings.Join(reason.PathNodes, "->"),
+				reason.Message,
+			)
+		}
+		if err := rtw.Flush(); err != nil {
+			return err
+		}
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "PATH\tCOST\tCONDITION\tHOPS")
