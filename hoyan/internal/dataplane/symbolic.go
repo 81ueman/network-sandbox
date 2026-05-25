@@ -35,6 +35,18 @@ type SymbolicReachabilityResult struct {
 	Reason      string
 }
 
+type SymbolicRoutePath struct {
+	Path Path
+	Cond failure.Cond
+}
+
+type SymbolicRouteReachabilityResult struct {
+	Reachable   failure.Cond
+	Unreachable failure.Cond
+	Paths       []SymbolicRoutePath
+	Reason      string
+}
+
 func (e *Engine) SymbolicLookupFIB(node, dst string) []SymbolicFIBCandidate {
 	ip, err := netip.ParseAddr(dst)
 	if err != nil {
@@ -44,7 +56,7 @@ func (e *Engine) SymbolicLookupFIB(node, dst string) []SymbolicFIBCandidate {
 	var out []SymbolicFIBCandidate
 	var higher []failure.Cond
 	for _, entry := range entries {
-		entryCond := condOrTrue(entry.Condition)
+		entryCond := e.expandLinkVars(condOrTrue(entry.Condition))
 		cond := entryCond
 		if len(higher) > 0 {
 			cond = failure.And(cond, failure.Not(failure.Or(higher...)))
@@ -53,6 +65,43 @@ func (e *Engine) SymbolicLookupFIB(node, dst string) []SymbolicFIBCandidate {
 		higher = append(higher, entryCond)
 	}
 	return out
+}
+
+func (e *Engine) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
+	reachable := failure.False()
+	result := SymbolicRouteReachabilityResult{Reachable: reachable, Unreachable: failure.True()}
+	if e == nil || e.idx == nil {
+		result.Reason = "topology index is unavailable"
+		return result
+	}
+	pfx, err := model.ParsePrefix(prefix)
+	if err != nil {
+		result.Reason = "invalid prefix"
+		return result
+	}
+	if _, ok := e.idx.Node(from); !ok {
+		result.Reason = "source node not found"
+		return result
+	}
+	routes := e.rib[from][pfx.String()]
+	paths := make([]SymbolicRoutePath, 0, len(routes))
+	conds := make([]failure.Cond, 0, len(routes))
+	for _, route := range routes {
+		route = route.Normalize()
+		if route.SelectedCond == nil {
+			continue
+		}
+		cond := failure.And(failure.NodeVar(from), e.expandLinkVars(route.SelectedCond))
+		path := routePath(e.idx, route)
+		paths = append(paths, SymbolicRoutePath{Path: path, Cond: cond})
+		conds = append(conds, cond)
+	}
+	reachable = failure.Or(conds...)
+	return SymbolicRouteReachabilityResult{
+		Reachable:   reachable,
+		Unreachable: failure.Not(reachable),
+		Paths:       paths,
+	}
 }
 
 func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicReachabilityResult {
@@ -94,6 +143,15 @@ func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicR
 		Unreachable: failure.Not(reachable),
 		Paths:       paths,
 	}
+}
+
+func routePath(idx *model.TopologyIndex, route controlplane.RIBEntry) Path {
+	route = route.Normalize()
+	nodes := append([]string(nil), route.Nodes...)
+	links := append([]string(nil), route.Links...)
+	reverse(nodes)
+	reverse(links)
+	return Path{Nodes: nodes, Links: links, Cost: idx.PathCost(route.Links)}
 }
 
 func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefix netip.Prefix, maxHops int, visited map[string]bool, states []SymbolicPacketState, paths *[]SymbolicPacketPath) {
@@ -140,9 +198,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 		nextCond := failure.And(
 			state.Cond,
 			candidate.Cond,
-			failure.NodeVar(state.Node),
-			failure.NodeVar(entry.NextHop),
-			failure.LinkVar(link.Name),
+			e.linkUpCond(link),
 		)
 		nextPath := Path{
 			Nodes: append(append([]string(nil), state.Path.Nodes...), entry.NextHop),
@@ -181,6 +237,17 @@ func condOrTrue(cond failure.Cond) failure.Cond {
 		return failure.True()
 	}
 	return cond
+}
+
+func (e *Engine) expandLinkVars(cond failure.Cond) failure.Cond {
+	if e == nil || e.idx == nil {
+		return cond
+	}
+	return failure.ExpandLinkVars(cond, e.idx.LinksByName)
+}
+
+func (e *Engine) linkUpCond(link model.Link) failure.Cond {
+	return e.expandLinkVars(failure.LinkVar(link.Name))
 }
 
 func isFalseCond(cond failure.Cond) bool {

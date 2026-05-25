@@ -18,6 +18,8 @@ type SymbolicFIBCandidate = dataplane.SymbolicFIBCandidate
 type SymbolicPacketPath = dataplane.SymbolicPacketPath
 type SymbolicPacketState = dataplane.SymbolicPacketState
 type SymbolicReachabilityResult = dataplane.SymbolicReachabilityResult
+type SymbolicRoutePath = dataplane.SymbolicRoutePath
+type SymbolicRouteReachabilityResult = dataplane.SymbolicRouteReachabilityResult
 type FailureSet = failure.Set
 type FailureContext = failure.Context
 type FailureSearchOptions = failure.SearchOptions
@@ -145,6 +147,10 @@ func (g *Graph) SymbolicPacketReachability(from, to, protocol string) SymbolicRe
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachability(from, to, protocol)
 }
 
+func (g *Graph) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachability(from, prefix)
+}
+
 func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int) ([]string, bool) {
 	ans, ok := g.FindBreakingFailuresWithOptions(from, target, FailureSearchOptions{
 		IncludeLinks: true,
@@ -172,7 +178,7 @@ func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts
 	if len(elements) == 0 {
 		return nil, false
 	}
-	if problem, ok := g.symbolicPacketFailureProblem(from, target, opts, elements); ok {
+	if problem, ok := g.symbolicFailureProblem(from, target, opts, elements); ok {
 		if ans, ok := solveSymbolicFailureProblem(problem); ok {
 			return ans, true
 		}
@@ -218,16 +224,22 @@ func solveEnumeratedFailureProblem(problem solver.FailureProblem) ([]solver.Fail
 	return ans.Failures, true
 }
 
-func (g *Graph) symbolicPacketFailureProblem(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) (solver.SymbolicFailureProblem, bool) {
-	packet, ok := target.(PacketTarget)
-	if !ok {
+func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) (solver.SymbolicFailureProblem, bool) {
+	var goal failure.Cond
+	switch t := target.(type) {
+	case PacketTarget:
+		result := g.SymbolicPacketReachability(from, t.To, t.Protocol)
+		goal = result.Unreachable
+	case PrefixTarget:
+		result := g.SymbolicRouteReachability(from, string(t))
+		goal = result.Unreachable
+	default:
 		return solver.SymbolicFailureProblem{}, false
 	}
-	result := g.SymbolicPacketReachability(from, packet.To, packet.Protocol)
 	return solver.SymbolicFailureProblem{
 		Elements:    elements,
 		MaxFailures: opts.MaxFailures,
-		Goal:        failure.BoolExpr(result.Unreachable),
+		Goal:        failure.BoolExpr(goal),
 	}, true
 }
 

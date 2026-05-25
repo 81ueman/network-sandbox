@@ -89,6 +89,22 @@ type symbolicPacketInspectState struct {
 	Cost             int      `json:"cost"`
 }
 
+type symbolicRouteInspect struct {
+	From        string                     `json:"from"`
+	Prefix      string                     `json:"prefix"`
+	Reachable   string                     `json:"reachable_condition"`
+	Unreachable string                     `json:"unreachable_condition"`
+	Reason      string                     `json:"reason,omitempty"`
+	Paths       []symbolicRouteInspectPath `json:"paths,omitempty"`
+}
+
+type symbolicRouteInspectPath struct {
+	PathNodes []string `json:"path_nodes,omitempty"`
+	PathLinks []string `json:"path_links,omitempty"`
+	Cost      int      `json:"cost"`
+	Condition string   `json:"condition,omitempty"`
+}
+
 func NewModelCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "model",
@@ -96,7 +112,7 @@ func NewModelCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand())
+	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand(), NewModelSymbolicRouteCommand())
 	return cmd
 }
 
@@ -155,6 +171,27 @@ func NewModelSymbolicPacketCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.to, "to", "", "destination IP address")
 	cmd.Flags().StringVar(&opts.protocol, "protocol", "tcp", "packet protocol")
+	return cmd
+}
+
+func NewModelSymbolicRouteCommand() *cobra.Command {
+	var opts modelInspectOptions
+	cmd := &cobra.Command{
+		Use:           "symbolic-route",
+		Short:         "Inspect symbolic route reachability",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			return runModelSymbolicRoute(cmd.Context(), opts, cmd.OutOrStdout())
+		},
+	}
+	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
+	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
+	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "destination prefix")
 	return cmd
 }
 
@@ -234,6 +271,35 @@ func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.
 	switch opts.format {
 	case modelFormatTable:
 		return writeSymbolicPacketTable(out, result)
+	case modelFormatJSON:
+		return writeJSON(out, result)
+	default:
+		return ExitError{Code: 2, Err: fmt.Errorf("--format must be %q or %q", modelFormatTable, modelFormatJSON)}
+	}
+}
+
+func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.Writer) error {
+	if opts.from == "" {
+		return ExitError{Code: 2, Err: fmt.Errorf("--from is required")}
+	}
+	if opts.prefix == "" {
+		return ExitError{Code: 2, Err: fmt.Errorf("--prefix is required")}
+	}
+	topo, graph, err := loadModelGraph(opts.topologyPath)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	if _, ok := topo.Node(opts.from); !ok {
+		return ExitError{Code: 2, Err: fmt.Errorf("unknown node %q", opts.from)}
+	}
+	prefix, err := canonicalPrefix(opts.prefix)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	result := buildSymbolicRouteInspect(opts.from, prefix, graph.SymbolicRouteReachability(opts.from, prefix))
+	switch opts.format {
+	case modelFormatTable:
+		return writeSymbolicRouteTable(out, result)
 	case modelFormatJSON:
 		return writeJSON(out, result)
 	default:
@@ -375,6 +441,25 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 	return out
 }
 
+func buildSymbolicRouteInspect(from, prefix string, result sim.SymbolicRouteReachabilityResult) symbolicRouteInspect {
+	out := symbolicRouteInspect{
+		From:        from,
+		Prefix:      prefix,
+		Reachable:   condString(result.Reachable),
+		Unreachable: condString(result.Unreachable),
+		Reason:      result.Reason,
+	}
+	for _, path := range result.Paths {
+		out.Paths = append(out.Paths, symbolicRouteInspectPath{
+			PathNodes: append([]string(nil), path.Path.Nodes...),
+			PathLinks: append([]string(nil), path.Path.Links...),
+			Cost:      path.Path.Cost,
+			Condition: condString(path.Cond),
+		})
+	}
+	return out
+}
+
 func writeRIBTable(out io.Writer, rows []ribInspectRow) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
@@ -441,6 +526,27 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 			path.Cost,
 			path.Condition,
 			strings.Join(hops, "->"),
+		)
+	}
+	return tw.Flush()
+}
+
+func writeSymbolicRouteTable(out io.Writer, result symbolicRouteInspect) error {
+	fmt.Fprintf(out, "from: %s\n", result.From)
+	fmt.Fprintf(out, "prefix: %s\n", result.Prefix)
+	fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
+	fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+	if result.Reason != "" {
+		fmt.Fprintf(out, "reason: %s\n", result.Reason)
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "PATH\tCOST\tLINKS\tCONDITION")
+	for _, path := range result.Paths {
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
+			strings.Join(path.PathNodes, "->"),
+			path.Cost,
+			strings.Join(path.PathLinks, "->"),
+			path.Condition,
 		)
 	}
 	return tw.Flush()

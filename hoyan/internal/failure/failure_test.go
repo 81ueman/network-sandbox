@@ -82,3 +82,21 @@ func TestConditionEvaluation(t *testing.T) {
 		t.Fatalf("Var should remain a backward-compatible link condition")
 	}
 }
+
+func TestExpandLinkVarsEmbedsEndpointNodeConditions(t *testing.T) {
+	links := map[model.LinkID]model.Link{
+		"a-b": {Name: "a-b", A: "a", B: "b"},
+	}
+	expanded := ExpandLinkVars(LinkVar("a-b"), links)
+	if expanded.Eval(Context{Failures: Nodes("a")}) {
+		t.Fatalf("expanded link condition should be false when endpoint node is failed: %s", expanded)
+	}
+	if !expanded.Eval(Context{Failures: None()}) {
+		t.Fatalf("expanded link condition should be true without failures: %s", expanded)
+	}
+
+	notExpanded := ExpandLinkVars(Not(LinkVar("a-b")), links)
+	if !notExpanded.Eval(Context{Failures: Nodes("a")}) {
+		t.Fatalf("expanded NOT(link) should be true when endpoint node is failed: %s", notExpanded)
+	}
+}

@@ -231,6 +231,37 @@ func BoolExpr(c Cond) symbolic.Expr {
 	}
 }
 
+func ExpandLinkVars(c Cond, linksByName map[model.LinkID]model.Link) Cond {
+	c = normalizeCond(c)
+	switch x := c.(type) {
+	case varCond:
+		if x.kind != condVarLink {
+			return x
+		}
+		link, ok := linksByName[model.LinkID(x.name)]
+		if !ok {
+			return x
+		}
+		return And(x, NodeVar(link.A), NodeVar(link.B))
+	case andCond:
+		children := make([]Cond, 0, len(x))
+		for _, child := range x {
+			children = append(children, ExpandLinkVars(child, linksByName))
+		}
+		return And(children...)
+	case orCond:
+		children := make([]Cond, 0, len(x))
+		for _, child := range x {
+			children = append(children, ExpandLinkVars(child, linksByName))
+		}
+		return Or(children...)
+	case notCond:
+		return Not(ExpandLinkVars(x.c, linksByName))
+	default:
+		return c
+	}
+}
+
 func joinCondKey(op string, cs []Cond) string {
 	parts := make([]string, 0, len(cs))
 	for _, c := range cs {
