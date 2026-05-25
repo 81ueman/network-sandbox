@@ -1,4 +1,4 @@
-package sim
+package controlplane
 
 import "github.com/81ueman/network-sandbox/hoyan/internal/model"
 

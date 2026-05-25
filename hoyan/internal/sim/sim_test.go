@@ -80,6 +80,20 @@ func TestIBGPSplitHorizon(t *testing.T) {
 	}
 }
 
+func TestSRLinuxExportPolicySetsMED(t *testing.T) {
+	g := loadGraph(t)
+	for _, r := range g.RIB("transit-south", "10.3.0.0/16") {
+		if r.From != "core-gz" {
+			continue
+		}
+		if r.MED != 55 {
+			t.Fatalf("core-gz route MED = %d, want 55: %#v", r.MED, r)
+		}
+		return
+	}
+	t.Fatalf("transit-south did not learn 10.3.0.0/16 from core-gz")
+}
+
 func TestPacketPolicyDeny(t *testing.T) {
 	g := loadGraph(t)
 	_, ok, reason := g.PacketReachable("cust-bj", "10.4.1.10", "tcp", NoFailures())

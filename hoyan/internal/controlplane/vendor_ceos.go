@@ -1,4 +1,4 @@
-package sim
+package controlplane
 
 import (
 	"sort"
@@ -28,4 +28,11 @@ func (b ceosBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEn
 		return b.DecisionProcess().Less(device, out[i], out[j])
 	})
 	return out
+}
+
+func (b ceosBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
+	if !b.baseDeviceBehavior.RouteValidForRIB(device, route) {
+		return false
+	}
+	return route.NextHop == "" || route.NextHop == route.From
 }

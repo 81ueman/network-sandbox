@@ -1,4 +1,4 @@
-package sim
+package controlplane
 
 import (
 	"net/netip"
@@ -27,6 +27,9 @@ type DeviceBehavior interface {
 	CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool
 	CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
 	CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
+	RouteValidForRIB(device model.Node, route RIBEntry) bool
+	RouteEligibleForAdvertisement(device model.Node, route RIBEntry) bool
+	RouteInstallableInFIB(device model.Node, installed []RIBEntry, route RIBEntry) bool
 }
 
 func (b baseDeviceBehavior) Kind() model.DeviceKind {
@@ -47,6 +50,18 @@ func (b baseDeviceBehavior) CheckDataIngress(device model.Node, pkt PacketMessag
 
 func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
 	return deniedPolicyName(device.Name, "", pkt.Prefix, pkt.Protocol, "data", "egress", policies)
+}
+
+func (b baseDeviceBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
+	return !route.Invalid
+}
+
+func (b baseDeviceBehavior) RouteEligibleForAdvertisement(device model.Node, route RIBEntry) bool {
+	return b.RouteValidForRIB(device, route)
+}
+
+func (b baseDeviceBehavior) RouteInstallableInFIB(device model.Node, installed []RIBEntry, route RIBEntry) bool {
+	return b.RouteValidForRIB(device, route)
 }
 
 func matchesDenyPolicy(node, peer, prefix, protocol, plane, stage string, policies []model.Policy) bool {

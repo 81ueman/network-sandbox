@@ -1,4 +1,4 @@
-package sim
+package controlplane
 
 import (
 	"strings"
@@ -40,4 +40,11 @@ func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 
 func (frrDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {
 	return defaultBGPDecisionProcess{}.Equivalent(receiver, a, b)
+}
+
+func (b frrBehavior) RouteInstallableInFIB(device model.Node, installed []RIBEntry, route RIBEntry) bool {
+	if !b.baseDeviceBehavior.RouteInstallableInFIB(device, installed, route) {
+		return false
+	}
+	return !EquivalentInstalledRoute(b.DecisionProcess(), device, installed, route)
 }
