@@ -289,12 +289,16 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 }
 
 func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) {
-	// TODO: parse SR Linux routing-policy and BGP import/export policy once
-	// live lab configs use them.
 	var cfg ParsedConfig
 	var warnings []UnsupportedStatement
 	groupAS := map[string]uint32{}
+	groupImportPolicy := map[string]string{}
+	groupExportPolicy := map[string]string{}
 	neighborGroup := map[string]string{}
+	neighborImportPolicy := map[string]string{}
+	neighborExportPolicy := map[string]string{}
+	prefixLists := map[string]*PrefixList{}
+	routePolicies := map[string]*RoutePolicy{}
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	lineNo := 0
 	for scanner.Scan() {
@@ -305,10 +309,20 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 			continue
 		}
 		switch {
-		case collectWarnings && containsSeq(fields, "routing-policy"):
-			warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, "unsupported SR Linux routing-policy statement"))
-		case collectWarnings && containsSeq(fields, "protocols", "bgp") && containsAnyField(fields, "import-policy", "export-policy"):
-			warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, "unsupported SR Linux BGP import/export policy statement"))
+		case srLinuxRoutingPolicyKind(fields) == "prefix-set":
+			if err := parseSRLinuxPrefixSet(prefixLists, fields); err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+			}
+		case srLinuxRoutingPolicyKind(fields) == "policy":
+			if err := parseSRLinuxRoutePolicy(routePolicies, prefixLists, fields); err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+			}
 		case containsSeq(fields, "system", "name", "host-name") && len(fields) > 0:
 			cfg.Hostname = fields[len(fields)-1]
 		case containsSeq(fields, "interface") && containsSeq(fields, "ipv4", "address") && len(fields) > 0:
@@ -331,18 +345,254 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 				return ParseResult{}, err
 			}
 			groupAS[group] = uint32(asn)
+		case containsSeq(fields, "protocols", "bgp", "group") && containsAnyField(fields, "import-policy", "export-policy"):
+			group := fieldAfter(fields, "group")
+			policy, err := parseSRLinuxPolicyBinding(fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+				continue
+			}
+			if containsAnyField(fields, "import-policy") {
+				groupImportPolicy[group] = policy
+			} else {
+				groupExportPolicy[group] = policy
+			}
 		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsSeq(fields, "peer-group"):
 			addr := fieldAfter(fields, "neighbor")
 			neighborGroup[addr] = fields[len(fields)-1]
+		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsAnyField(fields, "import-policy", "export-policy"):
+			addr := fieldAfter(fields, "neighbor")
+			policy, err := parseSRLinuxPolicyBinding(fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+				continue
+			}
+			if containsAnyField(fields, "import-policy") {
+				neighborImportPolicy[addr] = policy
+			} else {
+				neighborExportPolicy[addr] = policy
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return ParseResult{}, err
 	}
 	for addr, group := range neighborGroup {
-		cfg.Neighbors = append(cfg.Neighbors, BGPNeighbor{Address: addr, RemoteAS: groupAS[group], Activated: true})
+		neighbor := BGPNeighbor{
+			Address:      addr,
+			RemoteAS:     groupAS[group],
+			Activated:    true,
+			ImportPolicy: groupImportPolicy[group],
+			ExportPolicy: groupExportPolicy[group],
+		}
+		if policy := neighborImportPolicy[addr]; policy != "" {
+			neighbor.ImportPolicy = policy
+		}
+		if policy := neighborExportPolicy[addr]; policy != "" {
+			neighbor.ExportPolicy = policy
+		}
+		cfg.Neighbors = append(cfg.Neighbors, neighbor)
 	}
+	addSRLinuxDefaultPolicyActions(routePolicies)
+	cfg.PrefixLists = sortedPrefixLists(prefixLists)
+	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
 	return ParseResult{Config: cfg, Warnings: warnings}, nil
+}
+
+func parseSRLinuxPrefixSet(prefixLists map[string]*PrefixList, fields []string) error {
+	name := fieldAfter(fields, "prefix-set")
+	prefix := fieldAfter(fields, "prefix")
+	if name == "" || prefix == "" {
+		return fmt.Errorf("unsupported SR Linux prefix-set statement")
+	}
+	ge, le, err := parseSRLinuxMaskLengthRange(prefix, fieldAfter(fields, "mask-length-range"))
+	if err != nil {
+		return err
+	}
+	rule, err := parsePrefixListRule(0, "permit", prefix, prefixRangeFields(ge, le))
+	if err != nil {
+		return err
+	}
+	addPrefixListRule(prefixLists, name, rule)
+	return nil
+}
+
+func parseSRLinuxMaskLengthRange(prefix, raw string) (int, int, error) {
+	if raw == "" || raw == "exact" {
+		return 0, 0, nil
+	}
+	parts := strings.Split(raw, "..")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unsupported SR Linux mask-length-range %q", raw)
+	}
+	ge, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	le, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	parsed, err := netip.ParsePrefix(prefix)
+	if err != nil {
+		return 0, 0, err
+	}
+	if ge == parsed.Bits() {
+		ge = 0
+	}
+	if le == parsed.Bits() {
+		le = 0
+	}
+	return ge, le, nil
+}
+
+func prefixRangeFields(ge, le int) []string {
+	var fields []string
+	if ge > 0 {
+		fields = append(fields, "ge", strconv.Itoa(ge))
+	}
+	if le > 0 {
+		fields = append(fields, "le", strconv.Itoa(le))
+	}
+	return fields
+}
+
+const unsupportedSRLinuxPolicyPrefixList = "__unsupported_srlinux_policy_never_match__"
+
+func parseSRLinuxRoutePolicy(routePolicies map[string]*RoutePolicy, prefixLists map[string]*PrefixList, fields []string) error {
+	name := fieldAfter(fields, "policy")
+	if name == "" {
+		return fmt.Errorf("unsupported SR Linux routing-policy statement")
+	}
+	if containsSeq(fields, "default-action", "policy-result") {
+		action := fields[len(fields)-1]
+		if action != "accept" && action != "reject" {
+			return fmt.Errorf("unsupported SR Linux routing-policy default-action %q", action)
+		}
+		addRoutePolicyRule(routePolicies, name, srLinuxPolicyAction(action), 65535)
+		return nil
+	}
+	if !containsAnyField(fields, "statement") {
+		return fmt.Errorf("unsupported SR Linux routing-policy statement")
+	}
+	seq, err := strconv.Atoi(fieldAfter(fields, "statement"))
+	if err != nil {
+		return err
+	}
+	policy, rule := ensureRoutePolicyRule(routePolicies, name, seq)
+	_ = policy
+	switch {
+	case containsSeq(fields, "match", "prefix", "prefix-set"):
+		rule.MatchPrefixList = fieldAfter(fields, "prefix-set")
+	case containsSeq(fields, "action", "policy-result"):
+		action := fields[len(fields)-1]
+		if action != "accept" && action != "reject" {
+			return fmt.Errorf("unsupported SR Linux routing-policy action %q", action)
+		}
+		rule.Action = srLinuxPolicyAction(action)
+	case containsSeq(fields, "action") && fields[len(fields)-1] == "accept":
+		rule.Action = "permit"
+	case containsSeq(fields, "action") && fields[len(fields)-1] == "reject":
+		rule.Action = "deny"
+	case containsSeq(fields, "action", "bgp", "local-preference", "set"):
+		v, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil {
+			return err
+		}
+		rule.SetLocalPref = intPtr(v)
+	case containsSeq(fields, "action", "bgp", "med", "set") ||
+		containsSeq(fields, "action", "bgp", "med", "operation", "set") ||
+		containsSeq(fields, "action", "bgp", "metric", "set") ||
+		containsSeq(fields, "action", "bgp", "metric", "operation", "set"):
+		v, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil {
+			return err
+		}
+		rule.SetMED = intPtr(v)
+	default:
+		markUnsupportedSRLinuxRoutePolicyRule(prefixLists, rule)
+		return fmt.Errorf("unsupported SR Linux routing-policy statement")
+	}
+	return nil
+}
+
+func markUnsupportedSRLinuxRoutePolicyRule(prefixLists map[string]*PrefixList, rule *RoutePolicyRule) {
+	if prefixLists[unsupportedSRLinuxPolicyPrefixList] == nil {
+		denyAny, err := parsePrefixListRule(0, "deny", "any", nil)
+		if err == nil {
+			prefixLists[unsupportedSRLinuxPolicyPrefixList] = &PrefixList{Name: unsupportedSRLinuxPolicyPrefixList, Rules: []PrefixListRule{denyAny}}
+		}
+	}
+	rule.MatchPrefixList = unsupportedSRLinuxPolicyPrefixList
+}
+
+func addSRLinuxDefaultPolicyActions(routePolicies map[string]*RoutePolicy) {
+	for _, policy := range routePolicies {
+		hasDefault := false
+		for _, rule := range policy.Rules {
+			if rule.Seq == 65535 {
+				hasDefault = true
+				break
+			}
+		}
+		if !hasDefault {
+			policy.Rules = append(policy.Rules, RoutePolicyRule{Seq: 65535, Action: "permit"})
+		}
+	}
+}
+
+func ensureRoutePolicyRule(routePolicies map[string]*RoutePolicy, name string, seq int) (*RoutePolicy, *RoutePolicyRule) {
+	if routePolicies[name] == nil {
+		routePolicies[name] = &RoutePolicy{Name: name}
+	}
+	policy := routePolicies[name]
+	for i := range policy.Rules {
+		if policy.Rules[i].Seq == seq {
+			return policy, &policy.Rules[i]
+		}
+	}
+	policy.Rules = append(policy.Rules, RoutePolicyRule{Seq: seq, Action: "deny"})
+	return policy, &policy.Rules[len(policy.Rules)-1]
+}
+
+func srLinuxPolicyAction(action string) string {
+	if action == "reject" {
+		return "deny"
+	}
+	return "permit"
+}
+
+func parseSRLinuxPolicyBinding(fields []string) (string, error) {
+	for i, field := range fields {
+		if field != "import-policy" && field != "export-policy" {
+			continue
+		}
+		policies := fields[i+1:]
+		if len(policies) == 0 {
+			return "", fmt.Errorf("unsupported SR Linux empty BGP policy binding")
+		}
+		if policies[0] == "[" {
+			policies = policies[1:]
+			if len(policies) == 0 {
+				return "", fmt.Errorf("unsupported SR Linux empty BGP policy binding")
+			}
+			if len(policies) < 2 || policies[1] != "]" {
+				return "", fmt.Errorf("unsupported SR Linux multiple BGP policy binding")
+			}
+			return policies[0], nil
+		}
+		if len(policies) > 1 {
+			return "", fmt.Errorf("unsupported SR Linux multiple BGP policy binding")
+		}
+		return policies[0], nil
+	}
+	return "", fmt.Errorf("unsupported SR Linux BGP policy binding")
 }
 
 func unsupportedStatement(vendor, file string, line int, text, reason string) UnsupportedStatement {
@@ -353,6 +603,15 @@ func unsupportedStatement(vendor, file string, line int, text, reason string) Un
 		Text:   text,
 		Reason: reason,
 	}
+}
+
+func srLinuxRoutingPolicyKind(fields []string) string {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "routing-policy" {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func isRouteMapPolicyKind(kind DeviceKind) bool {

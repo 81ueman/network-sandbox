@@ -277,32 +277,78 @@ route-map RM permit 10
 	}
 }
 
-func TestParseConfigWithWarningsReportsUnsupportedSRLinuxPolicies(t *testing.T) {
+func TestParseSRLinuxRoutingPolicies(t *testing.T) {
 	config := `
 set / system name host-name core1
 set / network-instance default protocols bgp autonomous-system 65100
-set / routing-policy policy IMPORT statement 10 action accept
+set / routing-policy prefix-set LOCAL prefix 10.0.0.0/24 mask-length-range 24..32
+set / routing-policy policy IMPORT statement 10 match prefix prefix-set LOCAL
+set / routing-policy policy IMPORT statement 10 action bgp local-preference set 250
+set / routing-policy policy IMPORT statement 10 action policy-result accept
+set / routing-policy policy EXPORT statement 20 action bgp med operation set value 77
+set / routing-policy policy EXPORT statement 20 action policy-result accept
+set / routing-policy policy REJECT-ALL default-action policy-result reject
 set / network-instance default protocols bgp group edge import-policy [ IMPORT ]
+set / network-instance default protocols bgp group edge export-policy [ EXPORT ]
 set / network-instance default protocols bgp group edge peer-as 65001
 set / network-instance default protocols bgp neighbor 192.0.2.1 peer-group edge
+set / network-instance default protocols bgp neighbor 192.0.2.1 export-policy [ REJECT-ALL ]
 `
 	path := filepath.Join(t.TempDir(), "core.cfg")
 	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	cfg, err := ParseConfig("srlinux", path)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if cfg.Hostname != "core1" || cfg.ASN != 65100 {
+		t.Fatalf("Config = %#v", cfg)
+	}
+	if got, want := prefixListsWithoutMatches(cfg.PrefixLists), []PrefixList{{Name: "LOCAL", Rules: []PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24", Le: 32}}}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PrefixLists = %#v, want %#v", got, want)
+	}
+	importPolicy := routePolicyByName(cfg.RoutePolicies, "IMPORT")
+	if importPolicy == nil || len(importPolicy.Rules) != 2 || importPolicy.Rules[0].Action != "permit" || importPolicy.Rules[0].MatchPrefixList != "LOCAL" || importPolicy.Rules[0].SetLocalPref == nil || *importPolicy.Rules[0].SetLocalPref != 250 || importPolicy.Rules[1].Action != "permit" {
+		t.Fatalf("IMPORT = %#v", importPolicy)
+	}
+	exportPolicy := routePolicyByName(cfg.RoutePolicies, "EXPORT")
+	if exportPolicy == nil || len(exportPolicy.Rules) != 2 || exportPolicy.Rules[0].Action != "permit" || exportPolicy.Rules[0].SetMED == nil || *exportPolicy.Rules[0].SetMED != 77 || exportPolicy.Rules[1].Action != "permit" {
+		t.Fatalf("EXPORT = %#v", exportPolicy)
+	}
+	rejectPolicy := routePolicyByName(cfg.RoutePolicies, "REJECT-ALL")
+	if rejectPolicy == nil || len(rejectPolicy.Rules) != 1 || rejectPolicy.Rules[0].Action != "deny" {
+		t.Fatalf("REJECT-ALL = %#v", rejectPolicy)
+	}
+	if len(cfg.Neighbors) != 1 || cfg.Neighbors[0].ImportPolicy != "IMPORT" || cfg.Neighbors[0].ExportPolicy != "REJECT-ALL" {
+		t.Fatalf("Neighbors = %#v, want group import and neighbor export override", cfg.Neighbors)
+	}
+}
+
+func TestParseSRLinuxRoutingPolicyRejectsUnsupportedMatch(t *testing.T) {
+	config := `
+set / routing-policy policy IMPORT statement 10 match protocol bgp
+set / routing-policy policy IMPORT statement 10 action policy-result accept
+`
+	path := filepath.Join(t.TempDir(), "core.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := ParseConfig("srlinux", path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported SR Linux routing-policy statement") {
+		t.Fatalf("ParseConfig() error = %v, want unsupported SR Linux routing-policy statement", err)
+	}
 	result, err := ParseConfigWithWarnings("srlinux", path)
 	if err != nil {
 		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
 	}
-	if result.Config.Hostname != "core1" || result.Config.ASN != 65100 || len(result.Config.Neighbors) != 1 {
-		t.Fatalf("Config = %#v", result.Config)
-	}
-	want := []UnsupportedStatement{
-		{Vendor: "srlinux", File: path, Line: 4, Text: "set / routing-policy policy IMPORT statement 10 action accept", Reason: "unsupported SR Linux routing-policy statement"},
-		{Vendor: "srlinux", File: path, Line: 5, Text: "set / network-instance default protocols bgp group edge import-policy [ IMPORT ]", Reason: "unsupported SR Linux BGP import/export policy statement"},
-	}
+	want := []UnsupportedStatement{{Vendor: "srlinux", File: path, Line: 2, Text: "set / routing-policy policy IMPORT statement 10 match protocol bgp", Reason: "unsupported SR Linux routing-policy statement"}}
 	if !reflect.DeepEqual(result.Warnings, want) {
 		t.Fatalf("Warnings = %#v, want %#v", result.Warnings, want)
+	}
+	policy := routePolicyByName(result.Config.RoutePolicies, "IMPORT")
+	if policy == nil || len(policy.Rules) != 2 || policy.Rules[0].MatchPrefixList == "" {
+		t.Fatalf("unsupported match should not become match-any: %#v", policy)
 	}
 }
 
