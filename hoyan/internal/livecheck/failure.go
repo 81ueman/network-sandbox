@@ -103,7 +103,8 @@ func LinkFailureScenario(topo *model.Topology, linkName string) (RIBFailureScena
 }
 
 func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScenario, error) {
-	if _, ok := topo.Node(nodeName); !ok {
+	node, ok := topo.Node(nodeName)
+	if !ok {
 		return RIBFailureScenario{}, fmt.Errorf("node %s not found", nodeName)
 	}
 	return RIBFailureScenario{
@@ -111,8 +112,9 @@ func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScena
 		Failures:    sim.NodeFailures(nodeName),
 		ActiveNodes: activeSupportedNodes(topo.Nodes, map[string]bool{nodeName: true}),
 		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
-			if _, err := runner.Run(ctx, "docker", "stop", nodeName); err != nil {
-				return fmt.Errorf("docker stop %s: %w", nodeName, err)
+			containerName := node.RuntimeName()
+			if _, err := runner.Run(ctx, "docker", "stop", containerName); err != nil {
+				return fmt.Errorf("docker stop %s: %w", containerName, err)
 			}
 			return nil
 		},

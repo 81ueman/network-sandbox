@@ -2,7 +2,6 @@ mgmt:
     ipv4-subnet: 172.86.86.0/24
     network: hoyan-wan
 name: hoyan-wan
-prefix: ""
 topology:
     kinds:
         arista_ceos:

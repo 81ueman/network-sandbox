@@ -7,7 +7,8 @@ Go verifier for offline route, packet, and failure reachability checks.
 The verifier treats `hoyan.clab.yml` plus the referenced device configs as the
 source of truth. `hoyan.clab.yml` provides containerlab inventory and physical
 links; FRR, cEOS, and SR Linux startup configs provide interfaces, BGP ASN,
-router-id, neighbors, and advertised prefixes. The verifier builds a Hoyan-style
+router-id, neighbors, and advertised prefixes. Containers use containerlab's
+default `clab-<lab-name>-<node-name>` names. The verifier builds a Hoyan-style
 network model from those configs: each device has control-plane and data-plane
 pipelines made of ingress policy, route selector, and egress policy. BGP route
 updates populate an extended RIB with topology conditions, and the FIB is
@@ -36,6 +37,25 @@ go run -tags z3 ./cmd/hoyan-verify
 ```
 
 ## Compare Modeled BGP RIBs With Live Nodes
+
+When running Hoyan from multiple git worktrees, render an isolated topology per
+worktree first. The suffix is appended to the lab name and Docker management
+network name, derives a separate `172.86.<n>.0/24` management subnet, keeps
+containerlab's default naming, and rewrites config paths so the generated
+topology can live outside this directory:
+
+```bash
+go run ./cmd/hoyan-render-topology -suffix issue-21 -output /tmp/hoyan-issue-21.clab.yml
+```
+
+For `-suffix issue-21`, containers use containerlab's default names such as
+`clab-hoyan-wan-issue-21-bj-edge1`. Use the generated topology with live
+commands:
+
+```bash
+go run ./cmd/hoyan-live-check -topology /tmp/hoyan-issue-21.clab.yml
+go run ./cmd/hoyan-rib-compare -topology /tmp/hoyan-issue-21.clab.yml
+```
 
 To run the full live integration check, including deploy, convergence wait,
 modeled-vs-live BGP RIB comparison, and cleanup:
@@ -114,9 +134,9 @@ containerlab destroy --cleanup
 Useful FRR checks:
 
 ```bash
-docker exec -it bj-edge1 vtysh -c "show ip bgp summary"
-docker exec -it bj-edge1 vtysh -c "show ip route bgp"
-docker exec -it cust-bj ping -c 3 10.4.1.10
+docker exec -it clab-hoyan-wan-bj-edge1 vtysh -c "show ip bgp summary"
+docker exec -it clab-hoyan-wan-bj-edge1 vtysh -c "show ip route bgp"
+docker exec -it clab-hoyan-wan-cust-bj ping -c 3 10.4.1.10
 ```
 
 ## Z3

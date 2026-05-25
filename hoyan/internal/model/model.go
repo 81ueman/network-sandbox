@@ -18,6 +18,7 @@ type Topology struct {
 
 type Node struct {
 	Name           string          `yaml:"name"`
+	ContainerName  string          `yaml:"container_name"`
 	Kind           string          `yaml:"kind"`
 	Role           string          `yaml:"role"`
 	ASN            uint32          `yaml:"asn"`
@@ -31,6 +32,13 @@ type Node struct {
 	ASPathLists    []ASPathList    `yaml:"as_path_lists"`
 	CommunityLists []CommunityList `yaml:"community_lists"`
 	RoutePolicies  []RoutePolicy   `yaml:"route_policies"`
+}
+
+func (n Node) RuntimeName() string {
+	if n.ContainerName != "" {
+		return n.ContainerName
+	}
+	return n.Name
 }
 
 type Link struct {

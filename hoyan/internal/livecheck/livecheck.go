@@ -102,13 +102,14 @@ func WaitForContainers(ctx context.Context, runner ribcompare.Runner, nodes []mo
 	var lastErr error
 	return poll(ctx, interval, func() (bool, error) {
 		for _, n := range nodes {
-			out, err := runner.Run(ctx, "docker", "inspect", "-f", "{{.State.Running}}", n.Name)
+			containerName := n.RuntimeName()
+			out, err := runner.Run(ctx, "docker", "inspect", "-f", "{{.State.Running}}", containerName)
 			if err != nil {
-				lastErr = fmt.Errorf("docker inspect -f {{.State.Running}} %s: %w", n.Name, err)
+				lastErr = fmt.Errorf("docker inspect -f {{.State.Running}} %s: %w", containerName, err)
 				return false, nil
 			}
 			if strings.TrimSpace(string(out)) != "true" {
-				lastErr = fmt.Errorf("container %s is not running", n.Name)
+				lastErr = fmt.Errorf("container %s is not running", containerName)
 				return false, nil
 			}
 		}

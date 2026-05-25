@@ -16,9 +16,11 @@ type policyFile struct {
 }
 
 type clabFile struct {
-	Name string `yaml:"name"`
-	Mgmt struct {
+	Name   string  `yaml:"name"`
+	Prefix *string `yaml:"prefix"`
+	Mgmt   struct {
 		IPv4Subnet string `yaml:"ipv4-subnet"`
+		Network    string `yaml:"network"`
 	} `yaml:"mgmt"`
 	Topology struct {
 		Nodes map[string]clabNode `yaml:"nodes"`
@@ -59,7 +61,10 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		if configPath == "" {
 			return nil, fmt.Errorf("node %s has no startup config or frr.conf bind", name)
 		}
-		fullConfigPath := filepath.Join(root, configPath)
+		fullConfigPath := configPath
+		if !filepath.IsAbs(fullConfigPath) {
+			fullConfigPath = filepath.Join(root, configPath)
+		}
 		parsed, err := ParseConfig(kind, fullConfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
@@ -70,6 +75,7 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		}
 		node := Node{
 			Name:           name,
+			ContainerName:  containerlabContainerName(raw.Prefix, raw.Name, name),
 			Kind:           kind,
 			Role:           cnode.Group,
 			ASN:            parsed.ASN,
@@ -126,6 +132,17 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		return nil, err
 	}
 	return topo, nil
+}
+
+func containerlabContainerName(prefix *string, labName, nodeName string) string {
+	if prefix != nil && *prefix == "" {
+		return nodeName
+	}
+	effectivePrefix := "clab"
+	if prefix != nil {
+		effectivePrefix = *prefix
+	}
+	return effectivePrefix + "-" + labName + "-" + nodeName
 }
 
 func parsePrefixes(raw []string) ([]Prefix, error) {
