@@ -78,6 +78,44 @@ func TestSymbolicPacketReachabilitySinglePathIncludesForwardingConditions(t *tes
 	}
 }
 
+func TestSymbolicPacketReachabilityForExactPrefixSetMatchesConcreteIP(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", Cost: 10},
+			{Name: "mid-dst", A: "mid", B: "dst", Cost: 20},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	concrete := e.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+	prefixSet := e.SymbolicPacketReachabilityForPrefixSet("src", model.ExactPrefixSet{Prefix: pfx}, "icmp")
+	if concrete.Reachable.Key() != prefixSet.Reachable.Key() {
+		t.Fatalf("PrefixSet reachable key = %s, want concrete key %s", prefixSet.Reachable.Key(), concrete.Reachable.Key())
+	}
+	if got, want := len(prefixSet.Paths), len(concrete.Paths); got != want {
+		t.Fatalf("PrefixSet paths = %d, want concrete paths %d", got, want)
+	}
+	universe, err := model.BuildPrefixUniverse([]model.PrefixSet{model.ExactPrefixSet{Prefix: pfx}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classResult := e.SymbolicPacketReachabilityForClass("src", universe, universe.Classes[0].ID, "icmp")
+	if concrete.Reachable.Key() != classResult.Reachable.Key() {
+		t.Fatalf("class reachable key = %s, want concrete key %s", classResult.Reachable.Key(), concrete.Reachable.Key())
+	}
+}
+
 func TestSymbolicPacketReachabilityRedundantPathsAreORed(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{
@@ -161,6 +199,44 @@ func TestSymbolicLookupFIBAddsNotHigherMatchingConditions(t *testing.T) {
 	}
 	if !strings.Contains(candidates[1].Cond.String(), "!(") {
 		t.Fatalf("fallback condition should include NOT(higher condition): %s", candidates[1].Cond)
+	}
+}
+
+func TestSymbolicLookupFIBForPrefixSetAddsNotHigherMatchingConditions(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	defaultPfx := model.MustPrefix("0.0.0.0/0")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "specific", Kind: model.KindFRR},
+			{Name: "fallback", Kind: model.KindFRR},
+		},
+		Links: []model.Link{
+			{Name: "src-specific", A: "src", B: "specific", Cost: 1},
+			{Name: "src-fallback", A: "src", B: "fallback", Cost: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {
+			{Prefix: defaultPfx.NetIP(), NextHop: "fallback", Condition: failure.True()},
+			{Prefix: pfx.NetIP(), NextHop: "specific", Condition: failure.LinkVar("prefer-specific")},
+		},
+	})
+	candidates := e.SymbolicLookupFIBForPrefixSet("src", model.ExactPrefixSet{Prefix: pfx})
+	if len(candidates) != 2 {
+		t.Fatalf("SymbolicLookupFIBForPrefixSet candidates = %d, want 2", len(candidates))
+	}
+	if candidates[0].Entry.NextHop != "specific" {
+		t.Fatalf("first candidate next-hop = %q, want longest-prefix match specific", candidates[0].Entry.NextHop)
+	}
+	if candidates[1].Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("fallback condition should be false while higher specific route is active: %s", candidates[1].Cond)
+	}
+	if !candidates[1].Cond.Eval(e.FailureContext(failure.Links("prefer-specific"))) {
+		t.Fatalf("fallback condition should be true when higher specific route is inactive: %s", candidates[1].Cond)
 	}
 }
 
@@ -253,6 +329,50 @@ func TestPacketReachableMatchesPolicyInterface(t *testing.T) {
 	idx.Topology.Policies[0].Interface = "eth9"
 	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); !ok {
 		t.Fatalf("tcp PacketReachable() with nonmatching interface ok=false reason=%q, want reachable", reason)
+	}
+}
+
+func TestSymbolicPacketReachabilityForClassAppliesDstPrefixPolicy(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
+			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
+		},
+		Policies: []model.Policy{{
+			Name:      "deny-tcp",
+			Node:      "mid",
+			Plane:     "data",
+			Stage:     "egress",
+			Interface: "eth2",
+			Action:    "deny",
+			Protocol:  "tcp",
+			DstPrefix: pfx,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	universe, err := model.BuildPrefixUniverse([]model.PrefixSet{model.ExactPrefixSet{Prefix: pfx}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpResult := e.SymbolicPacketReachabilityForClass("src", universe, universe.Classes[0].ID, "tcp")
+	if tcpResult.Reachable.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("tcp class reachability should be denied by dst_prefix policy: %s", tcpResult.Reachable)
+	}
+	icmpResult := e.SymbolicPacketReachabilityForClass("src", universe, universe.Classes[0].ID, "icmp")
+	if !icmpResult.Reachable.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("icmp class reachability should be allowed: %s", icmpResult.Reachable)
 	}
 }
 
