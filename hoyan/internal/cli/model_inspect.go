@@ -70,6 +70,7 @@ type symbolicPacketInspect struct {
 	Unreachable string                      `json:"unreachable_condition"`
 	Reason      string                      `json:"reason,omitempty"`
 	Paths       []symbolicPacketInspectPath `json:"paths,omitempty"`
+	Blocked     []symbolicPacketBlockedPath `json:"blocked_paths,omitempty"`
 }
 
 type symbolicPacketInspectPath struct {
@@ -87,6 +88,19 @@ type symbolicPacketInspectState struct {
 	PathNodes        []string `json:"path_nodes,omitempty"`
 	PathLinks        []string `json:"path_links,omitempty"`
 	Cost             int      `json:"cost"`
+}
+
+type symbolicPacketBlockedPath struct {
+	PathNodes []string           `json:"path_nodes,omitempty"`
+	PathLinks []string           `json:"path_links,omitempty"`
+	Cost      int                `json:"cost"`
+	Condition string             `json:"condition,omitempty"`
+	Reason    string             `json:"reason,omitempty"`
+	Policy    string             `json:"policy,omitempty"`
+	Node      string             `json:"node,omitempty"`
+	Interface string             `json:"interface,omitempty"`
+	Stage     string             `json:"stage,omitempty"`
+	Source    model.PolicySource `json:"source,omitempty"`
 }
 
 type symbolicRouteInspect struct {
@@ -438,6 +452,20 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 		}
 		out.Paths = append(out.Paths, row)
 	}
+	for _, path := range result.Blocked {
+		out.Blocked = append(out.Blocked, symbolicPacketBlockedPath{
+			PathNodes: append([]string(nil), path.Path.Nodes...),
+			PathLinks: append([]string(nil), path.Path.Links...),
+			Cost:      path.Path.Cost,
+			Condition: condString(path.Cond),
+			Reason:    path.Reason,
+			Policy:    path.Policy,
+			Node:      path.Node,
+			Interface: path.Interface,
+			Stage:     path.Stage,
+			Source:    path.Source,
+		})
+	}
 	return out
 }
 
@@ -528,7 +556,47 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 			strings.Join(hops, "->"),
 		)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(result.Blocked) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out, "blocked:")
+	blockedTW := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(blockedTW, "PATH\tCOST\tCONDITION\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+	for _, path := range result.Blocked {
+		fmt.Fprintf(blockedTW, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			strings.Join(path.PathNodes, "->"),
+			path.Cost,
+			path.Condition,
+			path.Policy,
+			path.Node,
+			path.Interface,
+			path.Stage,
+			formatPolicySource(path.Source),
+			path.Reason,
+		)
+	}
+	return blockedTW.Flush()
+}
+
+func formatPolicySource(src model.PolicySource) string {
+	var parts []string
+	if src.Vendor != "" {
+		parts = append(parts, src.Vendor)
+	}
+	if src.File != "" {
+		file := src.File
+		if src.Line > 0 {
+			file = fmt.Sprintf("%s:%d", file, src.Line)
+		}
+		parts = append(parts, file)
+	}
+	if src.Raw != "" {
+		parts = append(parts, src.Raw)
+	}
+	return strings.Join(parts, " ")
 }
 
 func writeSymbolicRouteTable(out io.Writer, result symbolicRouteInspect) error {

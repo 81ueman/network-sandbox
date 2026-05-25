@@ -15,6 +15,7 @@ type RIBEntry = controlplane.RIBEntry
 type FIBEntry = dataplane.FIBEntry
 type Path = dataplane.Path
 type SymbolicFIBCandidate = dataplane.SymbolicFIBCandidate
+type SymbolicPacketBlockedPath = dataplane.SymbolicPacketBlockedPath
 type SymbolicPacketPath = dataplane.SymbolicPacketPath
 type SymbolicPacketState = dataplane.SymbolicPacketState
 type SymbolicReachabilityResult = dataplane.SymbolicReachabilityResult

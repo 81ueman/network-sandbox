@@ -28,10 +28,22 @@ type SymbolicPacketPath struct {
 	States []SymbolicPacketState
 }
 
+type SymbolicPacketBlockedPath struct {
+	Path      Path
+	Cond      failure.Cond
+	Reason    string
+	Policy    string
+	Node      string
+	Interface string
+	Stage     string
+	Source    model.PolicySource
+}
+
 type SymbolicReachabilityResult struct {
 	Reachable   failure.Cond
 	Unreachable failure.Cond
 	Paths       []SymbolicPacketPath
+	Blocked     []SymbolicPacketBlockedPath
 	Reason      string
 }
 
@@ -185,7 +197,8 @@ func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.P
 		Path:   Path{Nodes: []string{from}},
 	}
 	var paths []SymbolicPacketPath
-	e.symbolicForward(initial, dst, packetPrefix, maxHops, map[string]bool{}, nil, &paths)
+	var blocked []SymbolicPacketBlockedPath
+	e.symbolicForward(initial, dst, packetPrefix, maxHops, map[string]bool{}, nil, &paths, &blocked)
 	conds := make([]failure.Cond, 0, len(paths))
 	for _, path := range paths {
 		conds = append(conds, path.Cond)
@@ -195,6 +208,7 @@ func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.P
 		Reachable:   reachable,
 		Unreachable: failure.Not(reachable),
 		Paths:       paths,
+		Blocked:     blocked,
 	}
 }
 
@@ -207,7 +221,7 @@ func routePath(idx *model.TopologyIndex, route controlplane.RIBEntry) Path {
 	return Path{Nodes: nodes, Links: links, Cost: idx.PathCost(route.Links)}
 }
 
-func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet, packetPrefix netip.Prefix, maxHops int, visited map[string]bool, states []SymbolicPacketState, paths *[]SymbolicPacketPath) {
+func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet, packetPrefix netip.Prefix, maxHops int, visited map[string]bool, states []SymbolicPacketState, paths *[]SymbolicPacketPath, blocked *[]SymbolicPacketBlockedPath) {
 	if isFalseCond(state.Cond) {
 		return
 	}
@@ -230,7 +244,9 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 	packet := state.Packet
 	packet.Node = state.Node
 	packet.IngressInterface = state.IngressInterface
-	if _, denied := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); denied {
+	ingressDecision := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngressSymbolic(currentNode, packet, e.idx.Topology.Policies)
+	if ingressDecision.Denied {
+		e.appendBlockedPolicyPath(blocked, state.Path, failure.And(state.Cond, ingressDecision.Cond), ingressDecision, state.Node, packet.IngressInterface, "ingress")
 		return
 	}
 	nextVisited := copyVisited(visited)
@@ -246,19 +262,23 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 			continue
 		}
 		packet.EgressInterface = ingressInterface(link, state.Node)
-		if _, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
-			continue
-		}
-		nextCond := failure.And(
-			state.Cond,
-			candidate.Cond,
-			e.linkUpCond(link),
-		)
 		nextPath := Path{
 			Nodes: append(append([]string(nil), state.Path.Nodes...), entry.NextHop),
 			Links: append(append([]string(nil), state.Path.Links...), link.Name),
 			Cost:  state.Path.Cost + link.Cost,
 		}
+		egressDecision := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgressSymbolic(currentNode, packet, e.idx.Topology.Policies)
+		if egressDecision.Denied {
+			denyCond := failure.And(state.Cond, candidate.Cond, egressDecision.Cond)
+			e.appendBlockedPolicyPath(blocked, nextPath, denyCond, egressDecision, state.Node, packet.EgressInterface, "egress")
+			continue
+		}
+		nextCond := failure.And(
+			state.Cond,
+			candidate.Cond,
+			failure.Not(egressDecision.Cond),
+			e.linkUpCond(link),
+		)
 		nextState := SymbolicPacketState{
 			Node:             entry.NextHop,
 			IngressInterface: ingressInterface(link, entry.NextHop),
@@ -266,7 +286,31 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 			Cond:             nextCond,
 			Path:             nextPath,
 		}
-		e.symbolicForward(nextState, dst, packetPrefix, maxHops, nextVisited, states, paths)
+		e.symbolicForward(nextState, dst, packetPrefix, maxHops, nextVisited, states, paths, blocked)
+	}
+}
+
+func (e *Engine) appendBlockedPolicyPath(blocked *[]SymbolicPacketBlockedPath, path Path, cond failure.Cond, decision controlplane.PolicyDecision, node, iface, stage string) {
+	if blocked == nil {
+		return
+	}
+	*blocked = append(*blocked, SymbolicPacketBlockedPath{
+		Path:      clonePath(path),
+		Cond:      condOrTrue(cond),
+		Reason:    decision.Reason,
+		Policy:    decision.PolicyName,
+		Node:      node,
+		Interface: iface,
+		Stage:     stage,
+		Source:    decision.Source,
+	})
+}
+
+func clonePath(path Path) Path {
+	return Path{
+		Nodes: append([]string(nil), path.Nodes...),
+		Links: append([]string(nil), path.Links...),
+		Cost:  path.Cost,
 	}
 }
 
