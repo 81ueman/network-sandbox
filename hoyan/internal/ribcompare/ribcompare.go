@@ -759,6 +759,9 @@ func peerAddress(idx *model.TopologyIndex, node, peer string) string {
 	if !ok {
 		return peer
 	}
+	if addr, ok := idx.PeerAddressOnLink(node, peer); ok {
+		return addr.String()
+	}
 	a, b := linkAddresses(link.Subnet)
 	switch {
 	case link.A == node && link.B == peer:
@@ -797,6 +800,9 @@ func expectedRouteValid(node model.Node, route sim.RIBEntry) bool {
 }
 
 func linkAddresses(raw string) (string, string) {
+	// Legacy fallback for incomplete topology data. Normal next-hop resolution
+	// uses parsed interface addresses from TopologyIndex instead of guessing
+	// endpoint addresses from a link subnet.
 	parts := strings.Split(raw, "/")
 	prefixLen := ""
 	if len(parts) == 2 {

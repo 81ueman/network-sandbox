@@ -218,6 +218,29 @@ func TestWaitForMatchingRIBsReportsBestMismatchAndExtraPaths(t *testing.T) {
 	}
 }
 
+func TestWaitForMatchingRIBsClearsTransientCollectionError(t *testing.T) {
+	polls := 0
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		polls++
+		if polls == 1 {
+			return nil, errors.New("transient collector error")
+		}
+		return []byte(`{"10.0.0.0/24":[{"valid":true,"bestpath":false,"nexthops":[{"ip":"192.0.2.1"}]}]}`), nil
+	}}
+	nodes := []model.Node{{Name: "r1", Kind: "frr"}}
+	expected := []ribcompare.NormalizedBgpRoute{{Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Paths: []ribcompare.NormalizedBgpPath{{Best: true, Valid: true, NextHop: "192.0.2.1", Origin: "igp", LocalPref: 100}}}}
+	_, diffs, err := WaitForMatchingRIBs(context.Background(), runner, nodes, expected, time.Millisecond, 2, ribcompare.DefaultBgpRibCompareOptions())
+	if err == nil {
+		t.Fatalf("WaitForMatchingRIBs() succeeded unexpectedly")
+	}
+	if strings.Contains(err.Error(), "transient collector error") {
+		t.Fatalf("WaitForMatchingRIBs() retained stale collection error: %v", err)
+	}
+	if len(diffs.Mismatched) != 1 || diffs.Mismatched[0].Field != "best" {
+		t.Fatalf("diffs = %#v", diffs)
+	}
+}
+
 func TestLinkFailureScenarioInjectsAndCleansBothEndpoints(t *testing.T) {
 	topo := &model.Topology{
 		Name: "test-lab",

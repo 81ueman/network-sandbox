@@ -85,3 +85,43 @@ func TestTopologyIndexOriginLookups(t *testing.T) {
 		t.Fatalf("OriginForIP() = %q %s %v", node, pfx, ok)
 	}
 }
+
+func TestTopologyIndexEndpointAddressLookupUsesInterfaceAliases(t *testing.T) {
+	topo := &Topology{
+		Nodes: []Node{
+			{Name: "frr", Interfaces: []Interface{{Name: "eth1", Address: "192.0.2.11/24"}}},
+			{Name: "ceos", Interfaces: []Interface{{Name: "Ethernet1", Address: "192.0.2.22/24"}}},
+			{Name: "srl", Interfaces: []Interface{{Name: "ethernet-1/3", Address: "198.51.100.33/24"}}},
+			{Name: "peer", Interfaces: []Interface{{Name: "eth9", Address: "198.51.100.44/24"}}},
+		},
+		Links: []Link{
+			{Name: "frr-ceos", A: "frr", B: "ceos", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/24"},
+			{Name: "srl-peer", A: "srl", B: "peer", AIntf: "e1-3", BIntf: "eth9", Cost: 1, Subnet: "198.51.100.0/24"},
+		},
+	}
+	idx, err := BuildTopologyIndex(topo)
+	if err != nil {
+		t.Fatalf("BuildTopologyIndex() error = %v", err)
+	}
+	tests := []struct {
+		node string
+		peer string
+		want string
+	}{
+		{node: "frr", peer: "ceos", want: "192.0.2.11"},
+		{node: "ceos", peer: "frr", want: "192.0.2.22"},
+		{node: "srl", peer: "peer", want: "198.51.100.33"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.node+"-"+tt.peer, func(t *testing.T) {
+			got, ok := idx.AddressOnLink(tt.node, tt.peer)
+			if !ok || got.String() != tt.want {
+				t.Fatalf("AddressOnLink(%s,%s) = %s, %v; want %s, true", tt.node, tt.peer, got, ok, tt.want)
+			}
+		})
+	}
+	got, ok := idx.PeerAddressOnLink("frr", "ceos")
+	if !ok || got.String() != "192.0.2.22" {
+		t.Fatalf("PeerAddressOnLink(frr,ceos) = %s, %v; want 192.0.2.22, true", got, ok)
+	}
+}

@@ -25,6 +25,8 @@ type Options struct {
 	Out            io.Writer
 }
 
+const DefaultMaxPolls = 5
+
 func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error) {
 	if opts.Topology == "" {
 		opts.Topology = "hoyan.clab.yml"
@@ -36,7 +38,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		opts.PollInterval = 25 * time.Second
 	}
 	if opts.MaxPolls == 0 {
-		opts.MaxPolls = 3
+		opts.MaxPolls = DefaultMaxPolls
 	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
@@ -149,6 +151,7 @@ func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes 
 			}
 			return false, nil
 		}
+		lastErr = nil
 		last = actual
 		if seen := CountExpectedRoutes(expected, actual); seen > bestSeen {
 			bestSeen = seen
@@ -189,6 +192,7 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 			}
 			return false, nil
 		}
+		lastErr = nil
 		last = actual
 		if seen := CountExpectedRoutes(expected, actual); seen > bestSeen {
 			bestSeen = seen
