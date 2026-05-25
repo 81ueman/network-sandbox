@@ -1,0 +1,38 @@
+name: hoyan-test
+
+on:
+  push:
+    paths:
+      - 'hoyan/**'
+      - '.github/workflows/hoyan-test.yml'
+  pull_request:
+    paths:
+      - 'hoyan/**'
+      - '.github/workflows/hoyan-test.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hoyan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hoyan/go.mod
+      - run: go test ./...
+
+  test-z3:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hoyan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hoyan/go.mod
+      - run: sudo apt-get update && sudo apt-get install -y libz3-dev
+      - run: go test -tags z3 ./...
