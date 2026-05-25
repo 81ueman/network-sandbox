@@ -17,16 +17,18 @@ type Topology struct {
 }
 
 type Node struct {
-	Name       string        `yaml:"name"`
-	Kind       string        `yaml:"kind"`
-	Role       string        `yaml:"role"`
-	ASN        uint32        `yaml:"asn"`
-	MgmtIPv4   string        `yaml:"mgmt_ipv4"`
-	Loopback   string        `yaml:"loopback"`
-	ConfigPath string        `yaml:"config_path"`
-	Prefixes   []string      `yaml:"prefixes"`
-	Interfaces []Interface   `yaml:"interfaces"`
-	Neighbors  []BGPNeighbor `yaml:"neighbors"`
+	Name          string        `yaml:"name"`
+	Kind          string        `yaml:"kind"`
+	Role          string        `yaml:"role"`
+	ASN           uint32        `yaml:"asn"`
+	MgmtIPv4      string        `yaml:"mgmt_ipv4"`
+	Loopback      string        `yaml:"loopback"`
+	ConfigPath    string        `yaml:"config_path"`
+	Prefixes      []string      `yaml:"prefixes"`
+	Interfaces    []Interface   `yaml:"interfaces"`
+	Neighbors     []BGPNeighbor `yaml:"neighbors"`
+	PrefixLists   []PrefixList  `yaml:"prefix_lists"`
+	RoutePolicies []RoutePolicy `yaml:"route_policies"`
 }
 
 type Link struct {
@@ -45,11 +47,37 @@ type Interface struct {
 }
 
 type BGPNeighbor struct {
-	Address     string `yaml:"address"`
-	RemoteAS    uint32 `yaml:"remote_as"`
-	Activated   bool   `yaml:"activated"`
-	NextHopSelf bool   `yaml:"next_hop_self"`
-	PeerNode    string `yaml:"peer_node"`
+	Address      string `yaml:"address"`
+	RemoteAS     uint32 `yaml:"remote_as"`
+	Activated    bool   `yaml:"activated"`
+	NextHopSelf  bool   `yaml:"next_hop_self"`
+	PeerNode     string `yaml:"peer_node"`
+	ImportPolicy string `yaml:"import_policy"`
+	ExportPolicy string `yaml:"export_policy"`
+}
+
+type PrefixList struct {
+	Name  string           `yaml:"name"`
+	Rules []PrefixListRule `yaml:"rules"`
+}
+
+type PrefixListRule struct {
+	Seq    int    `yaml:"seq"`
+	Action string `yaml:"action"`
+	Prefix string `yaml:"prefix"`
+}
+
+type RoutePolicy struct {
+	Name  string            `yaml:"name"`
+	Rules []RoutePolicyRule `yaml:"rules"`
+}
+
+type RoutePolicyRule struct {
+	Seq             int    `yaml:"seq"`
+	Action          string `yaml:"action"`
+	MatchPrefixList string `yaml:"match_prefix_list"`
+	SetLocalPref    *int   `yaml:"set_local_pref,omitempty"`
+	SetMED          *int   `yaml:"set_med,omitempty"`
 }
 
 type Policy struct {

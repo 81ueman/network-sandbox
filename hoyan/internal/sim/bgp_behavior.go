@@ -59,7 +59,11 @@ func (b baseDeviceBehavior) ImportRoute(to model.Node, from model.Node, session 
 	if containsASN(route.ASPath, to.ASN) {
 		return BGPRouteDecision{Route: route, Accept: false, Reason: "as loop"}
 	}
-	return BGPRouteDecision{Route: route, Accept: true}
+	out := route
+	if from.ASN != to.ASN {
+		out.LocalPref = 0
+	}
+	return BGPRouteDecision{Route: out, Accept: true}
 }
 
 func (b baseDeviceBehavior) DecisionProcess() BGPDecisionProcess {

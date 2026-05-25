@@ -105,12 +105,19 @@ func TestBaseBGPImportRoute(t *testing.T) {
 		t.Fatalf("route containing receiver ASN was accepted")
 	}
 
-	accepted := behavior.ImportRoute(to, from, model.BGPNeighbor{}, RIBEntry{ASPath: []uint32{65001, 65100}})
+	accepted := behavior.ImportRoute(to, from, model.BGPNeighbor{}, RIBEntry{ASPath: []uint32{65001, 65100}, LocalPref: 200})
 	if !accepted.Accept {
 		t.Fatalf("route without receiver ASN was rejected: %s", accepted.Reason)
 	}
 	if !reflect.DeepEqual(accepted.Route.ASPath, []uint32{65001, 65100}) {
 		t.Fatalf("accepted route mutated: %#v", accepted.Route)
+	}
+	if accepted.Route.LocalPref != 0 {
+		t.Fatalf("eBGP import LocalPref = %d, want stripped before receiver default/import policy", accepted.Route.LocalPref)
+	}
+	ibgp := behavior.ImportRoute(model.Node{Name: "r3", ASN: 65001}, from, model.BGPNeighbor{}, RIBEntry{ASPath: []uint32{65100}, LocalPref: 200})
+	if !ibgp.Accept || ibgp.Route.LocalPref != 200 {
+		t.Fatalf("iBGP import = %#v, want local-pref preserved", ibgp)
 	}
 }
 

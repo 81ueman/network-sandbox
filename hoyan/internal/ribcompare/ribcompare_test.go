@@ -193,6 +193,63 @@ func TestExpectedPathUsesModeledAttributes(t *testing.T) {
 	}
 }
 
+func TestExpectedReflectsRouteMapAttributes(t *testing.T) {
+	lp := 225
+	med := 33
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name:     "origin",
+				Kind:     "frr",
+				ASN:      65001,
+				Prefixes: []string{"10.0.0.0/24"},
+				PrefixLists: []model.PrefixList{{
+					Name:  "PL-OUT",
+					Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}},
+				}},
+				RoutePolicies: []model.RoutePolicy{{
+					Name:  "SET-MED",
+					Rules: []model.RoutePolicyRule{{Action: "permit", MatchPrefixList: "PL-OUT", SetMED: &med}},
+				}},
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:     "rx",
+					RemoteAS:     65002,
+					Activated:    true,
+					ExportPolicy: "SET-MED",
+				}},
+			},
+			{
+				Name: "rx",
+				Kind: "frr",
+				ASN:  65002,
+				PrefixLists: []model.PrefixList{{
+					Name:  "PL-IN",
+					Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}},
+				}},
+				RoutePolicies: []model.RoutePolicy{{
+					Name:  "SET-LP",
+					Rules: []model.RoutePolicyRule{{Action: "permit", MatchPrefixList: "PL-IN", SetLocalPref: &lp}},
+				}},
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:     "origin",
+					RemoteAS:     65001,
+					Activated:    true,
+					ImportPolicy: "SET-LP",
+				}},
+			},
+		},
+		Links: []model.Link{{Name: "origin-rx", A: "origin", B: "rx", Cost: 1, Subnet: "192.0.2.0/31"}},
+	}
+	routes := ExpectedForNodes(topo, []model.Node{{Name: "rx", Kind: "frr"}})
+	route := routeByPrefix(routes, "10.0.0.0/24")
+	if route == nil || len(route.Paths) != 1 {
+		t.Fatalf("routes = %#v", routes)
+	}
+	if route.Paths[0].LocalPref != 225 || route.Paths[0].MED != 33 {
+		t.Fatalf("path = %#v, want local-pref 225 MED 33", route.Paths[0])
+	}
+}
+
 func TestCompareBgpRib(t *testing.T) {
 	base := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
 		path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),

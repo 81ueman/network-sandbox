@@ -6,9 +6,3 @@ policies:
     action: deny
     protocol: tcp
     dst_prefix: 10.4.0.0/16
-  - name: prefer-local-region
-    node: core-bj
-    plane: control
-    stage: ingress
-    action: prefer
-    dst_prefix: 10.1.0.0/16

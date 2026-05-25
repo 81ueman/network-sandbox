@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 type ParsedConfig struct {
-	Hostname   string
-	ASN        uint32
-	RouterID   string
-	Loopback   string
-	Interfaces []Interface
-	Prefixes   []string
-	Neighbors  []BGPNeighbor
+	Hostname      string
+	ASN           uint32
+	RouterID      string
+	Loopback      string
+	Interfaces    []Interface
+	Prefixes      []string
+	Neighbors     []BGPNeighbor
+	PrefixLists   []PrefixList
+	RoutePolicies []RoutePolicy
 }
 
 func ParseConfig(kind, path string) (ParsedConfig, error) {
@@ -37,13 +40,21 @@ func ParseConfig(kind, path string) (ParsedConfig, error) {
 func parseFRRLike(kind, text string) (ParsedConfig, error) {
 	var cfg ParsedConfig
 	neighbors := map[string]*BGPNeighbor{}
+	prefixLists := map[string]*PrefixList{}
+	routePolicies := map[string]*RoutePolicy{}
 	var currentInterface string
+	var currentRoutePolicy *RoutePolicy
+	var currentRouteRule *RoutePolicyRule
 	inBGP := false
 	inAF := false
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	for scanner.Scan() {
 		raw := scanner.Text()
 		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(raw, " ") && !strings.HasPrefix(line, "route-map ") {
+			currentRoutePolicy = nil
+			currentRouteRule = nil
+		}
 		if line == "" || line == "!" {
 			if line == "!" && !strings.HasPrefix(raw, " ") {
 				currentInterface = ""
@@ -57,6 +68,43 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		switch {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
+		case kind == "frr" && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "permit":
+			addPrefixListRule(prefixLists, fields[2], 0, fields[3], fields[4])
+		case kind == "frr" && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && fields[5] == "permit":
+			seq, err := strconv.Atoi(fields[4])
+			if err != nil {
+				return ParsedConfig{}, err
+			}
+			addPrefixListRule(prefixLists, fields[2], seq, fields[5], fields[6])
+		case kind == "frr" && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
+			seq := 0
+			if len(fields) >= 4 {
+				var err error
+				seq, err = strconv.Atoi(fields[3])
+				if err != nil {
+					return ParsedConfig{}, err
+				}
+			}
+			currentRoutePolicy, currentRouteRule = addRoutePolicyRule(routePolicies, fields[1], fields[2], seq)
+			currentInterface = ""
+			inBGP = false
+			inAF = false
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
+			currentRouteRule.MatchPrefixList = fields[4]
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
+			v, err := strconv.Atoi(fields[2])
+			if err != nil {
+				return ParsedConfig{}, err
+			}
+			currentRouteRule.SetLocalPref = intPtr(v)
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
+			v, err := strconv.Atoi(fields[2])
+			if err != nil {
+				return ParsedConfig{}, err
+			}
+			currentRouteRule.SetMED = intPtr(v)
+		case kind == "frr" && currentRoutePolicy != nil:
+			// TODO: support more FRR route-map statements as the lab needs them.
 		case fields[0] == "interface" && len(fields) >= 2:
 			currentInterface = fields[1]
 			inBGP = false
@@ -99,6 +147,14 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			getNeighbor(neighbors, fields[1]).Activated = true
 		case inBGP && inAF && len(fields) >= 3 && fields[0] == "neighbor" && fields[2] == "next-hop-self":
 			getNeighbor(neighbors, fields[1]).NextHopSelf = true
+		case kind == "frr" && inBGP && inAF && len(fields) >= 5 && fields[0] == "neighbor" && fields[2] == "route-map":
+			n := getNeighbor(neighbors, fields[1])
+			switch fields[4] {
+			case "in":
+				n.ImportPolicy = fields[3]
+			case "out":
+				n.ExportPolicy = fields[3]
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -109,6 +165,8 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			cfg.Neighbors = append(cfg.Neighbors, *n)
 		}
 	}
+	cfg.PrefixLists = sortedPrefixLists(prefixLists)
+	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
 	if cfg.Loopback == "" && cfg.RouterID != "" {
 		cfg.Loopback = cfg.RouterID + "/32"
 	}
@@ -116,6 +174,8 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 }
 
 func parseSRLinux(text string) (ParsedConfig, error) {
+	// TODO: parse SR Linux routing-policy and BGP import/export policy once
+	// live lab configs use them.
 	var cfg ParsedConfig
 	groupAS := map[string]uint32{}
 	neighborGroup := map[string]string{}
@@ -168,6 +228,58 @@ func getNeighbor(neighbors map[string]*BGPNeighbor, addr string) *BGPNeighbor {
 		neighbors[addr] = &BGPNeighbor{Address: addr}
 	}
 	return neighbors[addr]
+}
+
+func addPrefixListRule(prefixLists map[string]*PrefixList, name string, seq int, action string, prefix string) {
+	if prefixLists[name] == nil {
+		prefixLists[name] = &PrefixList{Name: name}
+	}
+	prefixLists[name].Rules = append(prefixLists[name].Rules, PrefixListRule{Seq: seq, Action: action, Prefix: prefix})
+}
+
+func addRoutePolicyRule(routePolicies map[string]*RoutePolicy, name string, action string, seq int) (*RoutePolicy, *RoutePolicyRule) {
+	if routePolicies[name] == nil {
+		routePolicies[name] = &RoutePolicy{Name: name}
+	}
+	routePolicies[name].Rules = append(routePolicies[name].Rules, RoutePolicyRule{Seq: seq, Action: action})
+	policy := routePolicies[name]
+	return policy, &policy.Rules[len(policy.Rules)-1]
+}
+
+func sortedPrefixLists(prefixLists map[string]*PrefixList) []PrefixList {
+	var out []PrefixList
+	for _, prefixList := range prefixLists {
+		cp := *prefixList
+		cp.Rules = append([]PrefixListRule(nil), prefixList.Rules...)
+		sort.Slice(cp.Rules, func(i, j int) bool {
+			return cp.Rules[i].Seq < cp.Rules[j].Seq
+		})
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func sortedRoutePolicies(routePolicies map[string]*RoutePolicy) []RoutePolicy {
+	var out []RoutePolicy
+	for _, routePolicy := range routePolicies {
+		cp := *routePolicy
+		cp.Rules = append([]RoutePolicyRule(nil), routePolicy.Rules...)
+		sort.Slice(cp.Rules, func(i, j int) bool {
+			return cp.Rules[i].Seq < cp.Rules[j].Seq
+		})
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func upsertInterface(xs []Interface, iface Interface) []Interface {

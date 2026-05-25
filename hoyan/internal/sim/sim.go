@@ -603,14 +603,25 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !exported.Accept {
 			continue
 		}
+		exportPolicy := applyRoutePolicy(curNode, session.ExportPolicy, exported.Route)
+		if !exportPolicy.Accept {
+			continue
+		}
+		exported.Route = exportPolicy.Route
 		importMsg := ControlMessage{From: current, To: next, Prefix: exported.Route.Prefix, Route: exported.Route}
 		if !nextBehavior.CheckControlIngress(nextNode, importMsg, g.topo.Policies) {
 			continue
 		}
-		imported := nextBehavior.ImportRoute(nextNode, curNode, session, exported.Route)
+		receiverSession, _ := g.bgpSession(next, current)
+		imported := nextBehavior.ImportRoute(nextNode, curNode, receiverSession, exported.Route)
 		if !imported.Accept {
 			continue
 		}
+		importPolicy := applyRoutePolicy(nextNode, receiverSession.ImportPolicy, imported.Route)
+		if !importPolicy.Accept {
+			continue
+		}
+		imported.Route = importPolicy.Route
 		revisitsNode := containsString(route.Nodes, next)
 		if revisitsNode && !imported.Route.Invalid {
 			continue
@@ -625,7 +636,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		entry.Links = nextLinks
 		entry.BaseCond = nextCond
 		entry.Condition = nextCond
-		entry.LocalPref = g.localPref(next, entry.Prefix)
+		entry.LocalPref = defaultLocalPref(entry.LocalPref)
 
 		g.addRIB(next, entry.Prefix, entry)
 		if routeInvalidForDevice(nextNode, entry) {
@@ -723,25 +734,6 @@ func (g *Graph) lookupFIB(node, dst string, ctx FailureContext) (FIBEntry, bool)
 		}
 	}
 	return FIBEntry{}, false
-}
-
-func (g *Graph) localPref(node, prefix string) int {
-	localPref := 100
-	dst, _ := netip.ParsePrefix(prefix)
-	for _, pol := range g.topo.Policies {
-		if pol.Node != node || pol.Action != "prefer" {
-			continue
-		}
-		if pol.DstPrefix == "" {
-			localPref = 200
-			continue
-		}
-		pfx, err := netip.ParsePrefix(pol.DstPrefix)
-		if err == nil && prefixesOverlap(pfx, dst) {
-			localPref = 200
-		}
-	}
-	return localPref
 }
 
 func (g *Graph) originates(node string, prefix netip.Prefix) bool {

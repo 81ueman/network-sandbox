@@ -121,7 +121,6 @@ func ExpectedWithFailureSet(topo *model.Topology, failures sim.FailureSet) []Nor
 }
 
 func expected(topo *model.Topology, allowed map[string]bool, failures sim.FailureSet) []NormalizedBgpRoute {
-	topo = topologyWithoutLiveIgnoredPolicies(topo)
 	g := sim.NewGraph(topo)
 	ctx := g.FailureContext(failures)
 	var out []NormalizedBgpRoute
@@ -155,23 +154,6 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 	}
 	sortRoutes(out)
 	return out
-}
-
-func topologyWithoutLiveIgnoredPolicies(topo *model.Topology) *model.Topology {
-	if topo == nil {
-		return topo
-	}
-	cp := *topo
-	cp.Nodes = append([]model.Node(nil), topo.Nodes...)
-	cp.Links = append([]model.Link(nil), topo.Links...)
-	cp.Policies = nil
-	for _, policy := range topo.Policies {
-		if strings.EqualFold(policy.Action, "prefer") {
-			continue
-		}
-		cp.Policies = append(cp.Policies, policy)
-	}
-	return &cp
 }
 
 func expectedPath(topo *model.Topology, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {

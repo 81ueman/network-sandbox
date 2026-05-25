@@ -379,6 +379,75 @@ func TestSelectRoutesMarksEquivalentFRRRoutesSelected(t *testing.T) {
 	}
 }
 
+func TestImportRouteMapSetsLocalPrefInRIB(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "SET-LP"
+	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}}}}
+	lp := 250
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "SET-LP", Rules: []model.RoutePolicyRule{{Action: "permit", MatchPrefixList: "PL", SetLocalPref: &lp}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 250 {
+		t.Fatalf("rx RIB = %#v, want local-pref 250", routes)
+	}
+}
+
+func TestExportRouteMapSetsMEDInRIB(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[0].Neighbors[0].ExportPolicy = "SET-MED"
+	topo.Nodes[0].PrefixLists = []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}}}}
+	med := 77
+	topo.Nodes[0].RoutePolicies = []model.RoutePolicy{{Name: "SET-MED", Rules: []model.RoutePolicyRule{{Action: "permit", MatchPrefixList: "PL", SetMED: &med}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].MED != 77 {
+		t.Fatalf("rx RIB = %#v, want MED 77", routes)
+	}
+}
+
+func TestRouteMapDenySuppressesRoute(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "DENY"
+	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}}}}
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "DENY", Rules: []model.RoutePolicyRule{{Action: "deny", MatchPrefixList: "PL"}}}}
+
+	g := NewGraph(topo)
+	if routes := g.RIB("rx", "10.0.0.0/24"); len(routes) != 0 {
+		t.Fatalf("rx RIB = %#v, want denied route suppressed", routes)
+	}
+}
+
+func routePolicyTestTopology() *model.Topology {
+	return &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name:     "origin",
+				Kind:     "frr",
+				ASN:      65001,
+				Prefixes: []string{"10.0.0.0/24"},
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:  "rx",
+					RemoteAS:  65002,
+					Activated: true,
+				}},
+			},
+			{
+				Name: "rx",
+				Kind: "frr",
+				ASN:  65002,
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:  "origin",
+					RemoteAS:  65001,
+					Activated: true,
+				}},
+			},
+		},
+		Links: []model.Link{{Name: "origin-rx", A: "origin", B: "rx", Cost: 1, Subnet: "192.0.2.0/31"}},
+	}
+}
+
 func TestLookupFIBLongestPrefixAndConditionalFallback(t *testing.T) {
 	g := testGraph(&model.Topology{})
 	g.fib["r1"] = []FIBEntry{
