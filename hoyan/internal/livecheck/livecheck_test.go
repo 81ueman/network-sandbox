@@ -48,9 +48,12 @@ func TestWaitForFRRContainers(t *testing.T) {
 		}
 		return []byte("true\n"), nil
 	}}
-	nodes := []model.Node{{Name: "r1", Kind: "frr"}, {Name: "r2", Kind: "frr"}}
+	nodes := []model.Node{{Name: "r1", ContainerName: "clab-test-r1", Kind: "frr"}, {Name: "r2", Kind: "frr"}}
 	if err := WaitForFRRContainers(context.Background(), runner, nodes, time.Millisecond); err != nil {
 		t.Fatalf("WaitForFRRContainers() error = %v", err)
+	}
+	if got, want := runner.calls[0], "docker inspect -f {{.State.Running}} clab-test-r1"; got != want {
+		t.Fatalf("first inspect call = %q, want %q", got, want)
 	}
 }
 
@@ -186,7 +189,7 @@ func TestLinkFailureScenarioInjectsAndCleansBothEndpoints(t *testing.T) {
 func TestNodeFailureScenarioStopsNodeAndFiltersActiveFRRNodes(t *testing.T) {
 	topo := &model.Topology{
 		Nodes: []model.Node{
-			{Name: "r1", Kind: "frr"},
+			{Name: "r1", ContainerName: "clab-test-r1", Kind: "frr"},
 			{Name: "r2", Kind: "frr"},
 			{Name: "s1", Kind: "srlinux"},
 		},
@@ -201,7 +204,7 @@ func TestNodeFailureScenarioStopsNodeAndFiltersActiveFRRNodes(t *testing.T) {
 	if err := scenario.Inject(context.Background(), runner); err != nil {
 		t.Fatalf("Inject() error = %v", err)
 	}
-	if got, want := runner.calls, []string{"docker stop r1"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.calls, []string{"docker stop clab-test-r1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
 	if !scenario.Failures.Nodes["r1"] {

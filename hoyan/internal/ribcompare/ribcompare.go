@@ -309,9 +309,10 @@ func collectorsByKind() map[string]BgpRibCollector {
 func (frrCollector) Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
 	for _, n := range nodes {
-		data, err := runner.Run(ctx, "docker", "exec", "-i", n.Name, "vtysh", "-c", "show ip bgp json")
+		containerName := n.RuntimeName()
+		data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "vtysh", "-c", "show ip bgp json")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s vtysh -c %q: %w", n.Name, "show ip bgp json", err)
+			return nil, fmt.Errorf("docker exec -i %s vtysh -c %q: %w", containerName, "show ip bgp json", err)
 		}
 		routes, err := ParseFRR(n.Name, data)
 		if err != nil {
@@ -326,9 +327,10 @@ func (frrCollector) Collect(ctx context.Context, runner Runner, nodes []model.No
 func (ceosCollector) Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
 	for _, n := range nodes {
-		data, err := runner.Run(ctx, "docker", "exec", "-i", n.Name, "Cli", "-p", "15", "-c", "show ip bgp | json")
+		containerName := n.RuntimeName()
+		data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "Cli", "-p", "15", "-c", "show ip bgp | json")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s Cli -p 15 -c %q: %w", n.Name, "show ip bgp | json", err)
+			return nil, fmt.Errorf("docker exec -i %s Cli -p 15 -c %q: %w", containerName, "show ip bgp | json", err)
 		}
 		routes, err := ParseCEOS(n.Name, data)
 		if err != nil {
@@ -343,18 +345,19 @@ func (ceosCollector) Collect(ctx context.Context, runner Runner, nodes []model.N
 func (srlinuxCollector) Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
 	for _, n := range nodes {
-		summary, err := runner.Run(ctx, "docker", "exec", "-i", n.Name, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "summary")
+		containerName := n.RuntimeName()
+		summary, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "summary")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 summary: %w", n.Name, err)
+			return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 summary: %w", containerName, err)
 		}
 		prefixes, err := ParseSRLinuxSummary(summary)
 		if err != nil {
 			return nil, fmt.Errorf("%s SR Linux BGP RIB summary: %w", n.Name, err)
 		}
 		for _, prefix := range prefixes {
-			detail, err := runner.Run(ctx, "docker", "exec", "-i", n.Name, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "prefix", prefix, "detail")
+			detail, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "prefix", prefix, "detail")
 			if err != nil {
-				return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 prefix %s detail: %w", n.Name, prefix, err)
+				return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 prefix %s detail: %w", containerName, prefix, err)
 			}
 			routes, err := ParseSRLinuxDetail(n.Name, prefix, detail)
 			if err != nil {
