@@ -20,11 +20,11 @@ type BGPBehavior interface {
 }
 
 type baseDeviceBehavior struct {
-	kind     string
+	kind     model.DeviceKind
 	decision BGPDecisionProcess
 }
 
-func NewGenericBehavior(kind string) DeviceBehavior {
+func NewGenericBehavior(kind model.DeviceKind) DeviceBehavior {
 	return baseDeviceBehavior{kind: kind, decision: DefaultBGPDecisionProcess()}
 }
 

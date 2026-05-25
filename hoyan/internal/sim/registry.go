@@ -1,16 +1,20 @@
 package sim
 
-import "sync"
+import (
+	"sync"
 
-var behaviorRegistry = map[string]DeviceBehavior{
-	"frr":     NewFRRBehavior(),
-	"ceos":    NewCEOSBehavior(),
-	"srlinux": NewSRLinuxBehavior(),
+	"github.com/81ueman/network-sandbox/hoyan/internal/model"
+)
+
+var behaviorRegistry = map[model.DeviceKind]DeviceBehavior{
+	model.KindFRR:     NewFRRBehavior(),
+	model.KindCEOS:    NewCEOSBehavior(),
+	model.KindSRLinux: NewSRLinuxBehavior(),
 }
 
 var behaviorRegistryMu sync.RWMutex
 
-func RegisterBehavior(kind string, behavior DeviceBehavior) func() {
+func RegisterBehavior(kind model.DeviceKind, behavior DeviceBehavior) func() {
 	behaviorRegistryMu.Lock()
 	defer behaviorRegistryMu.Unlock()
 	old, hadOld := behaviorRegistry[kind]
@@ -26,11 +30,11 @@ func RegisterBehavior(kind string, behavior DeviceBehavior) func() {
 	}
 }
 
-func BehaviorFor(kind string) DeviceBehavior {
+func BehaviorFor(kind model.DeviceKind) DeviceBehavior {
 	return behaviorFor(kind)
 }
 
-func behaviorFor(kind string) DeviceBehavior {
+func behaviorFor(kind model.DeviceKind) DeviceBehavior {
 	behaviorRegistryMu.RLock()
 	b, ok := behaviorRegistry[kind]
 	behaviorRegistryMu.RUnlock()

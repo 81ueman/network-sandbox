@@ -15,7 +15,7 @@ type Graph struct {
 	adj         map[string][]edge
 	rib         map[string]map[string][]RIBEntry
 	fib         map[string][]FIBEntry
-	linksByName map[string]model.Link
+	linksByName map[model.LinkID]model.Link
 }
 
 type edge struct {
@@ -65,13 +65,13 @@ type FIBEntry struct {
 }
 
 type FailureSet struct {
-	Links map[string]bool
-	Nodes map[string]bool
+	Links map[model.LinkID]bool
+	Nodes map[model.NodeID]bool
 }
 
 type FailureContext struct {
 	Failures    FailureSet
-	LinksByName map[string]model.Link
+	LinksByName map[model.LinkID]model.Link
 }
 
 type FailureSearchOptions struct {
@@ -102,18 +102,18 @@ type orCond []Cond
 type notCond struct{ c Cond }
 
 func NoFailures() FailureSet {
-	return FailureSet{Links: map[string]bool{}, Nodes: map[string]bool{}}
+	return FailureSet{Links: map[model.LinkID]bool{}, Nodes: map[model.NodeID]bool{}}
 }
 
-func LinkFailures(names ...string) FailureSet {
+func LinkFailures(names ...model.LinkID) FailureSet {
 	return NewFailureSet(names, nil)
 }
 
-func NodeFailures(names ...string) FailureSet {
+func NodeFailures(names ...model.NodeID) FailureSet {
 	return NewFailureSet(nil, names)
 }
 
-func NewFailureSet(links []string, nodes []string) FailureSet {
+func NewFailureSet(links []model.LinkID, nodes []model.NodeID) FailureSet {
 	out := NoFailures()
 	for _, name := range links {
 		out.Links[name] = true
@@ -132,11 +132,11 @@ func FailureSetFromMap(raw map[string]bool) FailureSet {
 		}
 		switch {
 		case strings.HasPrefix(key, "link:"):
-			out.Links[strings.TrimPrefix(key, "link:")] = true
+			out.Links[model.LinkID(strings.TrimPrefix(key, "link:"))] = true
 		case strings.HasPrefix(key, "node:"):
-			out.Nodes[strings.TrimPrefix(key, "node:")] = true
+			out.Nodes[model.NodeID(strings.TrimPrefix(key, "node:"))] = true
 		default:
-			out.Links[key] = true
+			out.Links[model.LinkID(key)] = true
 		}
 	}
 	return out
@@ -147,19 +147,19 @@ func FailureSetFromElements(elements []solver.FailureElement) FailureSet {
 	for _, element := range elements {
 		switch element.Kind {
 		case solver.FailureLink:
-			out.Links[element.Name] = true
+			out.Links[model.LinkID(element.Name)] = true
 		case solver.FailureNode:
-			out.Nodes[element.Name] = true
+			out.Nodes[model.NodeID(element.Name)] = true
 		}
 	}
 	return out
 }
 
-func (ctx FailureContext) NodeFailed(node string) bool {
+func (ctx FailureContext) NodeFailed(node model.NodeID) bool {
 	return ctx.Failures.Nodes[node]
 }
 
-func (ctx FailureContext) LinkFailed(linkName string) bool {
+func (ctx FailureContext) LinkFailed(linkName model.LinkID) bool {
 	if ctx.Failures.Links[linkName] {
 		return true
 	}
@@ -167,7 +167,7 @@ func (ctx FailureContext) LinkFailed(linkName string) bool {
 	if !ok {
 		return false
 	}
-	return ctx.Failures.Nodes[link.A] || ctx.Failures.Nodes[link.B]
+	return ctx.Failures.Nodes[model.NodeID(link.A)] || ctx.Failures.Nodes[model.NodeID(link.B)]
 }
 
 func True() Cond           { return trueCond{} }
@@ -187,9 +187,9 @@ func (trueCond) String() string           { return "true" }
 func (c varCond) Eval(ctx FailureContext) bool {
 	switch c.kind {
 	case condVarNode:
-		return !ctx.NodeFailed(c.name)
+		return !ctx.NodeFailed(model.NodeID(c.name))
 	case condVarLink:
-		return !ctx.LinkFailed(c.name)
+		return !ctx.LinkFailed(model.LinkID(c.name))
 	default:
 		return true
 	}
@@ -219,11 +219,11 @@ func (c notCond) Eval(ctx FailureContext) bool {
 func (c notCond) String() string { return "!(" + c.c.String() + ")" }
 
 func NewGraph(topo *model.Topology) *Graph {
-	g := &Graph{topo: topo, adj: map[string][]edge{}, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}, linksByName: map[string]model.Link{}}
+	g := &Graph{topo: topo, adj: map[string][]edge{}, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}, linksByName: map[model.LinkID]model.Link{}}
 	for _, l := range topo.Links {
 		g.adj[l.A] = append(g.adj[l.A], edge{to: l.B, link: l})
 		g.adj[l.B] = append(g.adj[l.B], edge{to: l.A, link: l})
-		g.linksByName[l.Name] = l
+		g.linksByName[model.LinkID(l.Name)] = l
 	}
 	for node := range g.adj {
 		sort.Slice(g.adj[node], func(i, j int) bool {
@@ -256,16 +256,16 @@ func (g *Graph) FIB(node string) []FIBEntry {
 
 func (g *Graph) FailureContext(failures FailureSet) FailureContext {
 	if failures.Links == nil {
-		failures.Links = map[string]bool{}
+		failures.Links = map[model.LinkID]bool{}
 	}
 	if failures.Nodes == nil {
-		failures.Nodes = map[string]bool{}
+		failures.Nodes = map[model.NodeID]bool{}
 	}
 	linksByName := g.linksByName
 	if linksByName == nil {
-		linksByName = map[string]model.Link{}
+		linksByName = map[model.LinkID]model.Link{}
 		for _, link := range g.topo.Links {
-			linksByName[link.Name] = link
+			linksByName[model.LinkID(link.Name)] = link
 		}
 	}
 	return FailureContext{Failures: failures, LinksByName: linksByName}
@@ -277,7 +277,7 @@ func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, 
 		return Path{}, false
 	}
 	ctx := g.FailureContext(failures)
-	if ctx.NodeFailed(from) {
+	if ctx.NodeFailed(model.NodeID(from)) {
 		return Path{}, false
 	}
 	var best *RIBEntry
@@ -304,17 +304,17 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 	if !ok {
 		return Path{}, false, "destination prefix not advertised"
 	}
-	if ctx.NodeFailed(from) {
+	if ctx.NodeFailed(model.NodeID(from)) {
 		return Path{}, false, "source node is down"
 	}
-	if ctx.NodeFailed(dstNode) {
+	if ctx.NodeFailed(model.NodeID(dstNode)) {
 		return Path{}, false, "destination node is down"
 	}
 	current := from
 	visited := map[string]bool{}
 	full := Path{Nodes: []string{from}}
 	for {
-		if ctx.NodeFailed(current) {
+		if ctx.NodeFailed(model.NodeID(current)) {
 			return full, false, "current node is down"
 		}
 		if visited[current] {
@@ -338,11 +338,11 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 		if rule.NextHop == "" {
 			return full, false, "selected route has no next-hop"
 		}
-		if ctx.NodeFailed(rule.NextHop) {
+		if ctx.NodeFailed(model.NodeID(rule.NextHop)) {
 			return full, false, "next-hop node is down"
 		}
 		link, ok := g.linkBetween(current, rule.NextHop)
-		if !ok || ctx.LinkFailed(link.Name) {
+		if !ok || ctx.LinkFailed(model.LinkID(link.Name)) {
 			return full, false, "next-hop link is down"
 		}
 		full.Links = append(full.Links, link.Name)
@@ -683,7 +683,7 @@ func (g *Graph) deriveFIB() {
 				if seenSelected[selectedKey] {
 					continue
 				}
-				if n.Kind == "frr" && equivalentInstalledRoute(behavior.DecisionProcess(), n, installed, route) {
+				if n.Kind == model.KindFRR && equivalentInstalledRoute(behavior.DecisionProcess(), n, installed, route) {
 					continue
 				}
 				seenSelected[selectedKey] = true
@@ -788,7 +788,7 @@ func routeInvalidForDevice(device model.Node, route RIBEntry) bool {
 	if route.Invalid {
 		return true
 	}
-	if device.Kind == "ceos" && route.NextHop != "" && route.NextHop != route.From {
+	if device.Kind == model.KindCEOS && route.NextHop != "" && route.NextHop != route.From {
 		return true
 	}
 	return false
