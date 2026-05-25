@@ -17,9 +17,12 @@ func main() {
 	queriesPath := flag.String("queries", "intent/queries.yml", "query YAML")
 	flag.Parse()
 
-	topo, err := model.LoadLabTopology(*topologyPath, *policiesPath)
+	topo, warnings, err := model.LoadLabTopologyWithWarnings(*topologyPath, *policiesPath)
 	if err != nil {
 		die(err)
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 	}
 	queries, err := model.LoadQueries(*queriesPath)
 	if err != nil {

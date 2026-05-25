@@ -225,6 +225,95 @@ func TestParseFRRRouteMapRejectsUnsupportedMatch(t *testing.T) {
 	}
 }
 
+func TestParseConfigWithWarningsReportsUnsupportedFRRRouteMapStatements(t *testing.T) {
+	config := `
+hostname r1
+route-map RM permit 10
+ match source-protocol bgp
+ set weight 50
+ set local-preference 200
+`
+	path := filepath.Join(t.TempDir(), "frr.conf")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, err := ParseConfigWithWarnings("frr", path)
+	if err != nil {
+		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+	}
+	if result.Config.Hostname != "r1" {
+		t.Fatalf("Hostname = %q, want r1", result.Config.Hostname)
+	}
+	policy := routePolicyByName(result.Config.RoutePolicies, "RM")
+	if policy == nil || len(policy.Rules) != 1 || policy.Rules[0].SetLocalPref == nil || *policy.Rules[0].SetLocalPref != 200 {
+		t.Fatalf("RM = %#v", policy)
+	}
+	want := []UnsupportedStatement{
+		{Vendor: "frr", File: path, Line: 4, Text: "match source-protocol bgp", Reason: "unsupported FRR route-map match statement"},
+		{Vendor: "frr", File: path, Line: 5, Text: "set weight 50", Reason: "unsupported FRR route-map statement"},
+	}
+	if !reflect.DeepEqual(result.Warnings, want) {
+		t.Fatalf("Warnings = %#v, want %#v", result.Warnings, want)
+	}
+}
+
+func TestParseConfigWithWarningsReportsUnsupportedSRLinuxPolicies(t *testing.T) {
+	config := `
+set / system name host-name core1
+set / network-instance default protocols bgp autonomous-system 65100
+set / routing-policy policy IMPORT statement 10 action accept
+set / network-instance default protocols bgp group edge import-policy [ IMPORT ]
+set / network-instance default protocols bgp group edge peer-as 65001
+set / network-instance default protocols bgp neighbor 192.0.2.1 peer-group edge
+`
+	path := filepath.Join(t.TempDir(), "core.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, err := ParseConfigWithWarnings("srlinux", path)
+	if err != nil {
+		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+	}
+	if result.Config.Hostname != "core1" || result.Config.ASN != 65100 || len(result.Config.Neighbors) != 1 {
+		t.Fatalf("Config = %#v", result.Config)
+	}
+	want := []UnsupportedStatement{
+		{Vendor: "srlinux", File: path, Line: 4, Text: "set / routing-policy policy IMPORT statement 10 action accept", Reason: "unsupported SR Linux routing-policy statement"},
+		{Vendor: "srlinux", File: path, Line: 5, Text: "set / network-instance default protocols bgp group edge import-policy [ IMPORT ]", Reason: "unsupported SR Linux BGP import/export policy statement"},
+	}
+	if !reflect.DeepEqual(result.Warnings, want) {
+		t.Fatalf("Warnings = %#v, want %#v", result.Warnings, want)
+	}
+}
+
+func TestParseConfigWithWarningsCurrentLabConfigs(t *testing.T) {
+	tests := []struct {
+		kind string
+		glob string
+	}{
+		{kind: "frr", glob: filepath.Join("..", "..", "configs", "frr", "*", "frr.conf")},
+		{kind: "ceos", glob: filepath.Join("..", "..", "configs", "ceos", "*.cfg")},
+		{kind: "srlinux", glob: filepath.Join("..", "..", "configs", "srlinux", "*.cfg")},
+	}
+	for _, tt := range tests {
+		paths, err := filepath.Glob(tt.glob)
+		if err != nil {
+			t.Fatalf("Glob(%q) error = %v", tt.glob, err)
+		}
+		for _, path := range paths {
+			t.Run(path, func(t *testing.T) {
+				result, err := ParseConfigWithWarnings(tt.kind, path)
+				if err != nil {
+					t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+				}
+				if len(result.Warnings) != 0 {
+					t.Fatalf("Warnings = %#v, want none", result.Warnings)
+				}
+			})
+		}
+	}
+}
+
 func TestParseFRRRouteMapMatchExtensions(t *testing.T) {
 	cfg := parseFRRConfigText(t, `
 bgp as-path access-list FROM-BJ permit ^65001$
