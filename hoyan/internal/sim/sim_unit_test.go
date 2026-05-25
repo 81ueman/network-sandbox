@@ -114,7 +114,7 @@ func TestApplyAdvertisementConditionsPropagatesParentSelectedCond(t *testing.T) 
 	g.rib["mid"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
 			{
-				Prefix:       "10.0.0.0/24",
+				Prefix:       model.MustPrefix("10.0.0.0/24"),
 				Origin:       "origin",
 				From:         "origin",
 				Nodes:        []string{"origin", "mid"},
@@ -126,7 +126,7 @@ func TestApplyAdvertisementConditionsPropagatesParentSelectedCond(t *testing.T) 
 	g.rib["down"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
 			{
-				Prefix:    "10.0.0.0/24",
+				Prefix:    model.MustPrefix("10.0.0.0/24"),
 				Origin:    "origin",
 				From:      "mid",
 				Nodes:     []string{"origin", "mid", "down"},
@@ -165,7 +165,7 @@ func TestApplyAdvertisementConditionsSuppressesBackupAdvertisement(t *testing.T)
 	g.rib["mid"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
 			{
-				Prefix:       "10.0.0.0/24",
+				Prefix:       model.MustPrefix("10.0.0.0/24"),
 				Origin:       "best",
 				From:         "best",
 				Nodes:        []string{"best", "mid"},
@@ -173,7 +173,7 @@ func TestApplyAdvertisementConditionsSuppressesBackupAdvertisement(t *testing.T)
 				SelectedCond: bestCond,
 			},
 			{
-				Prefix:       "10.0.0.0/24",
+				Prefix:       model.MustPrefix("10.0.0.0/24"),
 				Origin:       "best",
 				From:         "backup",
 				Nodes:        []string{"best", "backup", "mid"},
@@ -185,7 +185,7 @@ func TestApplyAdvertisementConditionsSuppressesBackupAdvertisement(t *testing.T)
 	g.rib["down"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
 			{
-				Prefix:    "10.0.0.0/24",
+				Prefix:    model.MustPrefix("10.0.0.0/24"),
 				Origin:    "best",
 				From:      "mid",
 				Nodes:     []string{"best", "backup", "mid", "down"},
@@ -216,22 +216,22 @@ func TestAdvertisementConditionsFixedPointPropagatesMultipleHops(t *testing.T) {
 	})
 	g.rib["origin"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "origin", Nodes: []string{"origin"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", Nodes: []string{"origin"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
 		},
 	}
 	g.rib["mid1"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "origin", From: "origin", Nodes: []string{"origin", "mid1"}, LocalPref: 200, Condition: Var("origin-mid1")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", From: "origin", Nodes: []string{"origin", "mid1"}, LocalPref: 200, Condition: Var("origin-mid1")},
 		},
 	}
 	g.rib["mid2"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "origin", From: "mid1", Nodes: []string{"origin", "mid1", "mid2"}, BaseCond: Var("mid1-mid2"), Condition: Var("mid1-mid2")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", From: "mid1", Nodes: []string{"origin", "mid1", "mid2"}, BaseCond: Var("mid1-mid2"), Condition: Var("mid1-mid2")},
 		},
 	}
 	g.rib["down"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "origin", From: "mid2", Nodes: []string{"origin", "mid1", "mid2", "down"}, BaseCond: Var("mid2-down"), Condition: Var("mid2-down")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", From: "mid2", Nodes: []string{"origin", "mid1", "mid2", "down"}, BaseCond: Var("mid2-down"), Condition: Var("mid2-down")},
 		},
 	}
 
@@ -264,7 +264,7 @@ func TestConvergeAdvertisementConditionsHandlesDeepRouteChain(t *testing.T) {
 	prefix := "10.0.0.0/24"
 	g.rib["a"] = map[string][]RIBEntry{
 		prefix: {
-			{Prefix: prefix, Origin: "a", Nodes: []string{"a"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
+			{Prefix: model.MustPrefix(prefix), Origin: "a", Nodes: []string{"a"}, LocalPref: 200, Condition: True(), SelectedCond: True()},
 		},
 	}
 	nodes := []string{"a"}
@@ -276,7 +276,7 @@ func TestConvergeAdvertisementConditionsHandlesDeepRouteChain(t *testing.T) {
 		g.rib[node] = map[string][]RIBEntry{
 			prefix: {
 				{
-					Prefix:    prefix,
+					Prefix:    model.MustPrefix(prefix),
 					Origin:    "a",
 					From:      parent,
 					Nodes:     append([]string(nil), nodes...),
@@ -307,14 +307,14 @@ func TestConvergeAdvertisementConditionsHandlesDeepRouteChain(t *testing.T) {
 func TestParentRouteFindsPreviousHopRoute(t *testing.T) {
 	g := testGraph(&model.Topology{})
 	parent := RIBEntry{
-		Prefix: "10.0.0.0/24",
+		Prefix: model.MustPrefix("10.0.0.0/24"),
 		Origin: "origin",
 		From:   "origin",
 		Nodes:  []string{"origin", "mid"},
 	}
 	g.rib["mid"] = map[string][]RIBEntry{"10.0.0.0/24": {parent}}
 	child := RIBEntry{
-		Prefix: "10.0.0.0/24",
+		Prefix: model.MustPrefix("10.0.0.0/24"),
 		Origin: "origin",
 		From:   "mid",
 		Nodes:  []string{"origin", "mid", "down"},
@@ -333,8 +333,8 @@ func TestSelectRoutesBuildsMutuallyExclusiveSelectedConditions(t *testing.T) {
 	g := testGraph(&model.Topology{Nodes: []model.Node{{Name: "r1", Kind: "frr", ASN: 65000}}})
 	g.rib["r1"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "a", LocalPref: 200, Condition: Var("best")},
-			{Prefix: "10.0.0.0/24", Origin: "b", LocalPref: 100, Condition: Var("backup")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "a", LocalPref: 200, Condition: Var("best")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "b", LocalPref: 100, Condition: Var("backup")},
 		},
 	}
 
@@ -360,9 +360,9 @@ func TestSelectRoutesMarksEquivalentFRRRoutesSelected(t *testing.T) {
 	g := testGraph(&model.Topology{Nodes: []model.Node{{Name: "r1", Kind: "frr", ASN: 65000}}})
 	g.rib["r1"] = map[string][]RIBEntry{
 		"10.0.0.0/24": {
-			{Prefix: "10.0.0.0/24", Origin: "a", LocalPref: 100, ASPath: []uint32{65100}, Condition: Var("path-a")},
-			{Prefix: "10.0.0.0/24", Origin: "b", LocalPref: 100, ASPath: []uint32{65200}, Condition: Var("path-b")},
-			{Prefix: "10.0.0.0/24", Origin: "c", LocalPref: 100, ASPath: []uint32{65300, 65400}, Condition: Var("backup")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "a", LocalPref: 100, ASPath: []uint32{65100}, Condition: Var("path-a")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "b", LocalPref: 100, ASPath: []uint32{65200}, Condition: Var("path-b")},
+			{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "c", LocalPref: 100, ASPath: []uint32{65300, 65400}, Condition: Var("backup")},
 		},
 	}
 
@@ -565,7 +565,7 @@ func routePolicyTestTopology() *model.Topology {
 				Name:     "origin",
 				Kind:     "frr",
 				ASN:      65001,
-				Prefixes: []string{"10.0.0.0/24"},
+				Prefixes: model.MustPrefixes("10.0.0.0/24"),
 				Neighbors: []model.BGPNeighbor{{
 					PeerNode:  "rx",
 					RemoteAS:  65002,
@@ -612,7 +612,7 @@ func TestRouteConditionsIncludeNodeLiveness(t *testing.T) {
 				{PeerNode: "a", RemoteAS: 65001, Activated: true},
 				{PeerNode: "c", RemoteAS: 65003, Activated: true},
 			}},
-			{Name: "c", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "c", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{
 			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
@@ -640,7 +640,7 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr"},
 			{Name: "b", Kind: "frr"},
-			{Name: "dst", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "dst", Kind: "frr", Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"}},
 	})
@@ -658,7 +658,7 @@ func TestPacketReachableNodeFailures(t *testing.T) {
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr"},
 			{Name: "b", Kind: "frr"},
-			{Name: "dst", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "dst", Kind: "frr", Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{
 			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
@@ -690,7 +690,7 @@ func TestPacketReachableNextHopLinkDown(t *testing.T) {
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr"},
 			{Name: "b", Kind: "frr"},
-			{Name: "dst", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "dst", Kind: "frr", Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"}},
 	})
@@ -706,7 +706,7 @@ func TestPacketReachableNoForwardingRoute(t *testing.T) {
 	g := testGraph(&model.Topology{
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr"},
-			{Name: "dst", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "dst", Kind: "frr", Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 	})
 
@@ -723,13 +723,13 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 			{Name: "b-c", A: "b", B: "c", Cost: 5, Subnet: "192.0.2.2/31"},
 		},
 	})
-	r1 := RIBEntry{Prefix: "10.0.0.0/24", Origin: "origin", Nodes: []string{"origin", "a"}, SelectedCond: Var("selected"), Links: []string{"a-b"}}
+	r1 := RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", Nodes: []string{"origin", "a"}, SelectedCond: Var("selected"), Links: []string{"a-b"}}
 	duplicate := r1
-	distinct := RIBEntry{Prefix: "10.0.0.0/24", Origin: "origin", Nodes: []string{"origin", "b", "a"}, SelectedCond: True(), Links: []string{"b-c", "a-b"}}
+	distinct := RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), Origin: "origin", Nodes: []string{"origin", "b", "a"}, SelectedCond: True(), Links: []string{"b-c", "a-b"}}
 
-	g.addRIB("a", "10.0.0.0/24", r1)
-	g.addRIB("a", "10.0.0.0/24", duplicate)
-	g.addRIB("a", "10.0.0.0/24", distinct)
+	g.addRIB("a", model.MustPrefix("10.0.0.0/24"), r1)
+	g.addRIB("a", model.MustPrefix("10.0.0.0/24"), duplicate)
+	g.addRIB("a", model.MustPrefix("10.0.0.0/24"), distinct)
 	if got := len(g.rib["a"]["10.0.0.0/24"]); got != 2 {
 		t.Fatalf("RIB entries = %d, want duplicate skipped and distinct path kept", got)
 	}
@@ -801,7 +801,7 @@ func TestFindBreakingFailuresFindsOneLinkCut(t *testing.T) {
 	g := NewGraph(&model.Topology{
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
-			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{{PeerNode: "a", RemoteAS: 65001, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{{PeerNode: "a", RemoteAS: 65001, Activated: true}}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"}},
 	})
@@ -820,7 +820,7 @@ func TestFindBreakingFailuresWithOptionsFindsOneNodeCut(t *testing.T) {
 				{PeerNode: "cust-a", RemoteAS: 65001, Activated: true},
 				{PeerNode: "cust-dst", RemoteAS: 65003, Activated: true},
 			}},
-			{Name: "cust-dst", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "cust-dst", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{
 			{Name: "cust-a-b", A: "cust-a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
@@ -847,7 +847,7 @@ func TestFindBreakingFailuresWithOptionsRejectsInvalidOptions(t *testing.T) {
 	g := NewGraph(&model.Topology{
 		Nodes: []model.Node{
 			{Name: "a", Kind: "frr", ASN: 65001, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}},
-			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{{PeerNode: "a", RemoteAS: 65001, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "b", Kind: "frr", ASN: 65002, Neighbors: []model.BGPNeighbor{{PeerNode: "a", RemoteAS: 65001, Activated: true}}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"}},
 	})
@@ -905,7 +905,7 @@ func TestFindBreakingFailuresWithOptionsMixedElements(t *testing.T) {
 				{PeerNode: "a", RemoteAS: 65001, Activated: true},
 				{PeerNode: "d", RemoteAS: 65003, Activated: true},
 			}},
-			{Name: "d", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: []string{"10.0.0.0/24"}},
+			{Name: "d", Kind: "frr", ASN: 65003, Neighbors: []model.BGPNeighbor{{PeerNode: "b", RemoteAS: 65002, Activated: true}}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{
 			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},
@@ -954,7 +954,7 @@ func TestFindBreakingFailuresNoSingleLinkCutInRedundantTopology(t *testing.T) {
 			{Name: "d", Kind: "frr", ASN: 65004, Neighbors: []model.BGPNeighbor{
 				{PeerNode: "b", RemoteAS: 65002, Activated: true},
 				{PeerNode: "c", RemoteAS: 65003, Activated: true},
-			}, Prefixes: []string{"10.0.0.0/24"}},
+			}, Prefixes: model.MustPrefixes("10.0.0.0/24")},
 		},
 		Links: []model.Link{
 			{Name: "a-b", A: "a", B: "b", Cost: 1, Subnet: "192.0.2.0/31"},

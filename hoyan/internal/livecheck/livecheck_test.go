@@ -215,8 +215,8 @@ func TestNodeFailureScenarioStopsNodeAndFiltersActiveFRRNodes(t *testing.T) {
 func TestCompareRIBsWithFailuresUsesFailureAwareExpectedRoutes(t *testing.T) {
 	topo := &model.Topology{
 		Nodes: []model.Node{
-			{Name: "r1", Kind: "frr", Prefixes: []string{"10.0.0.0/24"}},
-			{Name: "r2", Kind: "frr", Prefixes: []string{"10.1.0.0/24"}},
+			{Name: "r1", Kind: "frr", Prefixes: model.MustPrefixes("10.0.0.0/24")},
+			{Name: "r2", Kind: "frr", Prefixes: model.MustPrefixes("10.1.0.0/24")},
 		},
 	}
 	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
@@ -228,7 +228,7 @@ func TestCompareRIBsWithFailuresUsesFailureAwareExpectedRoutes(t *testing.T) {
 	err := CompareRIBsWithFailures(context.Background(), runner, topo, RIBFailureScenario{
 		Name:        "node-r1",
 		Failures:    sim.NodeFailures("r1"),
-		ActiveNodes: []model.Node{{Name: "r2", Kind: "frr", Prefixes: []string{"10.1.0.0/24"}}},
+		ActiveNodes: []model.Node{{Name: "r2", Kind: "frr", Prefixes: model.MustPrefixes("10.1.0.0/24")}},
 	}, RIBFailureCheckOptions{Interval: time.Millisecond, MaxPolls: 1})
 	if err != nil {
 		t.Fatalf("CompareRIBsWithFailures() error = %v", err)

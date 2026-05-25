@@ -13,9 +13,9 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	g := sim.NewGraph(topo)
 	report := Report{}
 	for _, q := range queries.RouteChecks {
-		path, reachable := g.RouteReachable(q.From, q.Prefix, sim.NoFailures())
+		path, reachable := g.RouteReachable(q.From, q.Prefix.String(), sim.NoFailures())
 		result := sim.Result{Name: q.Name, Reachable: reachable, Expected: true, Path: path}
-		if cut, ok := g.FindBreakingFailures(q.From, sim.PrefixTarget(q.Prefix), q.MaxFailures); ok {
+		if cut, ok := g.FindBreakingFailures(q.From, sim.PrefixTarget(q.Prefix.String()), q.MaxFailures); ok {
 			result.Counterexample = cut
 			result.Reason = "reachable now but not resilient to requested failure budget"
 		}
@@ -38,8 +38,8 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	}
 	for _, q := range queries.FailureChecks {
 		var target sim.Target
-		if q.Prefix != "" {
-			target = sim.PrefixTarget(q.Prefix)
+		if !q.Prefix.IsZero() {
+			target = sim.PrefixTarget(q.Prefix.String())
 		} else {
 			target = sim.PacketTarget{To: q.To, Protocol: q.Protocol}
 		}

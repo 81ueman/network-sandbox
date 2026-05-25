@@ -202,7 +202,7 @@ func TestExpectedReflectsRouteMapAttributes(t *testing.T) {
 				Name:     "origin",
 				Kind:     "frr",
 				ASN:      65001,
-				Prefixes: []string{"10.0.0.0/24"},
+				Prefixes: model.MustPrefixes("10.0.0.0/24"),
 				PrefixLists: []model.PrefixList{{
 					Name:  "PL-OUT",
 					Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}},
