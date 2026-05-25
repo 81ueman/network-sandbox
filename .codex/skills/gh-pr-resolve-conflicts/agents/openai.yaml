@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub PR Conflict Resolver"
+  short_description: "Check PR merge conflicts and resolve them"
+  default_prompt: "Use $gh-pr-resolve-conflicts after creating a pull request to check and resolve merge conflicts."
