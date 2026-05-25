@@ -49,6 +49,7 @@ type RIBEntry struct {
 	LocalPref    int
 	MED          int
 	LearnedIBGP  bool
+	Invalid      bool
 	BaseCond     Cond
 	Condition    Cond
 	SelectedCond Cond
@@ -481,9 +482,14 @@ func (g *Graph) selectRoutes() {
 	for node, byPrefix := range g.rib {
 		for prefix, routes := range byPrefix {
 			n, _ := g.topo.Node(node)
-			routes = behaviorFor(n.Kind).SelectRoutes(n, routes)
+			behavior := behaviorFor(n.Kind)
+			routes = behavior.SelectRoutes(n, routes)
 			var higher []Cond
 			for i := range routes {
+				if routeInvalidForDevice(n, routes[i]) {
+					routes[i].SelectedCond = False()
+					continue
+				}
 				selected := routes[i].Condition
 				if len(higher) > 0 {
 					selected = And(selected, Not(Or(higher...)))
@@ -579,9 +585,6 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !ok {
 			continue
 		}
-		if containsString(route.Nodes, next) {
-			continue
-		}
 		nextNode, _ := g.topo.Node(next)
 		nextBehavior := behaviorFor(nextNode.Kind)
 		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix, Route: route}
@@ -600,6 +603,10 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !imported.Accept {
 			continue
 		}
+		revisitsNode := containsString(route.Nodes, next)
+		if revisitsNode && !imported.Route.Invalid {
+			continue
+		}
 		nextLinks := append(append([]string(nil), imported.Route.Links...), e.link.Name)
 		nextNodes := append(append([]string(nil), imported.Route.Nodes...), next)
 		nextCond := And(imported.Route.Condition, LinkVar(e.link.Name), NodeVar(next))
@@ -613,6 +620,9 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		entry.LocalPref = g.localPref(next, entry.Prefix)
 
 		g.addRIB(next, entry.Prefix, entry)
+		if routeInvalidForDevice(nextNode, entry) {
+			continue
+		}
 		g.walkBGP(entry)
 	}
 }
@@ -638,7 +648,16 @@ func (g *Graph) deriveFIB() {
 			if err != nil {
 				continue
 			}
+			seenSelected := map[string]bool{}
 			for _, route := range routes {
+				selectedKey := ""
+				if route.SelectedCond != nil {
+					selectedKey = route.SelectedCond.String()
+				}
+				if seenSelected[selectedKey] {
+					continue
+				}
+				seenSelected[selectedKey] = true
 				entries = append(entries, FIBEntry{
 					Prefix:    pfx,
 					NextHop:   route.NextHop,
@@ -738,7 +757,21 @@ func (g *Graph) pathCost(links []string) int {
 }
 
 func routeKey(r RIBEntry) string {
-	return r.Prefix + "|" + r.Origin + "|" + strings.Join(r.Nodes, ">")
+	valid := "valid"
+	if r.Invalid {
+		valid = "invalid"
+	}
+	return r.Prefix + "|" + r.Origin + "|" + strings.Join(r.Nodes, ">") + "|" + valid
+}
+
+func routeInvalidForDevice(device model.Node, route RIBEntry) bool {
+	if route.Invalid {
+		return true
+	}
+	if device.Kind == "ceos" && route.NextHop != "" && route.NextHop != route.From {
+		return true
+	}
+	return false
 }
 
 func failureEligibleLinks(links []model.Link) []model.Link {

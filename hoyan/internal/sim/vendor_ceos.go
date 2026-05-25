@@ -9,17 +9,21 @@ import (
 type ceosBehavior struct{ baseDeviceBehavior }
 
 func NewCEOSBehavior() DeviceBehavior {
-	return ceosBehavior{baseDeviceBehavior{kind: "ceos", decision: DefaultBGPDecisionProcess()}}
+	return ceosBehavior{baseDeviceBehavior{kind: "ceos", decision: ceosDecisionProcess{}}}
+}
+
+type ceosDecisionProcess struct{}
+
+func (ceosDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+	return defaultBGPDecisionProcess{}.Less(receiver, a, b)
+}
+
+func (ceosDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {
+	return false
 }
 
 func (b ceosBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEntry {
-	out := make([]RIBEntry, 0, len(routes))
-	for _, route := range routes {
-		if route.NextHop != "" && route.NextHop != route.From {
-			continue
-		}
-		out = append(out, route)
-	}
+	out := append([]RIBEntry(nil), routes...)
 	sort.Slice(out, func(i, j int) bool {
 		return b.DecisionProcess().Less(device, out[i], out[j])
 	})

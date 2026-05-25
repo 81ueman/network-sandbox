@@ -42,8 +42,8 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if err != nil {
 		return err
 	}
-	frrNodes := ribcompare.FRRNodes(topo.Nodes)
-	expected := ribcompare.ExpectedForNodes(topo, frrNodes)
+	nodes := ribcompare.SupportedNodes(topo.Nodes)
+	expected := ribcompare.ExpectedForNodes(topo, nodes)
 
 	fmt.Fprintf(opts.Out, "deploying %s\n", opts.Topology)
 	if _, err := runner.Run(ctx, "containerlab", "deploy", "--reconfigure", "-t", opts.Topology); err != nil {
@@ -61,30 +61,34 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 
 	deadlineCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	if err := WaitForFRRContainers(deadlineCtx, runner, frrNodes, opts.PollInterval); err != nil {
+	if err := WaitForContainers(deadlineCtx, runner, nodes, opts.PollInterval); err != nil {
 		return err
 	}
-	fmt.Fprintln(opts.Out, "waiting for FRR BGP routes")
-	actual, diffs, err := WaitForMatchingRIBs(deadlineCtx, runner, frrNodes, expected, opts.PollInterval, opts.MaxPolls)
+	fmt.Fprintln(opts.Out, "waiting for BGP RIB routes")
+	actual, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expected, opts.PollInterval, opts.MaxPolls)
 	if err != nil {
 		if len(actual) > 0 {
-			for _, d := range diffs {
-				fmt.Fprintf(opts.Out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
+			for _, line := range ribcompare.FormatDiffs(result) {
+				fmt.Fprintln(opts.Out, line)
 			}
 		}
 		return err
 	}
-	for _, d := range diffs {
-		fmt.Fprintf(opts.Out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
+	for _, line := range ribcompare.FormatDiffs(result) {
+		fmt.Fprintln(opts.Out, line)
 	}
-	if len(diffs) > 0 {
-		return fmt.Errorf("live RIB comparison found %d diff(s)", len(diffs))
+	if !result.OK {
+		return fmt.Errorf("live BGP RIB comparison found diff(s)")
 	}
-	fmt.Fprintln(opts.Out, "live FRR RIBs match modeled best paths")
+	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
 	return nil
 }
 
 func WaitForFRRContainers(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, interval time.Duration) error {
+	return WaitForContainers(ctx, runner, nodes, interval)
+}
+
+func WaitForContainers(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, interval time.Duration) error {
 	var lastErr error
 	return poll(ctx, interval, func() (bool, error) {
 		for _, n := range nodes {
@@ -101,20 +105,20 @@ func WaitForFRRContainers(ctx context.Context, runner ribcompare.Runner, nodes [
 		return true, nil
 	}, func() error {
 		if lastErr != nil {
-			return fmt.Errorf("FRR containers did not become ready: %w", lastErr)
+			return fmt.Errorf("containers did not become ready: %w", lastErr)
 		}
-		return fmt.Errorf("FRR containers did not become ready")
+		return fmt.Errorf("containers did not become ready")
 	})
 }
 
-func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.ExpectedRoute, interval time.Duration, maxPolls int) ([]ribcompare.ActualRoute, error) {
-	var last []ribcompare.ActualRoute
+func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.NormalizedBgpRoute, interval time.Duration, maxPolls int) ([]ribcompare.NormalizedBgpRoute, error) {
+	var last []ribcompare.NormalizedBgpRoute
 	var lastErr error
 	bestSeen := 0
 	polls := 0
 	err := poll(ctx, interval, func() (bool, error) {
 		polls++
-		actual, err := ribcompare.CollectFRRWithRunner(ctx, runner, nodes)
+		actual, err := ribcompare.CollectWithRunner(ctx, runner, nodes)
 		if err != nil {
 			lastErr = err
 			if maxPolls > 0 && polls >= maxPolls {
@@ -142,16 +146,16 @@ func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes 
 	return last, nil
 }
 
-func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.ExpectedRoute, interval time.Duration, maxPolls int) ([]ribcompare.ActualRoute, []ribcompare.Diff, error) {
-	var last []ribcompare.ActualRoute
-	var lastDiffs []ribcompare.Diff
+func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.NormalizedBgpRoute, interval time.Duration, maxPolls int) ([]ribcompare.NormalizedBgpRoute, ribcompare.BgpRibCompareResult, error) {
+	var last []ribcompare.NormalizedBgpRoute
+	var lastResult ribcompare.BgpRibCompareResult
 	var lastErr error
 	bestSeen := 0
 	bestDiffCount := -1
 	polls := 0
 	err := poll(ctx, interval, func() (bool, error) {
 		polls++
-		actual, err := ribcompare.CollectFRRWithRunner(ctx, runner, nodes)
+		actual, err := ribcompare.CollectWithRunner(ctx, runner, nodes)
 		if err != nil {
 			lastErr = err
 			if maxPolls > 0 && polls >= maxPolls {
@@ -163,11 +167,12 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 		if seen := CountExpectedRoutes(expected, actual); seen > bestSeen {
 			bestSeen = seen
 		}
-		lastDiffs = ribcompare.Compare(expected, actual)
-		if bestDiffCount == -1 || len(lastDiffs) < bestDiffCount {
-			bestDiffCount = len(lastDiffs)
+		lastResult = ribcompare.CompareBgpRib(expected, actual, ribcompare.LiveBgpRibCompareOptions())
+		diffCount := countDiffs(lastResult)
+		if bestDiffCount == -1 || diffCount < bestDiffCount {
+			bestDiffCount = diffCount
 		}
-		if len(lastDiffs) == 0 {
+		if lastResult.OK {
 			return true, nil
 		}
 		if maxPolls > 0 && polls >= maxPolls {
@@ -178,9 +183,9 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 		return ribMatchConvergenceError(lastErr, bestSeen, len(expected), bestDiffCount)
 	})
 	if err != nil {
-		return last, lastDiffs, err
+		return last, lastResult, err
 	}
-	return last, lastDiffs, nil
+	return last, lastResult, nil
 }
 
 func convergenceError(lastErr error, seen, total int) error {
@@ -192,30 +197,42 @@ func convergenceError(lastErr error, seen, total int) error {
 
 func ribMatchConvergenceError(lastErr error, seen, total, bestDiffCount int) error {
 	if lastErr != nil {
-		return fmt.Errorf("BGP RIBs did not converge to modeled best paths; last collection error: %w", lastErr)
+		return fmt.Errorf("BGP RIBs did not converge to modeled paths; last collection error: %w", lastErr)
 	}
 	if bestDiffCount < 0 {
-		return fmt.Errorf("BGP RIBs did not converge to modeled best paths: saw %d/%d expected routes", seen, total)
+		return fmt.Errorf("BGP RIBs did not converge to modeled paths: saw %d/%d expected routes", seen, total)
 	}
-	return fmt.Errorf("BGP RIBs did not converge to modeled best paths: saw %d/%d expected routes, best diff count %d", seen, total, bestDiffCount)
+	return fmt.Errorf("BGP RIBs did not converge to modeled paths: saw %d/%d expected routes, best diff count %d", seen, total, bestDiffCount)
 }
 
-func HasExpectedRoutes(expected []ribcompare.ExpectedRoute, actual []ribcompare.ActualRoute) bool {
+func HasExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) bool {
 	return CountExpectedRoutes(expected, actual) == len(expected)
 }
 
-func CountExpectedRoutes(expected []ribcompare.ExpectedRoute, actual []ribcompare.ActualRoute) int {
+func CountExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) int {
 	seen := map[string]bool{}
 	for _, route := range actual {
-		seen[route.Node+"|"+route.Prefix] = true
+		seen[route.Node+"|"+route.NetworkInstance+"|"+route.AFI+"|"+route.Prefix] = true
 	}
 	count := 0
 	for _, route := range expected {
-		if seen[route.Node+"|"+route.Prefix] {
+		ni := route.NetworkInstance
+		if ni == "" {
+			ni = "default"
+		}
+		afi := route.AFI
+		if afi == "" {
+			afi = "ipv4"
+		}
+		if seen[route.Node+"|"+ni+"|"+afi+"|"+route.Prefix] {
 			count++
 		}
 	}
 	return count
+}
+
+func countDiffs(result ribcompare.BgpRibCompareResult) int {
+	return len(result.MissingPrefixes) + len(result.UnexpectedPrefixes) + len(result.MissingPaths) + len(result.UnexpectedPaths) + len(result.Mismatched)
 }
 
 func poll(ctx context.Context, interval time.Duration, fn func() (bool, error), onTimeout func() error) error {

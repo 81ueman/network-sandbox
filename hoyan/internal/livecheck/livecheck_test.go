@@ -24,15 +24,15 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]by
 }
 
 func TestHasExpectedRoutes(t *testing.T) {
-	expected := []ribcompare.ExpectedRoute{
-		{Node: "r1", Prefix: "10.0.0.0/24"},
-		{Node: "r2", Prefix: "10.1.0.0/24"},
+	expected := []ribcompare.NormalizedBgpRoute{
+		{Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.0.0.0/24"},
+		{Node: "r2", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.1.0.0/24"},
 	}
-	actual := []ribcompare.ActualRoute{{Node: "r1", Prefix: "10.0.0.0/24"}}
+	actual := []ribcompare.NormalizedBgpRoute{{Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.0.0.0/24"}}
 	if HasExpectedRoutes(expected, actual) {
 		t.Fatalf("routes should be incomplete")
 	}
-	actual = append(actual, ribcompare.ActualRoute{Node: "r2", Prefix: "10.1.0.0/24"})
+	actual = append(actual, ribcompare.NormalizedBgpRoute{Node: "r2", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.1.0.0/24"})
 	if !HasExpectedRoutes(expected, actual) {
 		t.Fatalf("routes should be complete")
 	}
@@ -95,7 +95,7 @@ func TestWaitForExpectedRoutesStopsAfterMaxPolls(t *testing.T) {
 		return []byte(`{"10.0.0.0/24":[{"valid":true,"bestpath":true,"nexthops":[{"ip":"192.0.2.1"}]}]}`), nil
 	}}
 	nodes := []model.Node{{Name: "r1", Kind: "frr"}}
-	expected := []ribcompare.ExpectedRoute{{Node: "r1", Prefix: "10.0.0.0/24"}, {Node: "r1", Prefix: "10.1.0.0/24"}}
+	expected := []ribcompare.NormalizedBgpRoute{{Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.0.0.0/24"}, {Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.1.0.0/24"}}
 	actual, err := WaitForExpectedRoutes(context.Background(), runner, nodes, expected, time.Millisecond, 2)
 	if err == nil {
 		t.Fatalf("WaitForExpectedRoutes() succeeded unexpectedly")
@@ -118,12 +118,12 @@ func TestWaitForMatchingRIBsPollsUntilDiffsClear(t *testing.T) {
 		return []byte(`{"10.0.0.0/24":[{"valid":true,"bestpath":true,"nexthops":[{"ip":"198.51.100.1"}]}]}`), nil
 	}}
 	nodes := []model.Node{{Name: "r1", Kind: "frr"}}
-	expected := []ribcompare.ExpectedRoute{{Node: "r1", Prefix: "10.0.0.0/24", NextHop: "198.51.100.1"}}
+	expected := []ribcompare.NormalizedBgpRoute{{Node: "r1", NetworkInstance: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Paths: []ribcompare.NormalizedBgpPath{{Best: true, Valid: true, NextHop: "198.51.100.1", Origin: "igp", LocalPref: 100}}}}
 	_, diffs, err := WaitForMatchingRIBs(context.Background(), runner, nodes, expected, time.Millisecond, 2)
 	if err != nil {
 		t.Fatalf("WaitForMatchingRIBs() error = %v", err)
 	}
-	if len(diffs) != 0 {
+	if !diffs.OK {
 		t.Fatalf("diffs = %v, want none", diffs)
 	}
 	if polls != 2 {
@@ -189,7 +189,7 @@ func TestNodeFailureScenarioStopsNodeAndFiltersActiveFRRNodes(t *testing.T) {
 	if !scenario.Failures.Nodes["r1"] {
 		t.Fatalf("scenario failures = %#v, want node r1", scenario.Failures)
 	}
-	if got, want := scenario.ActiveNodes, []model.Node{{Name: "r2", Kind: "frr"}}; !reflect.DeepEqual(got, want) {
+	if got, want := scenario.ActiveNodes, []model.Node{{Name: "r2", Kind: "frr"}, {Name: "s1", Kind: "srlinux"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("active nodes = %#v, want %#v", got, want)
 	}
 }
@@ -215,7 +215,7 @@ func TestCompareRIBsWithFailuresUsesFailureAwareExpectedRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompareRIBsWithFailures() error = %v", err)
 	}
-	if len(runner.calls) != 1 || !strings.Contains(runner.calls[0], "docker exec r2") {
+	if len(runner.calls) != 1 || !strings.Contains(runner.calls[0], "docker exec -i r2") {
 		t.Fatalf("calls = %v, want only r2 collection", runner.calls)
 	}
 }

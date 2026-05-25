@@ -151,7 +151,7 @@ func TestDefaultBGPDecisionProcessEquivalent(t *testing.T) {
 	}
 }
 
-func TestCEOSSelectRoutesFiltersUnreachableNextHop(t *testing.T) {
+func TestCEOSSelectRoutesKeepsUnreachableNextHopForBgpRIB(t *testing.T) {
 	behavior := NewCEOSBehavior()
 	device := model.Node{Name: "ceos", ASN: 65000}
 	routes := []RIBEntry{
@@ -160,10 +160,10 @@ func TestCEOSSelectRoutesFiltersUnreachableNextHop(t *testing.T) {
 		{Prefix: "10.0.0.0/24", From: "peer3", NextHop: "", LocalPref: 100},
 	}
 	selected := behavior.SelectRoutes(device, routes)
-	if len(selected) != 2 {
-		t.Fatalf("selected routes = %#v, want two directly reachable routes", selected)
+	if len(selected) != 3 {
+		t.Fatalf("selected routes = %#v, want all BGP RIB routes", selected)
 	}
-	if selected[0].From != "peer2" || selected[1].From != "peer3" {
+	if selected[0].From != "peer1" || selected[1].From != "peer2" || selected[2].From != "peer3" {
 		t.Fatalf("selected routes = %#v", selected)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -17,20 +18,20 @@ func main() {
 	if err != nil {
 		die(err)
 	}
-	frrNodes := ribcompare.FRRNodes(topo.Nodes)
-	expected := ribcompare.ExpectedForNodes(topo, frrNodes)
-	actual, err := ribcompare.CollectFRR(frrNodes)
+	nodes := ribcompare.SupportedNodes(topo.Nodes)
+	expected := ribcompare.ExpectedForNodes(topo, nodes)
+	actual, err := ribcompare.Collect(context.Background(), ribcompare.ExecRunner{}, nodes)
 	if err != nil {
 		die(err)
 	}
-	diffs := ribcompare.Compare(expected, actual)
-	for _, d := range diffs {
-		fmt.Printf("[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
+	result := ribcompare.CompareBgpRib(expected, actual, ribcompare.LiveBgpRibCompareOptions())
+	for _, line := range ribcompare.FormatDiffs(result) {
+		fmt.Println(line)
 	}
-	if len(diffs) > 0 {
+	if !result.OK {
 		os.Exit(1)
 	}
-	fmt.Println("RIBs match expected FRR best paths")
+	fmt.Println("BGP RIBs match expected modeled paths")
 }
 
 func die(err error) {

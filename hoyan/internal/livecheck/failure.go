@@ -37,7 +37,7 @@ func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo
 	}
 	activeNodes := scenario.ActiveNodes
 	if activeNodes == nil {
-		activeNodes = ribcompare.FRRNodes(topo.Nodes)
+		activeNodes = ribcompare.SupportedNodes(topo.Nodes)
 	}
 	expected := ribcompare.ExpectedForNodesWithFailureSet(topo, activeNodes, scenario.Failures)
 	if scenario.Inject != nil {
@@ -57,10 +57,10 @@ func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo
 		return err
 	}
 	printDiffs(opts.Out, diffs)
-	if len(diffs) > 0 {
-		return fmt.Errorf("failure scenario %s found %d live RIB diff(s)", scenario.Name, len(diffs))
+	if !diffs.OK {
+		return fmt.Errorf("failure scenario %s found live BGP RIB diff(s)", scenario.Name)
 	}
-	fmt.Fprintf(opts.Out, "failure scenario %s live FRR RIBs match modeled best paths\n", scenario.Name)
+	fmt.Fprintf(opts.Out, "failure scenario %s live BGP RIBs match modeled paths\n", scenario.Name)
 	return nil
 }
 
@@ -104,7 +104,7 @@ func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScena
 	return RIBFailureScenario{
 		Name:        "node-" + nodeName,
 		Failures:    sim.NodeFailures(nodeName),
-		ActiveNodes: activeFRRNodes(topo.Nodes, map[string]bool{nodeName: true}),
+		ActiveNodes: activeSupportedNodes(topo.Nodes, map[string]bool{nodeName: true}),
 		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
 			if _, err := runner.Run(ctx, "docker", "stop", nodeName); err != nil {
 				return fmt.Errorf("docker stop %s: %w", nodeName, err)
@@ -114,14 +114,14 @@ func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScena
 	}, nil
 }
 
-func activeFRRNodes(nodes []model.Node, failed map[string]bool) []model.Node {
+func activeSupportedNodes(nodes []model.Node, failed map[string]bool) []model.Node {
 	var out []model.Node
 	for _, node := range nodes {
-		if node.Kind == "frr" && !failed[node.Name] {
+		if !failed[node.Name] {
 			out = append(out, node)
 		}
 	}
-	return out
+	return ribcompare.SupportedNodes(out)
 }
 
 func findLink(topo *model.Topology, name string) (model.Link, bool) {
@@ -133,18 +133,18 @@ func findLink(topo *model.Topology, name string) (model.Link, bool) {
 	return model.Link{}, false
 }
 
-func printRIBDiffs(out io.Writer, expected []ribcompare.ExpectedRoute, actual []ribcompare.ActualRoute) {
+func printRIBDiffs(out io.Writer, expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) {
 	if out == nil {
 		return
 	}
-	printDiffs(out, ribcompare.Compare(expected, actual))
+	printDiffs(out, ribcompare.CompareBgpRib(expected, actual, ribcompare.LiveBgpRibCompareOptions()))
 }
 
-func printDiffs(out io.Writer, diffs []ribcompare.Diff) {
+func printDiffs(out io.Writer, diffs ribcompare.BgpRibCompareResult) {
 	if out == nil {
 		return
 	}
-	for _, d := range diffs {
-		fmt.Fprintf(out, "[DIFF] %s %s expected=%s actual=%s\n", d.Node, d.Prefix, d.Expected, d.Actual)
+	for _, line := range ribcompare.FormatDiffs(diffs) {
+		fmt.Fprintln(out, line)
 	}
 }
