@@ -7,7 +7,5 @@ import (
 )
 
 func main() {
-	cmd := cli.NewRenderTopologyCommand()
-	cmd.Use = "hoyan-render-topology"
-	os.Exit(cli.Execute(cmd))
+	os.Exit(cli.Execute(cli.NewRootCommand()))
 }
