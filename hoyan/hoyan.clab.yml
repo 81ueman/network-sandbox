@@ -7,7 +7,7 @@ topology:
         arista_ceos:
             image: ceos:latest
         linux:
-            image: quay.io/frrouting/frr:10.6.1
+            image: hoyan-frr-nftables:10.6.1
         nokia_srlinux:
             image: ghcr.io/nokia/srlinux:25.10
             type: ixr-d2l
@@ -128,6 +128,7 @@ topology:
                 - configs/frr/core-hz/daemons:/etc/frr/daemons:ro
                 - configs/frr/core-hz/frr.conf:/etc/frr/frr.conf:ro
                 - configs/frr/common/vtysh.conf:/etc/frr/vtysh.conf:ro
+                - configs/frr/core-hz/nftables.conf:/etc/hoyan/nftables.conf:ro
             group: core
             kind: linux
             mgmt-ipv4: 172.86.86.104

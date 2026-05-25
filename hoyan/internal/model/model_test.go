@@ -112,6 +112,9 @@ func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
 		if policy.Source.File == "" || policy.Source.Line == 0 || policy.Source.Raw == "" {
 			t.Fatalf("policy source not populated: %#v", policy.Source)
 		}
+		if tt.node == "core-hz" && policy.Source.Vendor != "nftables" {
+			t.Fatalf("core-hz policy source vendor = %q, want nftables", policy.Source.Vendor)
+		}
 	}
 }
 
@@ -160,6 +163,53 @@ func TestParseFRRConfig(t *testing.T) {
 	}
 	if len(cfg.Neighbors) != 3 {
 		t.Fatalf("neighbors = %d, want 3", len(cfg.Neighbors))
+	}
+}
+
+func TestParseNftablesConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nftables.conf")
+	if err := os.WriteFile(path, []byte(`table inet BLOCK_HTTP_TO_HZ {
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    oifname "eth1" ip protocol tcp ip daddr 10.4.0.0/16 tcp dport 80 drop
+    iifname "eth2" ip protocol icmp ip daddr 10.5.0.0/16 drop
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	policies, err := ParseNftablesConfig(path)
+	if err != nil {
+		t.Fatalf("ParseNftablesConfig() error = %v", err)
+	}
+	if len(policies) != 2 {
+		t.Fatalf("policies = %d, want 2: %#v", len(policies), policies)
+	}
+	if policies[0].Name != "BLOCK-HTTP-TO-HZ" || policies[0].Stage != "egress" || policies[0].Interface != "eth1" || policies[0].Protocol != "tcp" || policies[0].DstPrefix.String() != "10.4.0.0/16" || policies[0].Action != "deny" {
+		t.Fatalf("first policy = %#v", policies[0])
+	}
+	if policies[1].Stage != "ingress" || policies[1].Interface != "eth2" || policies[1].Protocol != "icmp" || policies[1].DstPrefix.String() != "10.5.0.0/16" {
+		t.Fatalf("second policy = %#v", policies[1])
+	}
+	if policies[0].Source.Vendor != "nftables" || policies[0].Source.File != path || policies[0].Source.Raw == "" {
+		t.Fatalf("source = %#v", policies[0].Source)
+	}
+}
+
+func TestParseNftablesRejectsUnsupportedStatement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nftables.conf")
+	if err := os.WriteFile(path, []byte(`table inet T {
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    oifname "eth1" ip saddr 10.0.0.0/8 drop
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := ParseNftablesConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported nftables ip match") {
+		t.Fatalf("ParseNftablesConfig() error = %v", err)
 	}
 }
 

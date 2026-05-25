@@ -117,6 +117,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 	}
 	packet := state.Packet
 	packet.Node = state.Node
+	packet.IngressInterface = state.IngressInterface
 	if _, denied := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); denied {
 		return
 	}
@@ -128,11 +129,12 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 		if entry.NextHop == "" {
 			continue
 		}
-		if _, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
-			continue
-		}
 		link, ok := e.idx.LinkBetween(state.Node, entry.NextHop)
 		if !ok {
+			continue
+		}
+		packet.EgressInterface = ingressInterface(link, state.Node)
+		if _, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
 			continue
 		}
 		nextCond := failure.And(

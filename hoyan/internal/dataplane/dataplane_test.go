@@ -213,6 +213,49 @@ func TestSymbolicPacketReachabilityEvalMatchesConcretePacketReachable(t *testing
 	}
 }
 
+func TestPacketReachableMatchesPolicyInterface(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
+			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
+		},
+		Policies: []model.Policy{{
+			Name:      "NFT-DENY",
+			Node:      "mid",
+			Plane:     "data",
+			Stage:     "egress",
+			Interface: "eth2",
+			Action:    "deny",
+			Protocol:  "tcp",
+			DstPrefix: pfx,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	_, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None())
+	if ok || reason != "denied by policy NFT-DENY" {
+		t.Fatalf("tcp PacketReachable() ok=%v reason=%q, want nft deny", ok, reason)
+	}
+	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "icmp", failure.None()); !ok {
+		t.Fatalf("icmp PacketReachable() ok=false reason=%q, want reachable", reason)
+	}
+	idx.Topology.Policies[0].Interface = "eth9"
+	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); !ok {
+		t.Fatalf("tcp PacketReachable() with nonmatching interface ok=false reason=%q, want reachable", reason)
+	}
+}
+
 func TestSymbolicPacketReachabilityDoesNotExploreLoopsForever(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{

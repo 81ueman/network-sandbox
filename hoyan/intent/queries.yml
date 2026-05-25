@@ -20,6 +20,19 @@ packet_checks:
     dst_port: 80
     expect_reachable: false
     max_failures: 0
+  - name: bj-client-to-hz-icmp-live-linux-acl
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: icmp
+    expect_reachable: true
+    max_failures: 0
+  - name: bj-client-to-hz-http-denied-live-linux-acl
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 80
+    expect_reachable: false
+    max_failures: 0
   - name: sh-client-to-hz-http-denied-live-ceos
     from: cust-sh
     to: 10.4.1.10

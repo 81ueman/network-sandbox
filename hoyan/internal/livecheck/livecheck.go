@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -61,6 +63,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	nodes := ribcompare.SupportedNodes(topo.Nodes)
 	expected := ribcompare.ExpectedForNodes(topo, nodes)
 
+	if err := BuildLocalImages(ctx, runner, opts.Topology, opts.Out); err != nil {
+		return err
+	}
 	fmt.Fprintf(opts.Out, "deploying %s\n", opts.Topology)
 	if _, err := runner.Run(ctx, "containerlab", "deploy", "--reconfigure", "-t", opts.Topology); err != nil {
 		return fmt.Errorf("containerlab deploy: %w", err)
@@ -78,6 +83,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	deadlineCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	if err := WaitForContainers(deadlineCtx, runner, nodes, opts.PollInterval); err != nil {
+		return err
+	}
+	if err := ApplyNftablesPolicies(deadlineCtx, runner, topo, opts.Out); err != nil {
 		return err
 	}
 	fmt.Fprintln(opts.Out, "waiting for BGP RIB routes")
@@ -99,6 +107,31 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
 	if err := RunDataplaneChecks(deadlineCtx, runner, topo, queries, opts.Out); err != nil {
 		return err
+	}
+	return nil
+}
+
+func BuildLocalImages(ctx context.Context, runner ribcompare.Runner, topologyPath string, out io.Writer) error {
+	root := filepath.Dir(topologyPath)
+	dockerfile := filepath.Join(root, "images", "frr-nftables", "Dockerfile")
+	if _, err := os.Stat(dockerfile); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	contextDir := filepath.Dir(dockerfile)
+	if _, err := runner.Run(ctx, "docker", "image", "inspect", "hoyan-frr-nftables:10.6.1"); err == nil {
+		if out != nil {
+			fmt.Fprintln(out, "using existing hoyan-frr-nftables:10.6.1")
+		}
+		return nil
+	}
+	if out != nil {
+		fmt.Fprintln(out, "building hoyan-frr-nftables:10.6.1")
+	}
+	if _, err := runner.Run(ctx, "docker", "build", "-t", "hoyan-frr-nftables:10.6.1", contextDir); err != nil {
+		return fmt.Errorf("docker build hoyan-frr-nftables:10.6.1: %w", err)
 	}
 	return nil
 }

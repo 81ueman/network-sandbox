@@ -251,6 +251,9 @@ func (t *Topology) Validate() error {
 		if p.Peer != "" && !seen[p.Peer] {
 			return fmt.Errorf("policy %s references unknown peer node %s", p.Name, p.Peer)
 		}
+		if p.Interface != "" && !hasInterface(nodes[p.Node], p.Interface) {
+			return fmt.Errorf("policy %s references unknown interface %s on node %s", p.Name, p.Interface, p.Node)
+		}
 		if err := validatePolicy(p); err != nil {
 			return err
 		}

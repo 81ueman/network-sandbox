@@ -49,6 +49,7 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 		return Path{}, false, "destination node is down"
 	}
 	current := from
+	ingressInterface := ""
 	visited := map[string]bool{}
 	full := Path{Nodes: []string{from}}
 	for {
@@ -63,15 +64,13 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 			return full, true, ""
 		}
 		currentNode, _ := e.idx.Node(current)
-		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, controlplane.PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol}, e.idx.Topology.Policies); ok {
+		packet := controlplane.PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol, IngressInterface: ingressInterface}
+		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); ok {
 			return full, false, "denied by policy " + pol
 		}
 		rule, ok := e.LookupFIB(current, to, ctx)
 		if !ok {
 			return full, false, "no forwarding route"
-		}
-		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, controlplane.PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol}, e.idx.Topology.Policies); ok {
-			return full, false, "denied by policy " + pol
 		}
 		if rule.NextHop == "" {
 			return full, false, "selected route has no next-hop"
@@ -83,9 +82,14 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 		if !ok || ctx.LinkFailed(model.LinkID(link.Name)) {
 			return full, false, "next-hop link is down"
 		}
+		packet.EgressInterface = interfaceOnLink(link, current)
+		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
+			return full, false, "denied by policy " + pol
+		}
 		full.Links = append(full.Links, link.Name)
 		full.Nodes = append(full.Nodes, rule.NextHop)
 		full.Cost += link.Cost
+		ingressInterface = interfaceOnLink(link, rule.NextHop)
 		current = rule.NextHop
 	}
 }
@@ -116,5 +120,16 @@ func (e *Engine) originates(node string, prefix netip.Prefix) bool {
 func reverse[T any](xs []T) {
 	for i, j := 0, len(xs)-1; i < j; i, j = i+1, j-1 {
 		xs[i], xs[j] = xs[j], xs[i]
+	}
+}
+
+func interfaceOnLink(link model.Link, node string) string {
+	switch node {
+	case link.A:
+		return link.AIntf
+	case link.B:
+		return link.BIntf
+	default:
+		return ""
 	}
 }

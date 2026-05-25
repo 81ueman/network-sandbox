@@ -64,6 +64,14 @@ func ParseConfigWithWarnings(kind DeviceKind, path string) (ParseResult, error) 
 	return parseConfig(kind, path, true)
 }
 
+func ParseNftablesConfig(path string) ([]Policy, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseNftables(path, string(data))
+}
+
 func parseConfig(kind DeviceKind, path string, collectWarnings bool) (ParseResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -674,6 +682,136 @@ func unsupportedStatement(vendor, file string, line int, text, reason string) Un
 	}
 }
 
+func parseNftables(path, text string) ([]Policy, error) {
+	var policies []Policy
+	var tableName string
+	inForward := false
+	scanner := bufio.NewScanner(strings.NewReader(text))
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		raw := scanner.Text()
+		line := strings.TrimSpace(raw)
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if line == "" || line == "}" {
+			if line == "}" && inForward {
+				inForward = false
+			}
+			continue
+		}
+		fields := strings.Fields(strings.NewReplacer("{", " { ", ";", " ; ").Replace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		switch {
+		case len(fields) >= 4 && fields[0] == "table" && fields[1] == "inet":
+			tableName = fields[2]
+		case len(fields) >= 3 && fields[0] == "chain" && fields[1] == "forward":
+			inForward = true
+		case inForward && len(fields) >= 8 && fields[0] == "type" && fields[1] == "filter" && fields[2] == "hook" && fields[3] == "forward":
+			continue
+		case inForward:
+			policy, ok, err := parseNftablesForwardRule(path, lineNo, line, tableName, fields)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				policies = append(policies, policy)
+			}
+		default:
+			return nil, fmt.Errorf("%s:%d: unsupported nftables statement %q", path, lineNo, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return policies, nil
+}
+
+func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fields []string) (Policy, bool, error) {
+	stage := ""
+	iface := ""
+	protocol := ""
+	dstPrefix := Prefix{}
+	action := ""
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case ";":
+			continue
+		case "iifname", "oifname":
+			if i+1 >= len(fields) {
+				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables interface match %q", path, lineNo, raw)
+			}
+			if fields[i] == "iifname" {
+				stage = "ingress"
+			} else {
+				stage = "egress"
+			}
+			iface = strings.Trim(fields[i+1], `"`)
+			i++
+		case "ip":
+			if i+2 >= len(fields) {
+				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
+			}
+			switch fields[i+1] {
+			case "protocol":
+				protocol = fields[i+2]
+			case "daddr":
+				pfx, err := ParsePrefix(fields[i+2])
+				if err != nil {
+					return Policy{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
+				}
+				dstPrefix = pfx
+			default:
+				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
+			}
+			i += 2
+		case "tcp", "udp":
+			if i+2 >= len(fields) || fields[i+1] != "dport" || !supportedACLPortTail([]string{"eq", fields[i+2]}) {
+				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables transport match %q", path, lineNo, raw)
+			}
+			i += 2
+		case "drop":
+			action = "deny"
+		case "accept":
+			return Policy{}, false, nil
+		default:
+			return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables forward statement %q", path, lineNo, raw)
+		}
+	}
+	if stage == "" || iface == "" || protocol == "" || dstPrefix.IsZero() || action == "" {
+		return Policy{}, false, fmt.Errorf("%s:%d: incomplete nftables forward rule %q", path, lineNo, raw)
+	}
+	if protocol != "tcp" && protocol != "udp" && protocol != "icmp" && protocol != "ip" {
+		return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables protocol %q", path, lineNo, protocol)
+	}
+	return Policy{
+		Name:      nftablesPolicyName(tableName),
+		Plane:     "data",
+		Stage:     stage,
+		Interface: iface,
+		Action:    action,
+		Protocol:  aclPolicyProtocol(protocol),
+		DstPrefix: dstPrefix,
+		Seq:       lineNo,
+		Source: PolicySource{
+			Vendor: "nftables",
+			File:   path,
+			Line:   lineNo,
+			Raw:    raw,
+		},
+	}, true, nil
+}
+
+func nftablesPolicyName(tableName string) string {
+	if tableName == "" {
+		return "NFTABLES-FORWARD"
+	}
+	return strings.ReplaceAll(tableName, "_", "-")
+}
+
 func isACLRuleLine(fields []string) bool {
 	if len(fields) == 0 {
 		return false
@@ -1183,6 +1321,9 @@ func interfaceAddr(interfaces []Interface, name string) (netip.Prefix, bool) {
 
 func interfaceAliases(name string) []string {
 	names := []string{name}
+	if base, _, ok := strings.Cut(name, "."); ok {
+		names = append(names, base)
+	}
 	if strings.HasPrefix(name, "e1-") {
 		names = append(names, "ethernet-1/"+strings.TrimPrefix(name, "e1-"))
 	}
