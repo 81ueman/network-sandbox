@@ -56,3 +56,34 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 		t.Fatalf("PacketReachable() = ok %v reason %q, want forwarding loop", ok, reason)
 	}
 }
+
+func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	equivalentRoutes := []controlplane.RIBEntry{
+		{Prefix: prefix, Origin: "a", LocalPref: 100, ASPath: []uint32{65100}, Nodes: []string{"a", "rx"}, SelectedCond: failure.LinkVar("path-a")},
+		{Prefix: prefix, Origin: "b", LocalPref: 100, ASPath: []uint32{65200}, Nodes: []string{"b", "rx"}, SelectedCond: failure.LinkVar("path-b")},
+	}
+
+	frrIdx, err := model.BuildTopologyIndex(&model.Topology{Nodes: []model.Node{{Name: "rx", Kind: model.KindFRR, ASN: 65000}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frrRIB := map[string]map[string][]controlplane.RIBEntry{"rx": {prefix.String(): append([]controlplane.RIBEntry(nil), equivalentRoutes...)}}
+	frrFIB := map[string][]FIBEntry{}
+	NewEngine(frrIdx, frrRIB, frrFIB).DeriveFIB()
+	if got := len(frrFIB["rx"]); got != 1 {
+		t.Fatalf("FRR FIB entries = %d, want equivalent route collapsed to 1", got)
+	}
+
+	genericKind := model.DeviceKind("generic")
+	genericIdx, err := model.BuildTopologyIndex(&model.Topology{Nodes: []model.Node{{Name: "rx", Kind: genericKind, ASN: 65000}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	genericRIB := map[string]map[string][]controlplane.RIBEntry{"rx": {prefix.String(): append([]controlplane.RIBEntry(nil), equivalentRoutes...)}}
+	genericFIB := map[string][]FIBEntry{}
+	NewEngine(genericIdx, genericRIB, genericFIB).DeriveFIB()
+	if got := len(genericFIB["rx"]); got != 2 {
+		t.Fatalf("generic FIB entries = %d, want equivalent routes kept", got)
+	}
+}

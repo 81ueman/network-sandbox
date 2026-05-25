@@ -41,11 +41,12 @@ go run -tags z3 ./cmd/hoyan-verify
 When running Hoyan from multiple git worktrees, render an isolated topology per
 worktree first. The suffix is appended to the lab name and Docker management
 network name, derives a separate `172.86.<n>.0/24` management subnet, keeps
-containerlab's default naming, and rewrites config paths so the generated
-topology can live outside this directory:
+containerlab's default naming, and keeps the relative config paths valid from
+this directory. Keep the generated topology in the `hoyan` directory so
+startup-config handling for cEOS and SR Linux matches the source topology:
 
 ```bash
-go run ./cmd/hoyan-render-topology -suffix issue-21 -output /tmp/hoyan-issue-21.clab.yml
+go run ./cmd/hoyan-render-topology -suffix issue-21 -output hoyan.issue-21.clab.yml
 ```
 
 For `-suffix issue-21`, containers use containerlab's default names such as
@@ -53,8 +54,8 @@ For `-suffix issue-21`, containers use containerlab's default names such as
 commands:
 
 ```bash
-go run ./cmd/hoyan-live-check -topology /tmp/hoyan-issue-21.clab.yml
-go run ./cmd/hoyan-rib-compare -topology /tmp/hoyan-issue-21.clab.yml
+go run ./cmd/hoyan-live-check -topology hoyan.issue-21.clab.yml
+go run ./cmd/hoyan-rib-compare -topology hoyan.issue-21.clab.yml
 ```
 
 To run the full live integration check, including deploy, convergence wait,

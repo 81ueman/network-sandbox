@@ -32,13 +32,16 @@ func main() {
 	if err != nil {
 		die(err)
 	}
-	out, err := model.RenderIsolatedTopology(data, model.TopologyRenderOptions{
+	renderOpts := model.TopologyRenderOptions{
 		Suffix:      opts.suffix,
 		LabName:     opts.labName,
 		MgmtNetwork: opts.mgmtNetwork,
 		MgmtSubnet:  opts.mgmtSubnet,
-		SourceDir:   sourceDir,
-	})
+	}
+	if shouldRewriteConfigPaths(sourceDir, opts.outputPath) {
+		renderOpts.SourceDir = sourceDir
+	}
+	out, err := model.RenderIsolatedTopology(data, renderOpts)
 	if err != nil {
 		die(err)
 	}
@@ -51,6 +54,17 @@ func main() {
 	if err := os.WriteFile(opts.outputPath, out, 0o644); err != nil {
 		die(err)
 	}
+}
+
+func shouldRewriteConfigPaths(sourceDir, outputPath string) bool {
+	if outputPath == "" || outputPath == "-" {
+		return false
+	}
+	outputDir, err := filepath.Abs(filepath.Dir(outputPath))
+	if err != nil {
+		return true
+	}
+	return outputDir != sourceDir
 }
 
 func parseOptions(args []string) (options, error) {

@@ -179,6 +179,49 @@ func TestCEOSSelectRoutesKeepsUnreachableNextHopForBgpRIB(t *testing.T) {
 	}
 }
 
+func TestDeviceBehaviorRouteValidityHooks(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	generic := NewGenericBehavior(model.DeviceKind("generic"))
+	genericDevice := model.Node{Name: "generic", Kind: model.DeviceKind("generic"), ASN: 65000}
+	validRoute := RIBEntry{Prefix: prefix, From: "peer", NextHop: "remote"}
+	invalidRoute := validRoute
+	invalidRoute.Invalid = true
+
+	if !generic.RouteValidForRIB(genericDevice, validRoute) {
+		t.Fatalf("generic valid route was marked invalid")
+	}
+	if generic.RouteEligibleForAdvertisement(genericDevice, invalidRoute) {
+		t.Fatalf("generic invalid route should not be advertised")
+	}
+	if generic.RouteInstallableInFIB(genericDevice, nil, invalidRoute) {
+		t.Fatalf("generic invalid route should not be installed in FIB")
+	}
+
+	ceos := NewCEOSBehavior()
+	ceosDevice := model.Node{Name: "ceos", Kind: model.KindCEOS, ASN: 65000}
+	unresolved := RIBEntry{Prefix: prefix, From: "peer", NextHop: "remote"}
+	direct := RIBEntry{Prefix: prefix, From: "peer", NextHop: "peer"}
+	local := RIBEntry{Prefix: prefix, From: "", NextHop: ""}
+	if ceos.RouteValidForRIB(ceosDevice, unresolved) {
+		t.Fatalf("cEOS unresolved next-hop route should be invalid")
+	}
+	if !ceos.RouteValidForRIB(ceosDevice, direct) {
+		t.Fatalf("cEOS direct next-hop route should be valid")
+	}
+	if !ceos.RouteValidForRIB(ceosDevice, local) {
+		t.Fatalf("cEOS local route should be valid")
+	}
+
+	srl := NewSRLinuxBehavior()
+	imported := srl.ImportRoute(model.Node{Name: "rx", ASN: 65000}, model.Node{Name: "tx", ASN: 65100}, model.BGPNeighbor{}, RIBEntry{Prefix: prefix, ASPath: []uint32{65100, 65000}})
+	if !imported.Accept || !imported.Route.Invalid {
+		t.Fatalf("SR Linux AS-loop route should be retained as invalid: %#v", imported)
+	}
+	if srl.RouteEligibleForAdvertisement(model.Node{Name: "rx", Kind: model.KindSRLinux}, imported.Route) {
+		t.Fatalf("SR Linux invalid retained route should not be advertised")
+	}
+}
+
 func TestRegisterBehaviorReturnsRestoreFunction(t *testing.T) {
 	restore := RegisterBehavior("test-kind", NewGenericBehavior("registered-kind"))
 	if BehaviorFor("test-kind").Kind() != "registered-kind" {

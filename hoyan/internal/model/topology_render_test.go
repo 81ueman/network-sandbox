@@ -41,6 +41,37 @@ topology:
 	}
 }
 
+func TestRenderIsolatedTopologyPreservesRelativeConfigPathsByDefault(t *testing.T) {
+	data := []byte(`
+name: hoyan-wan
+mgmt:
+  ipv4-subnet: 172.86.86.0/24
+topology:
+  nodes:
+    frr:
+      kind: linux
+      binds:
+        - configs/frr/r1/frr.conf:/etc/frr/frr.conf:ro
+    ceos:
+      kind: arista_ceos
+      startup-config: configs/ceos/r1.cfg
+  links: []
+`)
+	out, err := RenderIsolatedTopology(data, TopologyRenderOptions{Suffix: "issue-123"})
+	if err != nil {
+		t.Fatalf("RenderIsolatedTopology() error = %v", err)
+	}
+	rendered := string(out)
+	for _, want := range []string{
+		"configs/frr/r1/frr.conf:/etc/frr/frr.conf:ro",
+		"startup-config: configs/ceos/r1.cfg",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered topology missing relative path %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestLoadLabTopologyContainerNames(t *testing.T) {
 	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
 	if err != nil {

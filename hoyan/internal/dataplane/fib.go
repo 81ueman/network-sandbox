@@ -48,7 +48,7 @@ func (e *Engine) DeriveFIB() {
 				if seenSelected[selectedKey] {
 					continue
 				}
-				if n.Kind == model.KindFRR && controlplane.EquivalentInstalledRoute(behavior.DecisionProcess(), n, installed, route) {
+				if !behavior.RouteInstallableInFIB(n, installed, route) {
 					continue
 				}
 				seenSelected[selectedKey] = true

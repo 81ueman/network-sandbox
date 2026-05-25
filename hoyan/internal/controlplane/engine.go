@@ -73,14 +73,14 @@ func (e *Engine) SelectRoutes() {
 			behavior := BehaviorFor(n.Kind)
 			routes = behavior.SelectRoutes(n, routes)
 			for i := range routes {
-				if RouteInvalidForDevice(n, routes[i]) {
+				if !behavior.RouteValidForRIB(n, routes[i]) {
 					routes[i].SelectedCond = failure.False()
 					continue
 				}
 				selected := routes[i].Condition
 				var higherDistinct []failure.Cond
 				for j := 0; j < i; j++ {
-					if RouteInvalidForDevice(n, routes[j]) {
+					if !behavior.RouteValidForRIB(n, routes[j]) {
 						continue
 					}
 					if behavior.DecisionProcess().Equivalent(n, routes[j], routes[i]) {
@@ -227,7 +227,7 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		entry.LocalPref = defaultLocalPref(entry.LocalPref)
 
 		e.addRIB(next, entry.Prefix, entry)
-		if RouteInvalidForDevice(nextNode, entry) {
+		if !nextBehavior.RouteEligibleForAdvertisement(nextNode, entry) {
 			continue
 		}
 		e.walkBGP(entry)
@@ -265,16 +265,6 @@ func EquivalentInstalledRoute(decision BGPDecisionProcess, node model.Node, inst
 		if decision.Equivalent(node, existing, route) {
 			return true
 		}
-	}
-	return false
-}
-
-func RouteInvalidForDevice(device model.Node, route RIBEntry) bool {
-	if route.Invalid {
-		return true
-	}
-	if device.Kind == model.KindCEOS && route.NextHop != "" && route.NextHop != route.From {
-		return true
 	}
 	return false
 }

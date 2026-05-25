@@ -197,6 +197,23 @@ func TestExpectedPathUsesModeledAttributes(t *testing.T) {
 	}
 }
 
+func TestExpectedPathUsesDeviceBehaviorValidity(t *testing.T) {
+	idx, err := model.BuildTopologyIndex(&model.Topology{})
+	if err != nil {
+		t.Fatalf("BuildTopologyIndex() error = %v", err)
+	}
+	node := model.Node{Name: "ceos", Kind: model.KindCEOS}
+	path := expectedPath(idx, node, sim.RIBEntry{
+		From:         "peer",
+		NextHop:      "remote",
+		Condition:    sim.True(),
+		SelectedCond: sim.False(),
+	}, sim.FailureContext{})
+	if path.Valid {
+		t.Fatalf("cEOS unresolved next-hop expected path should be invalid: %#v", path)
+	}
+}
+
 func TestExpectedReflectsRouteMapAttributes(t *testing.T) {
 	lp := 225
 	med := 33

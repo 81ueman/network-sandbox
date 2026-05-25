@@ -787,13 +787,7 @@ func routeNextHopAddress(idx *model.TopologyIndex, node string, route sim.RIBEnt
 }
 
 func expectedRouteValid(node model.Node, route sim.RIBEntry) bool {
-	if route.Invalid {
-		return false
-	}
-	if node.Kind == model.KindCEOS && route.NextHop != "" && route.NextHop != route.From {
-		return false
-	}
-	return true
+	return sim.BehaviorFor(node.Kind).RouteValidForRIB(node, route)
 }
 
 func linkAddresses(raw string) (string, string) {
