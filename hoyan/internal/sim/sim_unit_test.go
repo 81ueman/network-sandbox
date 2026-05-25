@@ -19,15 +19,29 @@ func testPrefix(t *testing.T, raw string) netip.Prefix {
 }
 
 func testGraph(topo *model.Topology) *Graph {
-	g := &Graph{
-		topo:        topo,
-		adj:         map[string][]edge{},
-		rib:         map[string]map[string][]RIBEntry{},
-		fib:         map[string][]FIBEntry{},
-		linksByName: map[string]model.Link{},
+	seen := map[string]bool{}
+	for _, node := range topo.Nodes {
+		seen[node.Name] = true
 	}
 	for _, link := range topo.Links {
-		g.linksByName[link.Name] = link
+		if !seen[link.A] {
+			topo.Nodes = append(topo.Nodes, model.Node{Name: link.A})
+			seen[link.A] = true
+		}
+		if !seen[link.B] {
+			topo.Nodes = append(topo.Nodes, model.Node{Name: link.B})
+			seen[link.B] = true
+		}
+	}
+	idx, err := model.BuildTopologyIndex(topo)
+	if err != nil {
+		panic(err)
+	}
+	g := &Graph{
+		topo:      topo,
+		topoIndex: idx,
+		rib:       map[string]map[string][]RIBEntry{},
+		fib:       map[string][]FIBEntry{},
 	}
 	return g
 }
@@ -749,11 +763,11 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 		t.Fatalf("FIB did not preserve selected condition %s", r1.SelectedCond.String())
 	}
 
-	if _, ok := g.linkBetween("b", "a"); !ok {
-		t.Fatalf("linkBetween() should treat links as undirected")
+	if _, ok := g.topoIndex.LinkBetween("b", "a"); !ok {
+		t.Fatalf("TopologyIndex.LinkBetween() should treat links as undirected")
 	}
-	if got := g.pathCost([]string{"a-b", "b-c"}); got != 8 {
-		t.Fatalf("pathCost() = %d, want 8", got)
+	if got := g.topoIndex.PathCost([]string{"a-b", "b-c"}); got != 8 {
+		t.Fatalf("TopologyIndex.PathCost() = %d, want 8", got)
 	}
 }
 

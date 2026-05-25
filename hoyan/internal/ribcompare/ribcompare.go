@@ -121,6 +121,10 @@ func ExpectedWithFailureSet(topo *model.Topology, failures sim.FailureSet) []Nor
 }
 
 func expected(topo *model.Topology, allowed map[string]bool, failures sim.FailureSet) []NormalizedBgpRoute {
+	idx, err := model.BuildTopologyIndex(topo)
+	if err != nil {
+		panic(err)
+	}
 	g := sim.NewGraph(topo)
 	ctx := g.FailureContext(failures)
 	var out []NormalizedBgpRoute
@@ -137,7 +141,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 				if route.Condition == nil || !route.Condition.Eval(ctx) {
 					continue
 				}
-				paths = append(paths, expectedPath(topo, n, route, ctx))
+				paths = append(paths, expectedPath(idx, n, route, ctx))
 			}
 			if len(paths) == 0 {
 				continue
@@ -156,11 +160,11 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 	return out
 }
 
-func expectedPath(topo *model.Topology, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {
+func expectedPath(idx *model.TopologyIndex, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {
 	return NormalizedBgpPath{
 		Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
 		Valid:     expectedRouteValid(node, route),
-		NextHop:   routeNextHopAddress(topo, node.Name, route),
+		NextHop:   routeNextHopAddress(idx, node.Name, route),
 		ASPath:    append([]uint32(nil), route.ASPath...),
 		Origin:    expectedRouteOrigin(route),
 		LocalPref: defaultLocalPref(route.LocalPref),
@@ -745,34 +749,37 @@ func defaultLocalPref(v int) int {
 	return v
 }
 
-func peerAddress(topo *model.Topology, node, peer string) string {
+func peerAddress(idx *model.TopologyIndex, node, peer string) string {
 	if peer == "" {
 		return ""
 	}
-	for _, l := range topo.Links {
-		a, b := linkAddresses(l.Subnet)
-		switch {
-		case l.A == node && l.B == peer:
-			return trimMask(b)
-		case l.B == node && l.A == peer:
-			return trimMask(a)
-		}
+	link, ok := idx.LinkBetween(node, peer)
+	if !ok {
+		return peer
 	}
-	return peer
+	a, b := linkAddresses(link.Subnet)
+	switch {
+	case link.A == node && link.B == peer:
+		return trimMask(b)
+	case link.B == node && link.A == peer:
+		return trimMask(a)
+	default:
+		return peer
+	}
 }
 
-func routeNextHopAddress(topo *model.Topology, node string, route sim.RIBEntry) string {
+func routeNextHopAddress(idx *model.TopologyIndex, node string, route sim.RIBEntry) string {
 	if route.NextHop == "" {
 		return ""
 	}
-	if direct := peerAddress(topo, node, route.NextHop); direct != route.NextHop {
+	if direct := peerAddress(idx, node, route.NextHop); direct != route.NextHop {
 		return direct
 	}
 	for i := 0; i+1 < len(route.Nodes); i++ {
 		if route.Nodes[i] != route.NextHop {
 			continue
 		}
-		if addr := peerAddress(topo, route.Nodes[i+1], route.NextHop); addr != route.NextHop {
+		if addr := peerAddress(idx, route.Nodes[i+1], route.NextHop); addr != route.NextHop {
 			return addr
 		}
 	}

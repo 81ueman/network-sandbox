@@ -269,46 +269,25 @@ func validateRoutePolicyReferences(n Node) error {
 }
 
 func (t *Topology) Node(name string) (Node, bool) {
-	for _, n := range t.Nodes {
-		if n.Name == name {
-			return n, true
-		}
+	idx, err := BuildTopologyIndex(t)
+	if err != nil {
+		return Node{}, false
 	}
-	return Node{}, false
+	return idx.Node(name)
 }
 
 func (t *Topology) OriginForPrefix(prefix string) (string, bool) {
-	want, err := ParsePrefix(prefix)
+	idx, err := BuildTopologyIndex(t)
 	if err != nil {
 		return "", false
 	}
-	for _, n := range t.Nodes {
-		for _, got := range n.Prefixes {
-			if got.Equal(want) {
-				return n.Name, true
-			}
-		}
-	}
-	return "", false
+	return idx.OriginForPrefix(prefix)
 }
 
 func (t *Topology) OriginForIP(addr string) (string, Prefix, bool) {
-	ip, err := netip.ParseAddr(addr)
+	idx, err := BuildTopologyIndex(t)
 	if err != nil {
 		return "", Prefix{}, false
 	}
-	var bestNode string
-	var bestPrefix Prefix
-	for _, n := range t.Nodes {
-		for _, pfx := range n.Prefixes {
-			if !pfx.Contains(ip) {
-				continue
-			}
-			if bestNode == "" || pfx.Bits() > bestPrefix.Bits() {
-				bestNode = n.Name
-				bestPrefix = pfx
-			}
-		}
-	}
-	return bestNode, bestPrefix, bestNode != ""
+	return idx.OriginForIP(addr)
 }

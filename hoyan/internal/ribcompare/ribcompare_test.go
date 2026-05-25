@@ -179,9 +179,13 @@ func TestParseSRLinux(t *testing.T) {
 
 func TestExpectedPathUsesModeledAttributes(t *testing.T) {
 	topo := &model.Topology{}
+	idx, err := model.BuildTopologyIndex(topo)
+	if err != nil {
+		t.Fatalf("BuildTopologyIndex() error = %v", err)
+	}
 	node := model.Node{Name: "r1", Kind: "frr"}
 	ctx := sim.FailureContext{}
-	path := expectedPath(topo, node, sim.RIBEntry{
+	path := expectedPath(idx, node, sim.RIBEntry{
 		ASPath:       []uint32{65001},
 		LocalPref:    175,
 		MED:          42,
