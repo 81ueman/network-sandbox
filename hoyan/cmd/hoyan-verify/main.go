@@ -13,7 +13,7 @@ import (
 
 func main() {
 	topologyPath := flag.String("topology", "hoyan.clab.yml", "containerlab topology YAML")
-	policiesPath := flag.String("policies", "intent/policies.yml", "verifier-only policy YAML")
+	policiesPath := flag.String("policies", "", "optional deprecated verifier-only policy YAML")
 	queriesPath := flag.String("queries", "intent/queries.yml", "query YAML")
 	flag.Parse()
 

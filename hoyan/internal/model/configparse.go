@@ -22,6 +22,7 @@ type ParsedConfig struct {
 	ASPathLists    []ASPathList
 	CommunityLists []CommunityList
 	RoutePolicies  []RoutePolicy
+	Policies       []Policy
 }
 
 type ParseResult struct {
@@ -35,6 +36,12 @@ type UnsupportedStatement struct {
 	Line   int
 	Text   string
 	Reason string
+}
+
+type aclBinding struct {
+	Name      string
+	Interface string
+	Stage     string
 }
 
 func (w UnsupportedStatement) String() string {
@@ -80,7 +87,10 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 	asPathLists := map[string]*ASPathList{}
 	communityLists := map[string]*CommunityList{}
 	routePolicies := map[string]*RoutePolicy{}
+	aclPolicies := map[string][]Policy{}
+	var aclBindings []aclBinding
 	var currentInterface string
+	var currentACL string
 	var currentRoutePolicy *RoutePolicy
 	var currentRouteRule *RoutePolicyRule
 	inBGP := false
@@ -94,10 +104,14 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 		if !strings.HasPrefix(raw, " ") && !strings.HasPrefix(line, "route-map ") {
 			currentRoutePolicy = nil
 			currentRouteRule = nil
+			if !strings.HasPrefix(line, "ip access-list ") {
+				currentACL = ""
+			}
 		}
 		if line == "" || line == "!" {
 			if line == "!" && !strings.HasPrefix(raw, " ") {
 				currentInterface = ""
+				currentACL = ""
 			}
 			continue
 		}
@@ -108,6 +122,38 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 		switch {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
+		case len(fields) >= 3 && fields[0] == "ip" && fields[1] == "access-list":
+			currentACL = fields[2]
+			if len(fields) >= 4 && (fields[2] == "standard" || fields[2] == "extended") {
+				currentACL = fields[3]
+			}
+			currentInterface = ""
+			inBGP = false
+			inAF = false
+		case currentACL != "" && isACLRuleLine(fields):
+			pol, ok, err := parseACLRule(kind, path, lineNo, line, currentACL, fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, err
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, err.Error()))
+				continue
+			}
+			if ok {
+				aclPolicies[currentACL] = append(aclPolicies[currentACL], pol)
+			}
+		case kind == KindFRR && len(fields) >= 5 && fields[0] == "access-list" && (fields[2] == "permit" || fields[2] == "deny"):
+			pol, ok, err := parseACLRule(kind, path, lineNo, line, fields[1], fields[2:])
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, err
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, err.Error()))
+				continue
+			}
+			if ok {
+				aclPolicies[fields[1]] = append(aclPolicies[fields[1]], pol)
+			}
 		case isRouteMapPolicyKind(kind) && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
 			rule, err := parsePrefixListRule(0, fields[3], fields[4], fields[5:])
 			if err != nil {
@@ -220,6 +266,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			}
 		case fields[0] == "interface" && len(fields) >= 2:
 			currentInterface = fields[1]
+			currentACL = ""
 			inBGP = false
 			inAF = false
 		case currentInterface != "" && len(fields) >= 3 && fields[0] == "ip" && fields[1] == "address":
@@ -227,6 +274,11 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			cfg.Interfaces = upsertInterface(cfg.Interfaces, Interface{Name: currentInterface, Address: addr})
 			if strings.EqualFold(currentInterface, "lo") || strings.HasPrefix(strings.ToLower(currentInterface), "loopback") {
 				cfg.Loopback = addr
+			}
+		case currentInterface != "" && len(fields) >= 4 && fields[0] == "ip" && fields[1] == "access-group":
+			stage, ok := aclStage(fields[3])
+			if ok {
+				aclBindings = append(aclBindings, aclBinding{Name: fields[2], Interface: currentInterface, Stage: stage})
 			}
 		case len(fields) >= 4 && fields[0] == "ip" && fields[1] == "route" && strings.EqualFold(fields[3], "Null0"):
 			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[2])
@@ -282,6 +334,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 	cfg.ASPathLists = sortedASPathLists(asPathLists)
 	cfg.CommunityLists = sortedCommunityLists(communityLists)
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
+	cfg.Policies = boundACLPolicies(aclPolicies, aclBindings)
 	if cfg.Loopback == "" && cfg.RouterID != "" {
 		cfg.Loopback = cfg.RouterID + "/32"
 	}
@@ -299,16 +352,31 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	neighborExportPolicy := map[string]string{}
 	prefixLists := map[string]*PrefixList{}
 	routePolicies := map[string]*RoutePolicy{}
+	srlACLs := map[string]map[int]*Policy{}
+	var aclBindings []aclBinding
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		line := strings.TrimSpace(scanner.Text())
+		raw := scanner.Text()
+		line := strings.TrimSpace(raw)
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] != "set" {
 			continue
 		}
 		switch {
+		case containsSeq(fields, "acl", "interface") && containsAnyField(fields, "input", "output") && containsAnyField(fields, "acl-filter"):
+			binding, ok := parseSRLinuxACLBinding(fields)
+			if ok {
+				aclBindings = append(aclBindings, binding)
+			}
+		case containsSeq(fields, "acl", "acl-filter"):
+			if err := parseSRLinuxACL(srlACLs, path, lineNo, line, fields); err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+			}
 		case srLinuxRoutingPolicyKind(fields) == "prefix-set":
 			if err := parseSRLinuxPrefixSet(prefixLists, fields); err != nil {
 				if !collectWarnings {
@@ -402,6 +470,7 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	addSRLinuxDefaultPolicyActions(routePolicies)
 	cfg.PrefixLists = sortedPrefixLists(prefixLists)
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
+	cfg.Policies = boundACLPolicies(flattenSRLinuxACLs(srlACLs), aclBindings)
 	return ParseResult{Config: cfg, Warnings: warnings}, nil
 }
 
@@ -603,6 +672,280 @@ func unsupportedStatement(vendor, file string, line int, text, reason string) Un
 		Text:   text,
 		Reason: reason,
 	}
+}
+
+func isACLRuleLine(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	if len(fields) >= 3 && fields[0] == "seq" && (fields[2] == "permit" || fields[2] == "deny") {
+		return true
+	}
+	if fields[0] == "permit" || fields[0] == "deny" {
+		return true
+	}
+	if _, err := strconv.Atoi(fields[0]); err == nil && len(fields) >= 2 && (fields[1] == "permit" || fields[1] == "deny") {
+		return true
+	}
+	return false
+}
+
+func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fields []string) (Policy, bool, error) {
+	seq := 0
+	if len(fields) >= 2 && fields[0] == "seq" {
+		fields = fields[1:]
+	}
+	if n, err := strconv.Atoi(fields[0]); err == nil {
+		seq = n
+		fields = fields[1:]
+	}
+	if len(fields) < 4 {
+		return Policy{}, false, fmt.Errorf("unsupported %s ACL statement", routeMapVendorName(kind))
+	}
+	action := fields[0]
+	if action != "permit" && action != "deny" {
+		return Policy{}, false, fmt.Errorf("unsupported %s ACL action %q", routeMapVendorName(kind), action)
+	}
+	protocol := fields[1]
+	if protocol != "ip" && protocol != "tcp" && protocol != "udp" && protocol != "icmp" {
+		return Policy{}, false, fmt.Errorf("unsupported %s ACL protocol %q", routeMapVendorName(kind), protocol)
+	}
+	rest := fields[2:]
+	srcEnd, err := skipACLAddress(rest)
+	if err != nil {
+		return Policy{}, false, err
+	}
+	if srcEnd >= len(rest) {
+		return Policy{}, false, fmt.Errorf("unsupported %s ACL destination", routeMapVendorName(kind))
+	}
+	dstPrefix, dstEnd, err := parseACLAddress(rest[srcEnd:])
+	if err != nil {
+		return Policy{}, false, err
+	}
+	if dstEnd+srcEnd < len(rest) && !supportedACLPortTail(rest[srcEnd+dstEnd:]) {
+		return Policy{}, false, fmt.Errorf("unsupported %s ACL port match", routeMapVendorName(kind))
+	}
+	if action != "deny" {
+		return Policy{}, false, nil
+	}
+	return Policy{
+		Name:      name,
+		Plane:     "data",
+		Action:    "deny",
+		Protocol:  aclPolicyProtocol(protocol),
+		DstPrefix: dstPrefix,
+		Seq:       seq,
+		Source: PolicySource{
+			Vendor: string(kind),
+			File:   path,
+			Line:   lineNo,
+			Raw:    raw,
+		},
+	}, true, nil
+}
+
+func skipACLAddress(fields []string) (int, error) {
+	_, n, err := parseACLAddress(fields)
+	return n, err
+}
+
+func parseACLAddress(fields []string) (Prefix, int, error) {
+	if len(fields) == 0 {
+		return Prefix{}, 0, fmt.Errorf("unsupported ACL empty address")
+	}
+	switch fields[0] {
+	case "any":
+		pfx, err := ParsePrefix("0.0.0.0/0")
+		return pfx, 1, err
+	case "host":
+		if len(fields) < 2 {
+			return Prefix{}, 0, fmt.Errorf("unsupported ACL host address")
+		}
+		pfx, err := ParsePrefix(fields[1] + "/32")
+		return pfx, 2, err
+	}
+	if strings.Contains(fields[0], "/") {
+		pfx, err := ParsePrefix(fields[0])
+		return pfx, 1, err
+	}
+	if len(fields) >= 2 {
+		if pfx, ok := wildcardPrefix(fields[0], fields[1]); ok {
+			return pfx, 2, nil
+		}
+	}
+	return Prefix{}, 0, fmt.Errorf("unsupported ACL address %q", strings.Join(fields, " "))
+}
+
+func wildcardPrefix(addr, wildcard string) (Prefix, bool) {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil || !ip.Is4() {
+		return Prefix{}, false
+	}
+	w, err := netip.ParseAddr(wildcard)
+	if err != nil || !w.Is4() {
+		return Prefix{}, false
+	}
+	wb := w.As4()
+	bits := 0
+	seenOne := false
+	for _, octet := range wb {
+		for bit := 7; bit >= 0; bit-- {
+			one := octet&(1<<bit) != 0
+			if one {
+				seenOne = true
+				continue
+			}
+			if seenOne {
+				return Prefix{}, false
+			}
+			bits++
+		}
+	}
+	pfx := netip.PrefixFrom(ip, bits).Masked()
+	return PrefixFromNetIP(pfx), true
+}
+
+func supportedACLPortTail(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	if len(fields) == 2 && fields[0] == "eq" {
+		return fields[1] == "80" || fields[1] == "www" || fields[1] == "http"
+	}
+	return false
+}
+
+func aclPolicyProtocol(protocol string) string {
+	if protocol == "ip" {
+		return ""
+	}
+	return protocol
+}
+
+func aclStage(raw string) (string, bool) {
+	switch raw {
+	case "in", "input":
+		return "ingress", true
+	case "out", "output":
+		return "egress", true
+	default:
+		return "", false
+	}
+}
+
+func boundACLPolicies(aclPolicies map[string][]Policy, bindings []aclBinding) []Policy {
+	var out []Policy
+	for _, binding := range bindings {
+		for _, policy := range aclPolicies[binding.Name] {
+			policy.Stage = binding.Stage
+			policy.Interface = binding.Interface
+			out = append(out, policy)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Seq < out[j].Seq
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo int, raw string, fields []string) error {
+	name := fieldAfter(fields, "acl-filter")
+	if name == "" || fieldAfter(fields, "type") != "ipv4" {
+		return nil
+	}
+	entryText := fieldAfter(fields, "entry")
+	if entryText == "" {
+		return nil
+	}
+	seq, err := strconv.Atoi(entryText)
+	if err != nil {
+		return err
+	}
+	if aclPolicies[name] == nil {
+		aclPolicies[name] = map[int]*Policy{}
+	}
+	policy := aclPolicies[name][seq]
+	if policy == nil {
+		policy = &Policy{
+			Name:   name,
+			Plane:  "data",
+			Seq:    seq,
+			Source: PolicySource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
+		}
+		aclPolicies[name][seq] = policy
+	}
+	if containsSeq(fields, "match", "ipv4", "protocol") {
+		proto := fields[len(fields)-1]
+		if proto != "tcp" && proto != "udp" && proto != "icmp" && proto != "ip" {
+			return fmt.Errorf("unsupported SR Linux ACL protocol %q", proto)
+		}
+		policy.Protocol = aclPolicyProtocol(proto)
+		return nil
+	}
+	if containsSeq(fields, "match", "ipv4", "destination-ip", "prefix") {
+		pfx, err := ParsePrefix(fields[len(fields)-1])
+		if err != nil {
+			return err
+		}
+		policy.DstPrefix = pfx
+		return nil
+	}
+	if containsSeq(fields, "match", "transport", "destination-port", "value") {
+		if !supportedACLPortTail([]string{"eq", fields[len(fields)-1]}) {
+			return fmt.Errorf("unsupported SR Linux ACL destination port %q", fields[len(fields)-1])
+		}
+		return nil
+	}
+	if containsSeq(fields, "action") {
+		switch fields[len(fields)-1] {
+		case "drop":
+			policy.Action = "deny"
+		case "accept":
+			policy.Action = "permit"
+		default:
+			return fmt.Errorf("unsupported SR Linux ACL action %q", fields[len(fields)-1])
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported SR Linux ACL statement")
+}
+
+func parseSRLinuxACLBinding(fields []string) (aclBinding, bool) {
+	name := fieldAfter(fields, "acl-filter")
+	if name == "" || fieldAfter(fields, "type") != "ipv4" {
+		return aclBinding{}, false
+	}
+	iface := fieldAfter(fields, "interface")
+	stage := ""
+	if containsAnyField(fields, "input") {
+		stage = "ingress"
+	}
+	if containsAnyField(fields, "output") {
+		stage = "egress"
+	}
+	if iface == "" || stage == "" {
+		return aclBinding{}, false
+	}
+	return aclBinding{Name: name, Interface: iface, Stage: stage}, true
+}
+
+func flattenSRLinuxACLs(raw map[string]map[int]*Policy) map[string][]Policy {
+	out := map[string][]Policy{}
+	for name, entries := range raw {
+		for _, policy := range entries {
+			if policy.Action != "deny" {
+				continue
+			}
+			if policy.Protocol == "" || policy.DstPrefix.IsZero() {
+				continue
+			}
+			out[name] = append(out[name], *policy)
+		}
+	}
+	return out
 }
 
 func srLinuxRoutingPolicyKind(fields []string) string {

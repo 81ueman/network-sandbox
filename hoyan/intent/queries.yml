@@ -17,6 +17,21 @@ packet_checks:
     from: cust-bj
     to: 10.4.1.10
     protocol: tcp
+    dst_port: 80
+    expect_reachable: false
+    max_failures: 0
+  - name: sh-client-to-hz-http-denied-live-ceos
+    from: cust-sh
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 80
+    expect_reachable: false
+    max_failures: 0
+  - name: gz-client-to-hz-http-denied-live-srlinux
+    from: cust-gz
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 80
     expect_reachable: false
     max_failures: 0
 failure_checks:

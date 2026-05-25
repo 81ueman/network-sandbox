@@ -103,6 +103,10 @@ func loadLabTopology(clabPath, policyPath string, collectWarnings bool) (*Topolo
 			RoutePolicies:  parsed.RoutePolicies,
 		}
 		topo.Nodes = append(topo.Nodes, node)
+		for _, policy := range parsed.Policies {
+			policy.Node = name
+			topo.Policies = append(topo.Policies, policy)
+		}
 	}
 	for i, link := range raw.Topology.Links {
 		if len(link.Endpoints) != 2 {
@@ -138,7 +142,7 @@ func loadLabTopology(clabPath, policyPath string, collectWarnings bool) (*Topolo
 		if err != nil {
 			return nil, nil, err
 		}
-		topo.Policies = policies
+		topo.Policies = append(topo.Policies, policies...)
 	}
 	if err := topo.Validate(); err != nil {
 		return nil, nil, err

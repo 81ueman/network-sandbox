@@ -7,7 +7,7 @@ func TestParseOptionsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "intent/policies.yml" {
+	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "" {
 		t.Fatalf("opts = %#v", opts)
 	}
 }
