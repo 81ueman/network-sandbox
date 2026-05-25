@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,34 @@ func TestLoadLabTopology(t *testing.T) {
 	}
 	if len(core.Neighbors) == 0 {
 		t.Fatalf("core-bj neighbors were not parsed from config")
+	}
+}
+
+func TestLoadLabTopologyIncludesRouteMapData(t *testing.T) {
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	if err != nil {
+		t.Fatalf("LoadLabTopology() error = %v", err)
+	}
+	coreBJ, _ := topo.Node("core-bj")
+	if prefixListByName(coreBJ.PrefixLists, "BJ-LOCAL") == nil {
+		t.Fatalf("core-bj prefix-lists = %#v, want BJ-LOCAL", coreBJ.PrefixLists)
+	}
+	if routePolicyByName(coreBJ.RoutePolicies, "PREFER-BJ-LOCAL") == nil {
+		t.Fatalf("core-bj route-policies = %#v, want PREFER-BJ-LOCAL", coreBJ.RoutePolicies)
+	}
+	for _, addr := range []string{"198.18.10.0", "198.18.10.2"} {
+		neighbor := neighborByAddress(coreBJ.Neighbors, addr)
+		if neighbor == nil || neighbor.ImportPolicy != "PREFER-BJ-LOCAL" {
+			t.Fatalf("core-bj neighbor %s = %#v", addr, neighbor)
+		}
+	}
+	coreHZ, _ := topo.Node("core-hz")
+	if routePolicyByName(coreHZ.RoutePolicies, "HZ-TRANSIT-OUT") == nil {
+		t.Fatalf("core-hz route-policies = %#v, want HZ-TRANSIT-OUT", coreHZ.RoutePolicies)
+	}
+	neighbor := neighborByAddress(coreHZ.Neighbors, "198.18.30.7")
+	if neighbor == nil || neighbor.ExportPolicy != "HZ-TRANSIT-OUT" {
+		t.Fatalf("core-hz neighbor 198.18.30.7 = %#v", neighbor)
 	}
 }
 
@@ -136,6 +165,92 @@ router bgp 65001
 	}
 }
 
+func TestParseFRRRouteMapWithoutMatchIsMatchAny(t *testing.T) {
+	cfg := parseFRRConfigText(t, `
+route-map RM permit 10
+ set metric 12
+`)
+	policy := routePolicyByName(cfg.RoutePolicies, "RM")
+	if policy == nil || len(policy.Rules) != 1 || policy.Rules[0].MatchPrefixList != "" || policy.Rules[0].SetMED == nil || *policy.Rules[0].SetMED != 12 {
+		t.Fatalf("RM = %#v", policy)
+	}
+}
+
+func TestParseFRRRouteMapRejectsUnsupportedMatch(t *testing.T) {
+	for _, stmt := range []string{
+		"match community FOO",
+		"match as-path ASPATH",
+		"match ip next-hop prefix-list NH",
+		"match source-protocol bgp",
+	} {
+		t.Run(stmt, func(t *testing.T) {
+			_, err := parseFRRConfigTextResult(t, "route-map RM permit 10\n "+stmt+"\n set local-preference 200\n")
+			if err == nil || !strings.Contains(err.Error(), "unsupported FRR route-map match statement") {
+				t.Fatalf("ParseConfig() error = %v, want unsupported match", err)
+			}
+		})
+	}
+}
+
+func TestParseFRRPrefixListDenyAndOrder(t *testing.T) {
+	cfg := parseFRRConfigText(t, `
+ip prefix-list PL seq 20 permit 10.1.0.0/16
+ip prefix-list PL seq 10 deny 10.0.0.0/8
+`)
+	got := cfg.PrefixLists
+	want := []PrefixList{{Name: "PL", Rules: []PrefixListRule{
+		{Seq: 10, Action: "deny", Prefix: "10.0.0.0/8"},
+		{Seq: 20, Action: "permit", Prefix: "10.1.0.0/16"},
+	}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("PrefixLists = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseFRRPrefixListRejectsLeGe(t *testing.T) {
+	for _, line := range []string{
+		"ip prefix-list PL permit 10.0.0.0/8 le 24",
+		"ip prefix-list PL seq 10 permit 10.0.0.0/8 ge 16",
+	} {
+		t.Run(line, func(t *testing.T) {
+			_, err := parseFRRConfigTextResult(t, line+"\n")
+			if err == nil || !strings.Contains(err.Error(), "unsupported FRR prefix-list le/ge") {
+				t.Fatalf("ParseConfig() error = %v, want le/ge unsupported", err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsMissingRoutePolicyReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		neighbor BGPNeighbor
+		want     string
+	}{
+		{
+			name:     "import",
+			neighbor: BGPNeighbor{Address: "192.0.2.1", ImportPolicy: "MISSING"},
+			want:     "node r1 neighbor 192.0.2.1 import route policy MISSING not found",
+		},
+		{
+			name:     "export",
+			neighbor: BGPNeighbor{Address: "192.0.2.1", ExportPolicy: "MISSING"},
+			want:     "node r1 neighbor 192.0.2.1 export route policy MISSING not found",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topo := &Topology{
+				Nodes: []Node{{Name: "r1", Neighbors: []BGPNeighbor{tt.neighbor}}},
+			}
+			err := topo.Validate()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseCoreHZEgressRouteMapConfig(t *testing.T) {
 	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "core-hz", "frr.conf"))
 	if err != nil {
@@ -214,4 +329,22 @@ func neighborByAddress(neighbors []BGPNeighbor, addr string) *BGPNeighbor {
 		}
 	}
 	return nil
+}
+
+func parseFRRConfigText(t *testing.T, config string) ParsedConfig {
+	t.Helper()
+	cfg, err := parseFRRConfigTextResult(t, config)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	return cfg
+}
+
+func parseFRRConfigTextResult(t *testing.T, config string) (ParsedConfig, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "frr.conf")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return ParseConfig("frr", path)
 }

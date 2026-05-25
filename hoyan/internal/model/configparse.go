@@ -38,6 +38,8 @@ func ParseConfig(kind, path string) (ParsedConfig, error) {
 }
 
 func parseFRRLike(kind, text string) (ParsedConfig, error) {
+	// TODO: parse cEOS route-map syntax separately. cEOS currently reuses the
+	// FRR-like parser only for interfaces, BGP neighbors, and prefixes.
 	var cfg ParsedConfig
 	neighbors := map[string]*BGPNeighbor{}
 	prefixLists := map[string]*PrefixList{}
@@ -68,9 +70,15 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		switch {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
-		case kind == "frr" && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "permit":
+		case kind == "frr" && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
+			if hasPrefixListRange(fields[5:]) {
+				return ParsedConfig{}, fmt.Errorf("unsupported FRR prefix-list le/ge in %q", line)
+			}
 			addPrefixListRule(prefixLists, fields[2], 0, fields[3], fields[4])
-		case kind == "frr" && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && fields[5] == "permit":
+		case kind == "frr" && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
+			if hasPrefixListRange(fields[7:]) {
+				return ParsedConfig{}, fmt.Errorf("unsupported FRR prefix-list le/ge in %q", line)
+			}
 			seq, err := strconv.Atoi(fields[4])
 			if err != nil {
 				return ParsedConfig{}, err
@@ -91,6 +99,10 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			inAF = false
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
 			currentRouteRule.MatchPrefixList = fields[4]
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
+			// TODO: support FRR community/as-path/next-hop/source-protocol
+			// matches when the lab needs them.
+			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
 			v, err := strconv.Atoi(fields[2])
 			if err != nil {
@@ -221,6 +233,15 @@ func parseSRLinux(text string) (ParsedConfig, error) {
 		cfg.Neighbors = append(cfg.Neighbors, BGPNeighbor{Address: addr, RemoteAS: groupAS[group], Activated: true})
 	}
 	return cfg, nil
+}
+
+func hasPrefixListRange(fields []string) bool {
+	for _, field := range fields {
+		if field == "le" || field == "ge" {
+			return true
+		}
+	}
+	return false
 }
 
 func getNeighbor(neighbors map[string]*BGPNeighbor, addr string) *BGPNeighbor {

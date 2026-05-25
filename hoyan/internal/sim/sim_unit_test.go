@@ -393,6 +393,19 @@ func TestImportRouteMapSetsLocalPrefInRIB(t *testing.T) {
 	}
 }
 
+func TestRouteMapWithoutMatchMatchesAnyRoute(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "SET-LP"
+	lp := 250
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "SET-LP", Rules: []model.RoutePolicyRule{{Action: "permit", SetLocalPref: &lp}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 250 {
+		t.Fatalf("rx RIB = %#v, want match-any local-pref 250", routes)
+	}
+}
+
 func TestExportRouteMapSetsMEDInRIB(t *testing.T) {
 	topo := routePolicyTestTopology()
 	topo.Nodes[0].Neighbors[0].ExportPolicy = "SET-MED"
@@ -407,7 +420,7 @@ func TestExportRouteMapSetsMEDInRIB(t *testing.T) {
 	}
 }
 
-func TestRouteMapDenySuppressesRoute(t *testing.T) {
+func TestImportRouteMapDenySuppressesRoute(t *testing.T) {
 	topo := routePolicyTestTopology()
 	topo.Nodes[1].Neighbors[0].ImportPolicy = "DENY"
 	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}}}}
@@ -416,6 +429,65 @@ func TestRouteMapDenySuppressesRoute(t *testing.T) {
 	g := NewGraph(topo)
 	if routes := g.RIB("rx", "10.0.0.0/24"); len(routes) != 0 {
 		t.Fatalf("rx RIB = %#v, want denied route suppressed", routes)
+	}
+}
+
+func TestExportRouteMapDenySuppressesAdvertisement(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[0].Neighbors[0].ExportPolicy = "DENY"
+	topo.Nodes[0].PrefixLists = []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.0.0/24"}}}}
+	topo.Nodes[0].RoutePolicies = []model.RoutePolicy{{Name: "DENY", Rules: []model.RoutePolicyRule{{Action: "deny", MatchPrefixList: "PL"}}}}
+
+	g := NewGraph(topo)
+	if routes := g.RIB("rx", "10.0.0.0/24"); len(routes) != 0 {
+		t.Fatalf("rx RIB = %#v, want export-denied route suppressed", routes)
+	}
+}
+
+func TestRouteMapImplicitDenySuppressesRoute(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "SET-LP"
+	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "OTHER", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.1.0/24"}}}}
+	lp := 250
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "SET-LP", Rules: []model.RoutePolicyRule{{Action: "permit", MatchPrefixList: "OTHER", SetLocalPref: &lp}}}}
+
+	g := NewGraph(topo)
+	if routes := g.RIB("rx", "10.0.0.0/24"); len(routes) != 0 {
+		t.Fatalf("rx RIB = %#v, want implicit-denied route suppressed", routes)
+	}
+}
+
+func TestRouteMapFallThroughPermitPassesUnchanged(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "RM"
+	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "SOME-PREFIX", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "10.0.1.0/24"}}}}
+	lp := 200
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "RM", Rules: []model.RoutePolicyRule{
+		{Seq: 10, Action: "permit", MatchPrefixList: "SOME-PREFIX", SetLocalPref: &lp},
+		{Seq: 20, Action: "permit"},
+	}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 100 {
+		t.Fatalf("rx RIB = %#v, want fall-through permit unchanged local-pref 100", routes)
+	}
+}
+
+func TestPrefixListPermitsEvaluatesOrderedRules(t *testing.T) {
+	node := model.Node{PrefixLists: []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{
+		{Seq: 10, Action: "deny", Prefix: "10.0.0.0/8"},
+		{Seq: 20, Action: "permit", Prefix: "10.0.0.0/8"},
+		{Seq: 30, Action: "permit", Prefix: "10.1.0.0/16"},
+	}}}}
+	if prefixListPermits(node, "PL", "10.0.0.0/8") {
+		t.Fatalf("deny rule before permit should deny exact 10.0.0.0/8")
+	}
+	if !prefixListPermits(node, "PL", "10.1.0.0/16") {
+		t.Fatalf("permit exact prefix should allow route")
+	}
+	if prefixListPermits(node, "PL", "10.2.0.0/16") {
+		t.Fatalf("no matching prefix-list rule should deny route")
 	}
 }
 

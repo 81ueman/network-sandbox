@@ -162,6 +162,9 @@ func (t *Topology) Validate() error {
 				return fmt.Errorf("node %s loopback %s: %w", n.Name, n.Loopback, err)
 			}
 		}
+		if err := validateRoutePolicyReferences(n); err != nil {
+			return err
+		}
 	}
 	for _, l := range t.Links {
 		if l.Name == "" || l.A == "" || l.B == "" {
@@ -185,6 +188,22 @@ func (t *Topology) Validate() error {
 			if _, err := netip.ParsePrefix(p.DstPrefix); err != nil {
 				return fmt.Errorf("policy %s dst prefix %s: %w", p.Name, p.DstPrefix, err)
 			}
+		}
+	}
+	return nil
+}
+
+func validateRoutePolicyReferences(n Node) error {
+	routePolicies := map[string]bool{}
+	for _, policy := range n.RoutePolicies {
+		routePolicies[policy.Name] = true
+	}
+	for _, neighbor := range n.Neighbors {
+		if neighbor.ImportPolicy != "" && !routePolicies[neighbor.ImportPolicy] {
+			return fmt.Errorf("node %s neighbor %s import route policy %s not found", n.Name, neighbor.Address, neighbor.ImportPolicy)
+		}
+		if neighbor.ExportPolicy != "" && !routePolicies[neighbor.ExportPolicy] {
+			return fmt.Errorf("node %s neighbor %s export route policy %s not found", n.Name, neighbor.Address, neighbor.ExportPolicy)
 		}
 	}
 	return nil
