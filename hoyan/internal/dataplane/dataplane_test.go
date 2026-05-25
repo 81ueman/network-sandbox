@@ -472,6 +472,66 @@ func TestSymbolicPacketReachabilityDoesNotExploreLoopsForever(t *testing.T) {
 	}
 }
 
+func TestSymbolicPacketReachabilityRecordsNoRouteReason(t *testing.T) {
+	e := noRouteEngine()
+	result := e.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+	reason, ok := firstUnreachableReason(result, UnreachableNoRoute)
+	if !ok {
+		t.Fatalf("missing no_route reason: %#v", result.UnreachableReasons)
+	}
+	if reason.Node != "src" {
+		t.Fatalf("no_route node = %q, want src", reason.Node)
+	}
+	if !reason.Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("no_route condition should be true without failures: %s", reason.Cond)
+	}
+}
+
+func TestSymbolicPacketReachabilityRecordsEgressPolicyReason(t *testing.T) {
+	e := egressACLDenyEngine("eth2", "tcp")
+	result := e.SymbolicPacketReachability("src", "10.0.0.10", "tcp")
+	reason, ok := firstUnreachableReason(result, UnreachableEgressPolicy)
+	if !ok {
+		t.Fatalf("missing egress_policy reason: %#v", result.UnreachableReasons)
+	}
+	if reason.Node != "mid" || reason.Interface != "eth2" || reason.PolicyName != "DENY-POLICY" {
+		t.Fatalf("egress reason = %#v, want node mid interface eth2 policy DENY-POLICY", reason)
+	}
+	if !reason.Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("egress policy condition should be true without failures: %s", reason.Cond)
+	}
+}
+
+func TestSymbolicPacketReachabilityRecordsLinkFailureReason(t *testing.T) {
+	e := singlePathEngine()
+	result := e.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+	reason, ok := firstUnreachableReasonByLink(result, "mid-dst")
+	if !ok {
+		t.Fatalf("missing link_failed reason for mid-dst: %#v", result.UnreachableReasons)
+	}
+	if reason.Kind != UnreachableLinkFailed || reason.Node != "mid" {
+		t.Fatalf("link failure reason = %#v, want kind link_failed node mid", reason)
+	}
+	if !reason.Cond.Eval(e.FailureContext(failure.Links("mid-dst"))) {
+		t.Fatalf("link_failed condition should be true when mid-dst is failed: %s", reason.Cond)
+	}
+}
+
+func TestSymbolicPacketReachabilityRecordsLoopReason(t *testing.T) {
+	e := forwardingLoopEngine()
+	result := e.SymbolicPacketReachability("a", "10.0.0.10", "icmp")
+	reason, ok := firstUnreachableReason(result, UnreachableLoop)
+	if !ok {
+		t.Fatalf("missing loop reason: %#v", result.UnreachableReasons)
+	}
+	if reason.Node != "a" || len(reason.Path.Nodes) != 3 {
+		t.Fatalf("loop reason = %#v, want repeated path ending at a", reason)
+	}
+	if !reason.Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("loop condition should be true without failures: %s", reason.Cond)
+	}
+}
+
 func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{
@@ -495,6 +555,24 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 	if ok || reason != "forwarding loop" {
 		t.Fatalf("PacketReachable() = ok %v reason %q, want forwarding loop", ok, reason)
 	}
+}
+
+func firstUnreachableReason(result SymbolicReachabilityResult, kind SymbolicUnreachableReasonKind) (SymbolicUnreachableReason, bool) {
+	for _, reason := range result.UnreachableReasons {
+		if reason.Kind == kind {
+			return reason, true
+		}
+	}
+	return SymbolicUnreachableReason{}, false
+}
+
+func firstUnreachableReasonByLink(result SymbolicReachabilityResult, link string) (SymbolicUnreachableReason, bool) {
+	for _, reason := range result.UnreachableReasons {
+		if reason.Kind == UnreachableLinkFailed && reason.Link == link {
+			return reason, true
+		}
+	}
+	return SymbolicUnreachableReason{}, false
 }
 
 func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {

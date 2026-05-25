@@ -32,6 +32,10 @@ func AssertSymbolicConcreteParity(t *testing.T, engine *Engine, from, to, protoc
 				formatSymbolicPaths(result.Paths),
 			)
 		}
+		if !concrete && len(result.UnreachableReasons) == 0 {
+			t.Fatalf("concrete PacketReachable is false but symbolic result has no unreachable reasons\nfrom=%s to=%s protocol=%s\nfailures=%s\nconcrete_reason=%q",
+				from, to, protocol, formatFailureSet(failures), concreteReason)
+		}
 	}
 }
 
