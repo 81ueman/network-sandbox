@@ -31,31 +31,40 @@ func TestLoadLabTopology(t *testing.T) {
 	}
 }
 
-func TestLoadLabTopologyIncludesRouteMapData(t *testing.T) {
+func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
 	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
-	coreBJ, _ := topo.Node("core-bj")
+	coreBJ, ok := topo.Node("core-bj")
+	if !ok {
+		t.Fatalf("core-bj not found")
+	}
 	if prefixListByName(coreBJ.PrefixLists, "BJ-LOCAL") == nil {
-		t.Fatalf("core-bj prefix-lists = %#v, want BJ-LOCAL", coreBJ.PrefixLists)
+		t.Fatalf("core-bj BJ-LOCAL prefix-list not loaded: %#v", coreBJ.PrefixLists)
 	}
 	if routePolicyByName(coreBJ.RoutePolicies, "PREFER-BJ-LOCAL") == nil {
-		t.Fatalf("core-bj route-policies = %#v, want PREFER-BJ-LOCAL", coreBJ.RoutePolicies)
+		t.Fatalf("core-bj PREFER-BJ-LOCAL route policy not loaded: %#v", coreBJ.RoutePolicies)
 	}
 	for _, addr := range []string{"198.18.10.0", "198.18.10.2"} {
 		neighbor := neighborByAddress(coreBJ.Neighbors, addr)
 		if neighbor == nil || neighbor.ImportPolicy != "PREFER-BJ-LOCAL" {
-			t.Fatalf("core-bj neighbor %s = %#v", addr, neighbor)
+			t.Fatalf("core-bj neighbor %s = %#v, want import policy PREFER-BJ-LOCAL", addr, neighbor)
 		}
 	}
-	coreHZ, _ := topo.Node("core-hz")
+	coreHZ, ok := topo.Node("core-hz")
+	if !ok {
+		t.Fatalf("core-hz not found")
+	}
+	if prefixListByName(coreHZ.PrefixLists, "HZ-LOCAL") == nil {
+		t.Fatalf("core-hz HZ-LOCAL prefix-list not loaded: %#v", coreHZ.PrefixLists)
+	}
 	if routePolicyByName(coreHZ.RoutePolicies, "HZ-TRANSIT-OUT") == nil {
-		t.Fatalf("core-hz route-policies = %#v, want HZ-TRANSIT-OUT", coreHZ.RoutePolicies)
+		t.Fatalf("core-hz HZ-TRANSIT-OUT route policy not loaded: %#v", coreHZ.RoutePolicies)
 	}
 	neighbor := neighborByAddress(coreHZ.Neighbors, "198.18.30.7")
 	if neighbor == nil || neighbor.ExportPolicy != "HZ-TRANSIT-OUT" {
-		t.Fatalf("core-hz neighbor 198.18.30.7 = %#v", neighbor)
+		t.Fatalf("core-hz neighbor 198.18.30.7 = %#v, want export policy HZ-TRANSIT-OUT", neighbor)
 	}
 }
 
