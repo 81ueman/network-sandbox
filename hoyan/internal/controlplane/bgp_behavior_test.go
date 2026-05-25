@@ -30,6 +30,25 @@ func TestRIBEntryNormalizeSeparatesRouteModelFields(t *testing.T) {
 	}
 }
 
+func TestInterfaceMatchesAliases(t *testing.T) {
+	for _, tt := range []struct {
+		policy string
+		packet string
+	}{
+		{policy: "eth5", packet: "Ethernet5"},
+		{policy: "Ethernet5", packet: "eth5"},
+		{policy: "ethernet-1/4.0", packet: "e1-4"},
+		{policy: "e1-4", packet: "ethernet-1/4.0"},
+	} {
+		if !interfaceMatches(tt.policy, tt.packet) {
+			t.Fatalf("interfaceMatches(%q, %q) = false, want true", tt.policy, tt.packet)
+		}
+	}
+	if interfaceMatches("eth1", "eth2") {
+		t.Fatalf("interfaceMatches(eth1, eth2) = true, want false")
+	}
+}
+
 func TestBaseBGPExportRoute(t *testing.T) {
 	behavior := NewGenericBehavior("generic")
 	ebgpFrom := model.Node{Name: "r1", ASN: 65001}

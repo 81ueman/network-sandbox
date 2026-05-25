@@ -15,9 +15,11 @@ type ControlMessage struct {
 }
 
 type PacketMessage struct {
-	Node     string
-	Prefix   netip.Prefix
-	Protocol string
+	Node             string
+	Prefix           netip.Prefix
+	Protocol         string
+	IngressInterface string
+	EgressInterface  string
 }
 
 type DeviceBehavior interface {
@@ -45,11 +47,11 @@ func (b baseDeviceBehavior) CheckControlEgress(device model.Node, msg ControlMes
 }
 
 func (b baseDeviceBehavior) CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
-	return deniedPolicyName(device.Name, "", pkt.Prefix, pkt.Protocol, "data", "ingress", policies)
+	return deniedPolicyName(device.Name, "", pkt.IngressInterface, pkt.Prefix, pkt.Protocol, "data", "ingress", policies)
 }
 
 func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
-	return deniedPolicyName(device.Name, "", pkt.Prefix, pkt.Protocol, "data", "egress", policies)
+	return deniedPolicyName(device.Name, "", pkt.EgressInterface, pkt.Prefix, pkt.Protocol, "data", "egress", policies)
 }
 
 func (b baseDeviceBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
@@ -66,11 +68,11 @@ func (b baseDeviceBehavior) RouteInstallableInFIB(device model.Node, installed [
 }
 
 func matchesDenyPolicy(node, peer, prefix, protocol, plane, stage string, policies []model.Policy) bool {
-	name, denied := deniedPolicyName(node, peer, mustPrefix(prefix), protocol, plane, stage, policies)
+	name, denied := deniedPolicyName(node, peer, "", mustPrefix(prefix), protocol, plane, stage, policies)
 	return name != "" && denied
 }
 
-func deniedPolicyName(node, peer string, dst netip.Prefix, protocol, plane, stage string, policies []model.Policy) (string, bool) {
+func deniedPolicyName(node, peer, iface string, dst netip.Prefix, protocol, plane, stage string, policies []model.Policy) (string, bool) {
 	for _, pol := range policies {
 		if pol.Node != node || pol.Action != "deny" {
 			continue
@@ -87,6 +89,9 @@ func deniedPolicyName(node, peer string, dst netip.Prefix, protocol, plane, stag
 		if pol.Peer != "" && pol.Peer != peer {
 			continue
 		}
+		if pol.Interface != "" && !interfaceMatches(pol.Interface, iface) {
+			continue
+		}
 		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, protocol) {
 			continue
 		}
@@ -98,6 +103,31 @@ func deniedPolicyName(node, peer string, dst netip.Prefix, protocol, plane, stag
 		return pol.Name, true
 	}
 	return "", false
+}
+
+func interfaceMatches(policyInterface, packetInterface string) bool {
+	if policyInterface == packetInterface {
+		return true
+	}
+	if base, _, ok := strings.Cut(policyInterface, "."); ok && interfaceMatches(base, packetInterface) {
+		return true
+	}
+	if base, _, ok := strings.Cut(packetInterface, "."); ok && interfaceMatches(policyInterface, base) {
+		return true
+	}
+	if strings.HasPrefix(policyInterface, "eth") && "Ethernet"+strings.TrimPrefix(policyInterface, "eth") == packetInterface {
+		return true
+	}
+	if strings.HasPrefix(packetInterface, "eth") && "Ethernet"+strings.TrimPrefix(packetInterface, "eth") == policyInterface {
+		return true
+	}
+	if strings.HasPrefix(policyInterface, "e1-") && "ethernet-1/"+strings.TrimPrefix(policyInterface, "e1-") == packetInterface {
+		return true
+	}
+	if strings.HasPrefix(packetInterface, "e1-") && "ethernet-1/"+strings.TrimPrefix(packetInterface, "e1-") == policyInterface {
+		return true
+	}
+	return false
 }
 
 func mustPrefix(prefix string) netip.Prefix {

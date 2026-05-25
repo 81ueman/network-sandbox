@@ -28,6 +28,9 @@ Checks are defined in `intent/queries.yml`:
 - failure-budget checks that print concrete link-failure counterexamples
 
 Data-plane policies are parsed from the device startup configs.
+Linux/FRR data-plane ACLs are stored as nftables rulesets under
+`configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
+`hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
 
 The normal build uses a small enumerating solver for failure sets. With Z3:
 

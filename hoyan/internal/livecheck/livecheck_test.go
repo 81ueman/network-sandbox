@@ -95,6 +95,57 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	}
 }
 
+func TestBuildLocalImagesSkipsExistingImage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "images", "frr-nftables"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "images", "frr-nftables", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		if cmd == "docker image inspect hoyan-frr-nftables:10.6.1" {
+			return []byte("[]"), nil
+		}
+		return nil, errors.New("unexpected command: " + cmd)
+	}}
+	if err := BuildLocalImages(context.Background(), runner, filepath.Join(root, "lab.clab.yml"), ioDiscard{}); err != nil {
+		t.Fatalf("BuildLocalImages() error = %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want only image inspect", runner.calls)
+	}
+}
+
+func TestBuildLocalImagesBuildsMissingImage(t *testing.T) {
+	root := t.TempDir()
+	imageDir := filepath.Join(root, "images", "frr-nftables")
+	if err := os.MkdirAll(imageDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch {
+		case cmd == "docker image inspect hoyan-frr-nftables:10.6.1":
+			return nil, errors.New("missing")
+		case cmd == "docker build -t hoyan-frr-nftables:10.6.1 "+imageDir:
+			return []byte("built"), nil
+		default:
+			return nil, errors.New("unexpected command: " + cmd)
+		}
+	}}
+	if err := BuildLocalImages(context.Background(), runner, filepath.Join(root, "lab.clab.yml"), ioDiscard{}); err != nil {
+		t.Fatalf("BuildLocalImages() error = %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %v, want inspect and build", runner.calls)
+	}
+}
+
 func TestRunDataplaneChecksProbesICMPAndTCP(t *testing.T) {
 	reachable := true
 	topo := &model.Topology{
@@ -142,6 +193,32 @@ func TestRunDataplaneChecksFailsOnMismatch(t *testing.T) {
 	err := RunDataplaneChecks(context.Background(), runner, topo, queries, ioDiscard{})
 	if err == nil || !strings.Contains(err.Error(), "live dataplane reachable=false modeled=true") {
 		t.Fatalf("RunDataplaneChecks() error = %v", err)
+	}
+}
+
+func TestApplyNftablesPolicies(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "core-hz", ContainerName: "clab-test-core-hz", Kind: model.KindFRR},
+			{Name: "core-bj", ContainerName: "clab-test-core-bj", Kind: model.KindFRR},
+		},
+		Policies: []model.Policy{
+			{Name: "BLOCK-HTTP-TO-HZ", Node: "core-hz", Source: model.PolicySource{Vendor: "nftables"}},
+			{Name: "OTHER", Node: "core-bj", Source: model.PolicySource{Vendor: "ceos"}},
+		},
+	}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		if cmd != "docker exec clab-test-core-hz sh -lc command -v nft >/dev/null && nft -f /etc/hoyan/nftables.conf" {
+			t.Fatalf("unexpected command: %s %v", name, args)
+		}
+		return nil, nil
+	}}
+	if err := ApplyNftablesPolicies(context.Background(), runner, topo, ioDiscard{}); err != nil {
+		t.Fatalf("ApplyNftablesPolicies() error = %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want one nft apply", runner.calls)
 	}
 }
 

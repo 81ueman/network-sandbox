@@ -103,6 +103,21 @@ func loadLabTopology(clabPath string, collectWarnings bool) (*Topology, []Unsupp
 			policy.Node = name
 			topo.Policies = append(topo.Policies, policy)
 		}
+		nftPath := resolveNftablesConfigPath(cnode)
+		if nftPath != "" {
+			fullNftPath := nftPath
+			if !filepath.IsAbs(fullNftPath) {
+				fullNftPath = filepath.Join(root, nftPath)
+			}
+			policies, err := ParseNftablesConfig(fullNftPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s nftables: %w", name, err)
+			}
+			for _, policy := range policies {
+				policy.Node = name
+				topo.Policies = append(topo.Policies, policy)
+			}
+		}
 	}
 	for i, link := range raw.Topology.Links {
 		if len(link.Endpoints) != 2 {
@@ -182,6 +197,16 @@ func resolveConfigPath(n clabNode) string {
 	for _, bind := range n.Binds {
 		parts := strings.Split(bind, ":")
 		if len(parts) >= 2 && parts[1] == "/etc/frr/frr.conf" {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
+func resolveNftablesConfigPath(n clabNode) string {
+	for _, bind := range n.Binds {
+		parts := strings.Split(bind, ":")
+		if len(parts) >= 2 && parts[1] == "/etc/hoyan/nftables.conf" {
 			return parts[0]
 		}
 	}
