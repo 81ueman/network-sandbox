@@ -37,6 +37,7 @@ func (b baseDeviceBehavior) SelectRoutes(device model.Node, routes []RIBEntry) [
 }
 
 func (b baseDeviceBehavior) ExportRoute(from model.Node, to model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
+	route = route.Normalize()
 	isIBGP := from.ASN == to.ASN
 	if isIBGP && route.LearnedIBGP {
 		return BGPRouteDecision{Route: route, Accept: false, Reason: "ibgp readvertisement"}
@@ -52,19 +53,25 @@ func (b baseDeviceBehavior) ExportRoute(from model.Node, to model.Node, session 
 		out.NextHop = from.Name
 	}
 	out.LearnedIBGP = isIBGP
+	out.Attrs.ASPath = append([]uint32(nil), out.ASPath...)
+	out.Attrs.Communities = append([]string(nil), out.Communities...)
+	out.ForwardingNextHop.Node = out.NextHop
+	out.Attrs.LearnedIBGP = out.LearnedIBGP
 
-	return BGPRouteDecision{Route: out, Accept: true}
+	return BGPRouteDecision{Route: out.Normalize(), Accept: true}
 }
 
 func (b baseDeviceBehavior) ImportRoute(to model.Node, from model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision {
+	route = route.Normalize()
 	if containsASN(route.ASPath, to.ASN) {
 		return BGPRouteDecision{Route: route, Accept: false, Reason: "as loop"}
 	}
 	out := route
 	if from.ASN != to.ASN {
 		out.LocalPref = 0
+		out.Attrs.LocalPref = 0
 	}
-	return BGPRouteDecision{Route: out, Accept: true}
+	return BGPRouteDecision{Route: out.Normalize(), Accept: true}
 }
 
 func (b baseDeviceBehavior) DecisionProcess() BGPDecisionProcess {

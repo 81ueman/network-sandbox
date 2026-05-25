@@ -41,6 +41,7 @@ func (e *Engine) DeriveFIB() {
 			seenSelected := map[string]bool{}
 			var installed []controlplane.RIBEntry
 			for _, route := range routes {
+				route = route.Normalize()
 				selectedKey := ""
 				if route.SelectedCond != nil {
 					selectedKey = route.SelectedCond.Key()

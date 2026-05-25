@@ -19,6 +19,7 @@ func (e *Engine) RouteReachable(from, prefix string, failures failure.Set) (Path
 	}
 	var best *controlplane.RIBEntry
 	for _, r := range e.rib[from][pfx.String()] {
+		r = r.Normalize()
 		if r.SelectedCond != nil && r.SelectedCond.Eval(ctx) {
 			cp := r
 			best = &cp

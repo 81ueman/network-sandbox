@@ -18,6 +18,8 @@ func DefaultBGPDecisionProcess() BGPDecisionProcess {
 }
 
 func (defaultBGPDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+	a = a.Normalize()
+	b = b.Normalize()
 	if a.LocalPref != b.LocalPref {
 		return a.LocalPref > b.LocalPref
 	}
@@ -42,6 +44,8 @@ func (defaultBGPDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 }
 
 func (defaultBGPDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {
+	a = a.Normalize()
+	b = b.Normalize()
 	if a.LocalPref != b.LocalPref {
 		return false
 	}

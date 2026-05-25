@@ -53,6 +53,7 @@ func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage
 }
 
 func (b baseDeviceBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
+	route = route.Normalize()
 	return !route.Invalid
 }
 

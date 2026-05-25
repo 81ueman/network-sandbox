@@ -161,6 +161,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 }
 
 func expectedPath(idx *model.TopologyIndex, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {
+	route = route.Normalize()
 	return NormalizedBgpPath{
 		Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
 		Valid:     expectedRouteValid(node, route),
@@ -173,8 +174,9 @@ func expectedPath(idx *model.TopologyIndex, node model.Node, route sim.RIBEntry,
 }
 
 func expectedRouteOrigin(route sim.RIBEntry) string {
-	if route.OriginCode != "" {
-		return route.OriginCode
+	route = route.Normalize()
+	if route.Attrs.OriginCode != "" {
+		return string(route.Attrs.OriginCode)
 	}
 	return "igp"
 }
@@ -769,6 +771,10 @@ func peerAddress(idx *model.TopologyIndex, node, peer string) string {
 }
 
 func routeNextHopAddress(idx *model.TopologyIndex, node string, route sim.RIBEntry) string {
+	route = route.Normalize()
+	if route.ForwardingNextHop.Addr != "" {
+		return route.ForwardingNextHop.Addr
+	}
 	if route.NextHop == "" {
 		return ""
 	}

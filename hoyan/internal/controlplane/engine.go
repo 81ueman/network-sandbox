@@ -9,22 +9,157 @@ import (
 )
 
 type RIBEntry struct {
-	Prefix       model.Prefix
-	Origin       string
-	From         string
-	NextHop      string
-	Nodes        []string
-	Links        []string
-	ASPath       []uint32
-	Communities  []string
-	OriginCode   string
-	LocalPref    int
-	MED          int
-	LearnedIBGP  bool
+	NLRI              RouteNLRI
+	Attrs             BGPAttributes
+	Provenance        RouteProvenance
+	ForwardingNextHop RouteNextHop
+
+	// Deprecated: use NLRI.Prefix. This compatibility field will be removed after callers migrate.
+	Prefix model.Prefix
+	// Deprecated: use Provenance.OriginNode. This is an origin node, not a BGP origin-code.
+	Origin string
+	// Deprecated: use Provenance.FromNode.
+	From string
+	// Deprecated: use ForwardingNextHop.Node for simulated routes. Live comparison resolves ForwardingNextHop.Addr separately.
+	NextHop string
+	// Deprecated: use Provenance.PathNodes.
+	Nodes []string
+	// Deprecated: use Provenance.PathLinks.
+	Links []string
+	// Deprecated: use Attrs.ASPath.
+	ASPath []uint32
+	// Deprecated: use Attrs.Communities.
+	Communities []string
+	// Deprecated: use Attrs.OriginCode.
+	OriginCode string
+	// Deprecated: use Attrs.LocalPref.
+	LocalPref int
+	// Deprecated: use Attrs.MED.
+	MED int
+	// Deprecated: use Attrs.LearnedIBGP.
+	LearnedIBGP bool
+	// Deprecated: use Attrs.Invalid.
 	Invalid      bool
 	BaseCond     failure.Cond
 	Condition    failure.Cond
 	SelectedCond failure.Cond
+}
+
+type RouteNLRI struct {
+	Prefix model.Prefix
+}
+
+type BGPOriginCode string
+
+const (
+	BGPOriginIGP        BGPOriginCode = "igp"
+	BGPOriginEGP        BGPOriginCode = "egp"
+	BGPOriginIncomplete BGPOriginCode = "incomplete"
+)
+
+type BGPAttributes struct {
+	ASPath      []uint32
+	Communities []string
+	OriginCode  BGPOriginCode
+	LocalPref   int
+	MED         int
+	LearnedIBGP bool
+	Invalid     bool
+}
+
+type RouteProvenance struct {
+	OriginNode string
+	FromNode   string
+	PathNodes  []string
+	PathLinks  []string
+}
+
+// RouteNextHop keeps simulated forwarding next-hop node identity separate from
+// the resolved address used when comparing against live device RIB output.
+type RouteNextHop struct {
+	Node string
+	Addr string
+}
+
+func (h RouteNextHop) Valid() bool {
+	return h.Node != "" || h.Addr != ""
+}
+
+func (r RIBEntry) Normalize() RIBEntry {
+	if r.NLRI.Prefix.IsZero() {
+		r.NLRI.Prefix = r.Prefix
+	}
+	if r.Prefix.IsZero() {
+		r.Prefix = r.NLRI.Prefix
+	}
+	if r.Provenance.OriginNode == "" {
+		r.Provenance.OriginNode = r.Origin
+	}
+	if r.Origin == "" {
+		r.Origin = r.Provenance.OriginNode
+	}
+	if r.Provenance.FromNode == "" {
+		r.Provenance.FromNode = r.From
+	}
+	if r.From == "" {
+		r.From = r.Provenance.FromNode
+	}
+	if len(r.Provenance.PathNodes) == 0 {
+		r.Provenance.PathNodes = append([]string(nil), r.Nodes...)
+	}
+	if len(r.Nodes) == 0 {
+		r.Nodes = append([]string(nil), r.Provenance.PathNodes...)
+	}
+	if len(r.Provenance.PathLinks) == 0 {
+		r.Provenance.PathLinks = append([]string(nil), r.Links...)
+	}
+	if len(r.Links) == 0 {
+		r.Links = append([]string(nil), r.Provenance.PathLinks...)
+	}
+	if r.ForwardingNextHop.Node == "" {
+		r.ForwardingNextHop.Node = r.NextHop
+	}
+	if r.NextHop == "" {
+		r.NextHop = r.ForwardingNextHop.Node
+	}
+	if r.Attrs.ASPath == nil {
+		r.Attrs.ASPath = append([]uint32(nil), r.ASPath...)
+	}
+	if r.ASPath == nil {
+		r.ASPath = append([]uint32(nil), r.Attrs.ASPath...)
+	}
+	if r.Attrs.Communities == nil {
+		r.Attrs.Communities = append([]string(nil), r.Communities...)
+	}
+	if r.Communities == nil {
+		r.Communities = append([]string(nil), r.Attrs.Communities...)
+	}
+	if r.Attrs.OriginCode == "" {
+		r.Attrs.OriginCode = BGPOriginCode(r.OriginCode)
+	}
+	if r.Attrs.OriginCode == "" {
+		r.Attrs.OriginCode = BGPOriginIGP
+	}
+	if r.OriginCode == "" {
+		r.OriginCode = string(r.Attrs.OriginCode)
+	}
+	if r.Attrs.LocalPref == 0 {
+		r.Attrs.LocalPref = r.LocalPref
+	}
+	if r.LocalPref == 0 {
+		r.LocalPref = r.Attrs.LocalPref
+	}
+	if r.Attrs.MED == 0 {
+		r.Attrs.MED = r.MED
+	}
+	if r.MED == 0 {
+		r.MED = r.Attrs.MED
+	}
+	r.Attrs.LearnedIBGP = r.Attrs.LearnedIBGP || r.LearnedIBGP
+	r.LearnedIBGP = r.Attrs.LearnedIBGP
+	r.Attrs.Invalid = r.Attrs.Invalid || r.Invalid
+	r.Invalid = r.Attrs.Invalid
+	return r
 }
 
 type Engine struct {
@@ -41,22 +176,16 @@ func (e *Engine) Simulate() {
 		for _, prefix := range origin.Prefixes {
 			originCond := failure.NodeVar(origin.Name)
 			e.addRIB(origin.Name, prefix, RIBEntry{
-				Prefix:     prefix,
-				Origin:     origin.Name,
-				Nodes:      []string{origin.Name},
-				ASPath:     nil,
-				OriginCode: "igp",
-				LocalPref:  100,
+				NLRI:       RouteNLRI{Prefix: prefix},
+				Attrs:      BGPAttributes{OriginCode: BGPOriginIGP, LocalPref: 100},
+				Provenance: RouteProvenance{OriginNode: origin.Name, PathNodes: []string{origin.Name}},
 				BaseCond:   originCond,
 				Condition:  originCond,
 			})
 			e.walkBGP(RIBEntry{
-				Prefix:     prefix,
-				Origin:     origin.Name,
-				NextHop:    "",
-				Nodes:      []string{origin.Name},
-				ASPath:     nil,
-				OriginCode: "igp",
+				NLRI:       RouteNLRI{Prefix: prefix},
+				Attrs:      BGPAttributes{OriginCode: BGPOriginIGP},
+				Provenance: RouteProvenance{OriginNode: origin.Name, PathNodes: []string{origin.Name}},
 				BaseCond:   originCond,
 				Condition:  originCond,
 			})
@@ -159,6 +288,7 @@ func (e *Engine) MaxRouteDepth() int {
 }
 
 func (e *Engine) ParentRoute(route RIBEntry) (RIBEntry, bool) {
+	route = route.Normalize()
 	if route.From == "" || len(route.Nodes) < 2 {
 		return RIBEntry{}, false
 	}
@@ -172,6 +302,7 @@ func (e *Engine) ParentRoute(route RIBEntry) (RIBEntry, bool) {
 }
 
 func (e *Engine) walkBGP(route RIBEntry) {
+	route = route.Normalize()
 	current := route.Nodes[len(route.Nodes)-1]
 	curNode, _ := e.idx.Node(current)
 	curBehavior := BehaviorFor(curNode.Kind)
@@ -222,9 +353,14 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		entry.From = current
 		entry.Nodes = nextNodes
 		entry.Links = nextLinks
+		entry.Provenance.FromNode = current
+		entry.Provenance.PathNodes = append([]string(nil), nextNodes...)
+		entry.Provenance.PathLinks = append([]string(nil), nextLinks...)
 		entry.BaseCond = nextCond
 		entry.Condition = nextCond
 		entry.LocalPref = defaultLocalPref(entry.LocalPref)
+		entry.Attrs.LocalPref = entry.LocalPref
+		entry = entry.Normalize()
 
 		e.addRIB(next, entry.Prefix, entry)
 		if !nextBehavior.RouteEligibleForAdvertisement(nextNode, entry) {
@@ -248,6 +384,10 @@ func (e *Engine) bgpSession(a, b string) (model.BGPNeighbor, bool) {
 }
 
 func (e *Engine) addRIB(node string, prefix model.Prefix, entry RIBEntry) {
+	entry = entry.Normalize()
+	if prefix.IsZero() {
+		prefix = entry.Prefix
+	}
 	if e.rib[node] == nil {
 		e.rib[node] = map[string][]RIBEntry{}
 	}
@@ -270,6 +410,7 @@ func EquivalentInstalledRoute(decision BGPDecisionProcess, node model.Node, inst
 }
 
 func routeKey(r RIBEntry) string {
+	r = r.Normalize()
 	valid := "valid"
 	if r.Invalid {
 		valid = "invalid"

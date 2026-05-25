@@ -7,6 +7,29 @@ import (
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 )
 
+func TestRIBEntryNormalizeSeparatesRouteModelFields(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	route := RIBEntry{
+		NLRI:              RouteNLRI{Prefix: prefix},
+		Attrs:             BGPAttributes{ASPath: []uint32{65100}, OriginCode: BGPOriginEGP, LocalPref: 150, MED: 20, LearnedIBGP: true},
+		Provenance:        RouteProvenance{OriginNode: "origin-node", FromNode: "peer-node", PathNodes: []string{"origin-node", "peer-node", "rx"}, PathLinks: []string{"a", "b"}},
+		ForwardingNextHop: RouteNextHop{Node: "peer-node"},
+	}.Normalize()
+
+	if route.Origin != "origin-node" || route.OriginCode != "egp" {
+		t.Fatalf("origin node/code = %q/%q, want separated origin-node/egp", route.Origin, route.OriginCode)
+	}
+	if route.Provenance.OriginNode == string(route.Attrs.OriginCode) {
+		t.Fatalf("provenance origin node was mixed with BGP origin-code: %#v", route)
+	}
+	if route.Prefix.String() != prefix.String() || route.ForwardingNextHop.Node != "peer-node" || route.NextHop != "peer-node" {
+		t.Fatalf("route model compatibility fields not synchronized: %#v", route)
+	}
+	if !reflect.DeepEqual(route.ASPath, []uint32{65100}) || route.LocalPref != 150 || route.MED != 20 || !route.LearnedIBGP {
+		t.Fatalf("BGP attributes not synchronized: %#v", route)
+	}
+}
+
 func TestBaseBGPExportRoute(t *testing.T) {
 	behavior := NewGenericBehavior("generic")
 	ebgpFrom := model.Node{Name: "r1", ASN: 65001}
@@ -90,6 +113,12 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			}
 			if got.Route.LearnedIBGP != tt.learnedIBG {
 				t.Fatalf("LearnedIBGP = %v, want %v", got.Route.LearnedIBGP, tt.learnedIBG)
+			}
+			if got.Route.ForwardingNextHop.Node != tt.nextHop {
+				t.Fatalf("ForwardingNextHop.Node = %q, want %q", got.Route.ForwardingNextHop.Node, tt.nextHop)
+			}
+			if !reflect.DeepEqual(got.Route.Attrs.ASPath, tt.asPath) || got.Route.Attrs.LearnedIBGP != tt.learnedIBG {
+				t.Fatalf("structured BGP attrs = %#v, want ASPath %v LearnedIBGP %v", got.Route.Attrs, tt.asPath, tt.learnedIBG)
 			}
 		})
 	}

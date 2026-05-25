@@ -11,6 +11,7 @@ import (
 )
 
 func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string, policyName string, route RIBEntry) BGPRouteDecision {
+	route = route.Normalize()
 	if policyName == "" {
 		return BGPRouteDecision{Route: route, Accept: true}
 	}
@@ -28,18 +29,23 @@ func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string
 		out := route
 		if rule.SetLocalPref != nil {
 			out.LocalPref = *rule.SetLocalPref
+			out.Attrs.LocalPref = *rule.SetLocalPref
 		}
 		if rule.SetLocalPrefDelta != nil {
 			out.LocalPref = defaultLocalPref(out.LocalPref) + *rule.SetLocalPrefDelta
+			out.Attrs.LocalPref = out.LocalPref
 		}
 		if rule.SetMED != nil {
 			out.MED = *rule.SetMED
+			out.Attrs.MED = *rule.SetMED
 		}
 		if rule.SetMEDDelta != nil {
 			out.MED += *rule.SetMEDDelta
+			out.Attrs.MED = out.MED
 		}
 		if len(rule.SetASPathPrepend) > 0 {
 			out.ASPath = append(append([]uint32(nil), rule.SetASPathPrepend...), out.ASPath...)
+			out.Attrs.ASPath = append([]uint32(nil), out.ASPath...)
 		}
 		if len(rule.SetCommunities) > 0 {
 			if rule.SetCommunityAdditive {
@@ -48,16 +54,19 @@ func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string
 				out.Communities = append([]string(nil), rule.SetCommunities...)
 			}
 			sort.Strings(out.Communities)
+			out.Attrs.Communities = append([]string(nil), out.Communities...)
 		}
 		if rule.SetOriginCode != "" {
 			out.OriginCode = rule.SetOriginCode
+			out.Attrs.OriginCode = BGPOriginCode(rule.SetOriginCode)
 		}
-		return BGPRouteDecision{Route: out, Accept: true}
+		return BGPRouteDecision{Route: out.Normalize(), Accept: true}
 	}
 	return BGPRouteDecision{Route: route, Accept: false, Reason: "route-map implicit deny"}
 }
 
 func routePolicyRuleMatches(idx *model.TopologyIndex, node model.Node, peerName string, rule model.RoutePolicyRule, route RIBEntry) bool {
+	route = route.Normalize()
 	if rule.MatchPrefixList != "" && !prefixListPermitsPrefix(node, rule.MatchPrefixList, route.Prefix.NetIP()) {
 		return false
 	}
@@ -187,6 +196,7 @@ func communityListPermits(node model.Node, name string, communities []string, ex
 }
 
 func routeNextHopForPolicy(idx *model.TopologyIndex, node string, peerName string, route RIBEntry) string {
+	route = route.Normalize()
 	if route.NextHop == "" {
 		return ""
 	}
