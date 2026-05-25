@@ -38,7 +38,7 @@ func TestBGPBuildsRankedExtendedRIB(t *testing.T) {
 	}
 	var fallback bool
 	for _, link := range rib[0].Links {
-		failed := g.FailureContext(LinkFailures(link))
+		failed := g.FailureContext(LinkFailures(model.LinkID(link)))
 		if rib[0].SelectedCond.Eval(failed) {
 			continue
 		}

@@ -57,8 +57,8 @@ func TestTopologyIndexAdjacencyOrderIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTopologyIndex() error = %v", err)
 	}
-	got := []string{idx.Adj["a"][0].To, idx.Adj["a"][1].To, idx.Adj["a"][2].To}
-	want := []string{"b", "c", "d"}
+	got := []NodeID{idx.Adj[NodeID("a")][0].To, idx.Adj[NodeID("a")][1].To, idx.Adj[NodeID("a")][2].To}
+	want := []NodeID{"b", "c", "d"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("Adj[a] = %v, want %v", got, want)

@@ -21,7 +21,7 @@ type PacketMessage struct {
 }
 
 type DeviceBehavior interface {
-	Kind() string
+	Kind() model.DeviceKind
 	BGPBehavior
 	CheckControlEgress(device model.Node, msg ControlMessage, policies []model.Policy) bool
 	CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool
@@ -29,7 +29,7 @@ type DeviceBehavior interface {
 	CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
 }
 
-func (b baseDeviceBehavior) Kind() string {
+func (b baseDeviceBehavior) Kind() model.DeviceKind {
 	return b.kind
 }
 

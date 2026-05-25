@@ -19,7 +19,7 @@ type Topology struct {
 type Node struct {
 	Name           string          `yaml:"name"`
 	ContainerName  string          `yaml:"container_name"`
-	Kind           string          `yaml:"kind"`
+	Kind           DeviceKind      `yaml:"kind"`
 	Role           string          `yaml:"role"`
 	ASN            uint32          `yaml:"asn"`
 	MgmtIPv4       string          `yaml:"mgmt_ipv4"`

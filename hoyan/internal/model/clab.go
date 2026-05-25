@@ -165,16 +165,16 @@ func LoadPolicies(path string) ([]Policy, error) {
 	return pf.Policies, nil
 }
 
-func normalizeKind(kind string) string {
+func normalizeKind(kind string) DeviceKind {
 	switch kind {
 	case "linux":
-		return "frr"
+		return KindFRR
 	case "arista_ceos":
-		return "ceos"
+		return KindCEOS
 	case "nokia_srlinux":
-		return "srlinux"
+		return KindSRLinux
 	default:
-		return kind
+		return DeviceKind(kind)
 	}
 }
 
