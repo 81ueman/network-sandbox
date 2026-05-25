@@ -18,7 +18,7 @@ derived from the ranked RIB rules.
 
 ```bash
 cd hoyan
-go run ./cmd/hoyan-verify
+go run ./cmd/hoyan verify
 ```
 
 Checks are defined in `intent/queries.yml`:
@@ -35,7 +35,7 @@ Linux/FRR data-plane ACLs are stored as nftables rulesets under
 The normal build uses a small enumerating solver for failure sets. With Z3:
 
 ```bash
-go run -tags z3 ./cmd/hoyan-verify
+go run -tags z3 ./cmd/hoyan verify
 ```
 
 ## Compare Modeled BGP RIBs With Live Nodes
@@ -48,7 +48,7 @@ this directory. Keep the generated topology in the `hoyan` directory so
 startup-config handling for cEOS and SR Linux matches the source topology:
 
 ```bash
-go run ./cmd/hoyan-render-topology -suffix issue-21 -output hoyan.issue-21.clab.yml
+go run ./cmd/hoyan render-topology --suffix issue-21 --output hoyan.issue-21.clab.yml
 ```
 
 For `-suffix issue-21`, containers use containerlab's default names such as
@@ -56,15 +56,15 @@ For `-suffix issue-21`, containers use containerlab's default names such as
 commands:
 
 ```bash
-go run ./cmd/hoyan-live-check -topology hoyan.issue-21.clab.yml
-go run ./cmd/hoyan-rib-compare -topology hoyan.issue-21.clab.yml
+go run ./cmd/hoyan live-check --topology hoyan.issue-21.clab.yml
+go run ./cmd/hoyan rib-compare --topology hoyan.issue-21.clab.yml
 ```
 
 To run the full live integration check, including deploy, convergence wait,
 modeled-vs-live BGP RIB comparison, and cleanup:
 
 ```bash
-go run ./cmd/hoyan-live-check
+go run ./cmd/hoyan live-check
 ```
 
 By default, the command polls live BGP RIB state up to five times with a 25s
@@ -74,7 +74,7 @@ or attributes do not match, it prints modeled-vs-live diffs instead of waiting
 for the full timeout:
 
 ```bash
-go run ./cmd/hoyan-live-check -max-polls 5 -poll-interval 25s
+go run ./cmd/hoyan live-check --max-polls 5 --poll-interval 25s
 ```
 
 Live BGP RIB comparison is exact. It requires modeled and live RIBs to match on
@@ -84,20 +84,20 @@ and MED. Unexpected live prefixes or paths are reported as diffs.
 For debugging, keep the lab running if the comparison fails:
 
 ```bash
-go run ./cmd/hoyan-live-check -keep-on-failure
+go run ./cmd/hoyan live-check --keep-on-failure
 ```
 
 To keep the lab running even on success:
 
 ```bash
-go run ./cmd/hoyan-live-check -skip-destroy
+go run ./cmd/hoyan live-check --skip-destroy
 ```
 
 If the lab is already deployed, compare the modeled BGP RIB with live nodes
 directly:
 
 ```bash
-go run ./cmd/hoyan-rib-compare
+go run ./cmd/hoyan rib-compare
 ```
 
 The live comparison reads BGP table state from FRR, cEOS, and SR Linux nodes,
