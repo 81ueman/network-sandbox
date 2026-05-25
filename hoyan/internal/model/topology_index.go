@@ -109,6 +109,37 @@ func (idx *TopologyIndex) LinkBetween(a, b string) (Link, bool) {
 	return link, ok
 }
 
+func (idx *TopologyIndex) AddressOnLink(node, peer string) (netip.Addr, bool) {
+	link, ok := idx.LinkBetween(node, peer)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	switch {
+	case link.A == node && link.B == peer:
+		return idx.interfaceAddress(node, link.AIntf)
+	case link.B == node && link.A == peer:
+		return idx.interfaceAddress(node, link.BIntf)
+	default:
+		return netip.Addr{}, false
+	}
+}
+
+func (idx *TopologyIndex) PeerAddressOnLink(node, peer string) (netip.Addr, bool) {
+	return idx.AddressOnLink(peer, node)
+}
+
+func (idx *TopologyIndex) interfaceAddress(node, name string) (netip.Addr, bool) {
+	n, ok := idx.Node(node)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	pfx, ok := interfaceAddr(n.Interfaces, name)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return pfx.Addr(), true
+}
+
 func (idx *TopologyIndex) PathCost(links []string) int {
 	cost := 0
 	for _, name := range links {

@@ -65,14 +65,14 @@ modeled-vs-live BGP RIB comparison, and cleanup:
 go run ./cmd/hoyan-live-check
 ```
 
-By default, the command polls live BGP RIB state up to three times with a 25s
+By default, the command polls live BGP RIB state up to five times with a 25s
 interval. This keeps polling bounded while leaving enough room for all BGP
 sessions to come up after a fresh deploy. If expected routes are still missing
 or attributes do not match, it prints modeled-vs-live diffs instead of waiting
 for the full timeout:
 
 ```bash
-go run ./cmd/hoyan-live-check -max-polls 3 -poll-interval 25s
+go run ./cmd/hoyan-live-check -max-polls 5 -poll-interval 25s
 ```
 
 Live BGP RIB comparison is exact. It requires modeled and live RIBs to match on

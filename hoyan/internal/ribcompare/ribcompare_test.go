@@ -214,6 +214,55 @@ func TestExpectedPathUsesDeviceBehaviorValidity(t *testing.T) {
 	}
 }
 
+func TestRouteNextHopAddressUsesPeerInterfaceAddress(t *testing.T) {
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "local", Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.10/24"}}},
+			{Name: "peer", Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.20/24"}}},
+		},
+		Links: []model.Link{{
+			Name:   "local-peer",
+			A:      "local",
+			B:      "peer",
+			AIntf:  "eth1",
+			BIntf:  "eth1",
+			Cost:   1,
+			Subnet: "192.0.2.0/24",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("BuildTopologyIndex() error = %v", err)
+	}
+	got := routeNextHopAddress(idx, "local", sim.RIBEntry{NextHop: "peer"})
+	if got != "192.0.2.20" {
+		t.Fatalf("routeNextHopAddress() = %q, want peer interface address 192.0.2.20", got)
+	}
+}
+
+func TestRouteNextHopAddressUsesRecursiveHopInterfaceAddress(t *testing.T) {
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "origin", Interfaces: []model.Interface{{Name: "eth1", Address: "198.51.100.30/24"}}},
+			{Name: "hop", Interfaces: []model.Interface{{Name: "eth1", Address: "198.51.100.40/24"}, {Name: "eth2", Address: "203.0.113.50/24"}}},
+			{Name: "local", Interfaces: []model.Interface{{Name: "eth1", Address: "203.0.113.60/24"}}},
+		},
+		Links: []model.Link{
+			{Name: "origin-hop", A: "origin", B: "hop", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "198.51.100.0/24"},
+			{Name: "hop-local", A: "hop", B: "local", AIntf: "eth2", BIntf: "eth1", Cost: 1, Subnet: "203.0.113.0/24"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildTopologyIndex() error = %v", err)
+	}
+	got := routeNextHopAddress(idx, "local", sim.RIBEntry{
+		NextHop: "hop",
+		Nodes:   []string{"origin", "hop", "local"},
+	})
+	if got != "203.0.113.50" {
+		t.Fatalf("routeNextHopAddress() = %q, want recursive hop interface address 203.0.113.50", got)
+	}
+}
+
 func TestExpectedReflectsRouteMapAttributes(t *testing.T) {
 	lp := 225
 	med := 33

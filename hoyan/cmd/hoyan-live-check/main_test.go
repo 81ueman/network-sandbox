@@ -1,13 +1,17 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/81ueman/network-sandbox/hoyan/internal/livecheck"
+)
 
 func TestParseOptionsDefaults(t *testing.T) {
 	opts, err := parseOptions(nil)
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "" || opts.queriesPath != "intent/queries.yml" || opts.maxPolls != 3 {
+	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "" || opts.queriesPath != "intent/queries.yml" || opts.maxPolls != livecheck.DefaultMaxPolls {
 		t.Fatalf("opts = %#v", opts)
 	}
 }

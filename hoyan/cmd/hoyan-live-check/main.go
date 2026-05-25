@@ -55,7 +55,7 @@ func parseOptions(args []string) (options, error) {
 	queriesPath := fs.String("queries", "intent/queries.yml", "query YAML for live dataplane checks")
 	timeout := fs.Duration("timeout", 5*time.Minute, "overall wait timeout")
 	pollInterval := fs.Duration("poll-interval", 25*time.Second, "poll interval")
-	maxPolls := fs.Int("max-polls", 3, "maximum BGP collection polls before reporting diffs")
+	maxPolls := fs.Int("max-polls", livecheck.DefaultMaxPolls, "maximum BGP collection polls before reporting diffs")
 	keepOnFailure := fs.Bool("keep-on-failure", false, "leave lab running when the check fails")
 	skipDestroy := fs.Bool("skip-destroy", false, "leave lab running after the check")
 	if err := fs.Parse(args); err != nil {

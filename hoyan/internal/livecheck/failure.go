@@ -31,7 +31,7 @@ func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo
 		opts.Interval = 25 * time.Second
 	}
 	if opts.MaxPolls == 0 {
-		opts.MaxPolls = 3
+		opts.MaxPolls = DefaultMaxPolls
 	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
