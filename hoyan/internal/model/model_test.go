@@ -354,6 +354,159 @@ func TestValidateRejectsMissingRouteMapMatchReferences(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidPolicyFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy Policy
+		want   string
+	}{
+		{
+			name:   "action",
+			policy: Policy{Name: "p1", Node: "r1", Action: "drop"},
+			want:   "policy p1 has invalid action drop",
+		},
+		{
+			name:   "plane",
+			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Plane: "mgmt"},
+			want:   "policy p1 has invalid plane mgmt",
+		},
+		{
+			name:   "stage",
+			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Stage: "pre"},
+			want:   "policy p1 has invalid stage pre",
+		},
+		{
+			name:   "protocol",
+			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Protocol: "gre"},
+			want:   "policy p1 has invalid protocol gre",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topo := &Topology{
+				Nodes:    []Node{{Name: "r1"}},
+				Policies: []Policy{tt.policy},
+			}
+			err := topo.Validate()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsUnknownPolicyPeer(t *testing.T) {
+	topo := &Topology{
+		Nodes:    []Node{{Name: "r1"}},
+		Policies: []Policy{{Name: "p1", Node: "r1", Peer: "missing", Action: "deny"}},
+	}
+	err := topo.Validate()
+	if err == nil || err.Error() != "policy p1 references unknown peer node missing" {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidBGPNeighbors(t *testing.T) {
+	tests := []struct {
+		name string
+		node Node
+		want string
+	}{
+		{
+			name: "unknown-peer",
+			node: Node{Name: "r1", Neighbors: []BGPNeighbor{{PeerNode: "missing", RemoteAS: 65002, Activated: true}}},
+			want: "node r1 neighbor missing references unknown peer node missing",
+		},
+		{
+			name: "activated-zero-remote-as",
+			node: Node{Name: "r1", Neighbors: []BGPNeighbor{{Address: "192.0.2.1", Activated: true}}},
+			want: "node r1 neighbor 192.0.2.1 is activated with remote_as 0",
+		},
+		{
+			name: "duplicate-address",
+			node: Node{Name: "r1", Neighbors: []BGPNeighbor{
+				{Address: "192.0.2.1", RemoteAS: 65002},
+				{Address: "192.0.2.1", RemoteAS: 65002},
+			}},
+			want: "node r1 has duplicate neighbor address 192.0.2.1",
+		},
+		{
+			name: "duplicate-peer-node",
+			node: Node{Name: "r1", Neighbors: []BGPNeighbor{
+				{PeerNode: "r2", RemoteAS: 65002},
+				{PeerNode: "r2", RemoteAS: 65002},
+			}},
+			want: "node r1 has duplicate neighbor peer node r2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topo := &Topology{
+				Nodes: []Node{
+					tt.node,
+					{Name: "r2", Interfaces: []Interface{{Name: "eth1", Address: "192.0.2.1/31"}}},
+				},
+			}
+			err := topo.Validate()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsDuplicatePolicyAndListState(t *testing.T) {
+	tests := []struct {
+		name string
+		node Node
+		want string
+	}{
+		{
+			name: "duplicate-prefix-list",
+			node: Node{Name: "r1", PrefixLists: []PrefixList{{Name: "PL"}, {Name: "PL"}}},
+			want: "node r1 has duplicate prefix-list PL",
+		},
+		{
+			name: "duplicate-prefix-list-seq",
+			node: Node{Name: "r1", PrefixLists: []PrefixList{{Name: "PL", Rules: []PrefixListRule{{Seq: 10, Action: "permit"}, {Seq: 10, Action: "deny"}}}}},
+			want: "node r1 prefix-list PL has duplicate seq 10",
+		},
+		{
+			name: "duplicate-route-policy",
+			node: Node{Name: "r1", RoutePolicies: []RoutePolicy{{Name: "RM"}, {Name: "RM"}}},
+			want: "node r1 has duplicate route policy RM",
+		},
+		{
+			name: "duplicate-route-policy-seq",
+			node: Node{Name: "r1", RoutePolicies: []RoutePolicy{{Name: "RM", Rules: []RoutePolicyRule{{Seq: 10, Action: "permit"}, {Seq: 10, Action: "deny"}}}}},
+			want: "node r1 route policy RM has duplicate seq 10",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topo := &Topology{Nodes: []Node{tt.node}}
+			err := topo.Validate()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsUnknownLinkInterface(t *testing.T) {
+	topo := &Topology{
+		Nodes: []Node{
+			{Name: "r1", Interfaces: []Interface{{Name: "eth1", Address: "192.0.2.0/31"}}},
+			{Name: "r2", Interfaces: []Interface{{Name: "eth1", Address: "192.0.2.1/31"}}},
+		},
+		Links: []Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth9", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/31"}},
+	}
+	err := topo.Validate()
+	if err == nil || err.Error() != "link r1-r2 references unknown interface eth9 on node r1" {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestParseCoreHZEgressRouteMapConfig(t *testing.T) {
 	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "core-hz", "frr.conf"))
 	if err != nil {

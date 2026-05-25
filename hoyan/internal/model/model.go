@@ -182,6 +182,7 @@ func loadYAML(path string, dst any) error {
 
 func (t *Topology) Validate() error {
 	seen := map[string]bool{}
+	nodes := map[string]Node{}
 	for _, n := range t.Nodes {
 		if n.Name == "" {
 			return fmt.Errorf("node name is required")
@@ -190,6 +191,9 @@ func (t *Topology) Validate() error {
 			return fmt.Errorf("duplicate node %q", n.Name)
 		}
 		seen[n.Name] = true
+		nodes[n.Name] = n
+	}
+	for _, n := range t.Nodes {
 		for _, p := range n.Prefixes {
 			if p.IsZero() {
 				return fmt.Errorf("node %s has invalid empty prefix", n.Name)
@@ -201,6 +205,9 @@ func (t *Topology) Validate() error {
 			}
 		}
 		if err := validateRoutePolicyReferences(n); err != nil {
+			return err
+		}
+		if err := validateBGPNeighborReferences(n, nodes); err != nil {
 			return err
 		}
 	}
@@ -217,10 +224,22 @@ func (t *Topology) Validate() error {
 		if _, err := netip.ParsePrefix(l.Subnet); err != nil {
 			return fmt.Errorf("link %s subnet %s: %w", l.Name, l.Subnet, err)
 		}
+		if l.AIntf != "" && !hasInterface(nodes[l.A], l.AIntf) {
+			return fmt.Errorf("link %s references unknown interface %s on node %s", l.Name, l.AIntf, l.A)
+		}
+		if l.BIntf != "" && !hasInterface(nodes[l.B], l.BIntf) {
+			return fmt.Errorf("link %s references unknown interface %s on node %s", l.Name, l.BIntf, l.B)
+		}
 	}
 	for _, p := range t.Policies {
 		if !seen[p.Node] {
 			return fmt.Errorf("policy %s references unknown node %s", p.Name, p.Node)
+		}
+		if p.Peer != "" && !seen[p.Peer] {
+			return fmt.Errorf("policy %s references unknown peer node %s", p.Name, p.Peer)
+		}
+		if err := validatePolicy(p); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -229,7 +248,23 @@ func (t *Topology) Validate() error {
 func validateRoutePolicyReferences(n Node) error {
 	prefixLists := map[string]bool{}
 	for _, list := range n.PrefixLists {
+		if list.Name == "" {
+			return fmt.Errorf("node %s prefix-list name is required", n.Name)
+		}
+		if prefixLists[list.Name] {
+			return fmt.Errorf("node %s has duplicate prefix-list %s", n.Name, list.Name)
+		}
 		prefixLists[list.Name] = true
+		seqs := map[int]bool{}
+		for _, rule := range list.Rules {
+			if seqs[rule.Seq] {
+				return fmt.Errorf("node %s prefix-list %s has duplicate seq %d", n.Name, list.Name, rule.Seq)
+			}
+			seqs[rule.Seq] = true
+			if rule.Action != "permit" && rule.Action != "deny" {
+				return fmt.Errorf("node %s prefix-list %s rule %d has invalid action %s", n.Name, list.Name, rule.Seq, rule.Action)
+			}
+		}
 	}
 	asPathLists := map[string]bool{}
 	for _, list := range n.ASPathLists {
@@ -241,8 +276,22 @@ func validateRoutePolicyReferences(n Node) error {
 	}
 	routePolicies := map[string]bool{}
 	for _, policy := range n.RoutePolicies {
+		if policy.Name == "" {
+			return fmt.Errorf("node %s route policy name is required", n.Name)
+		}
+		if routePolicies[policy.Name] {
+			return fmt.Errorf("node %s has duplicate route policy %s", n.Name, policy.Name)
+		}
 		routePolicies[policy.Name] = true
+		seqs := map[int]bool{}
 		for _, rule := range policy.Rules {
+			if seqs[rule.Seq] {
+				return fmt.Errorf("node %s route policy %s has duplicate seq %d", n.Name, policy.Name, rule.Seq)
+			}
+			seqs[rule.Seq] = true
+			if rule.Action != "permit" && rule.Action != "deny" {
+				return fmt.Errorf("node %s route policy %s rule %d has invalid action %s", n.Name, policy.Name, rule.Seq, rule.Action)
+			}
 			if rule.MatchPrefixList != "" && !prefixLists[rule.MatchPrefixList] {
 				return fmt.Errorf("node %s route policy %s rule %d references missing prefix-list %s", n.Name, policy.Name, rule.Seq, rule.MatchPrefixList)
 			}
@@ -266,6 +315,94 @@ func validateRoutePolicyReferences(n Node) error {
 		}
 	}
 	return nil
+}
+
+func validateBGPNeighborReferences(n Node, nodes map[string]Node) error {
+	neighborAddresses := map[string]bool{}
+	neighborPeers := map[string]bool{}
+	for _, neighbor := range n.Neighbors {
+		if neighbor.Address != "" {
+			if _, err := netip.ParseAddr(neighbor.Address); err != nil {
+				return fmt.Errorf("node %s neighbor %s has invalid address: %w", n.Name, neighbor.Address, err)
+			}
+			if neighborAddresses[neighbor.Address] {
+				return fmt.Errorf("node %s has duplicate neighbor address %s", n.Name, neighbor.Address)
+			}
+			neighborAddresses[neighbor.Address] = true
+		}
+		if neighbor.PeerNode != "" {
+			peer, ok := nodes[neighbor.PeerNode]
+			if !ok {
+				return fmt.Errorf("node %s neighbor %s references unknown peer node %s", n.Name, neighborLabel(neighbor), neighbor.PeerNode)
+			}
+			if neighborPeers[neighbor.PeerNode] {
+				return fmt.Errorf("node %s has duplicate neighbor peer node %s", n.Name, neighbor.PeerNode)
+			}
+			neighborPeers[neighbor.PeerNode] = true
+			if neighbor.Address != "" && !nodeOwnsAddress(peer, neighbor.Address) {
+				return fmt.Errorf("node %s neighbor %s address is not on peer node %s", n.Name, neighbor.Address, neighbor.PeerNode)
+			}
+		}
+		if neighbor.Activated && neighbor.RemoteAS == 0 {
+			return fmt.Errorf("node %s neighbor %s is activated with remote_as 0", n.Name, neighborLabel(neighbor))
+		}
+	}
+	return nil
+}
+
+func validatePolicy(p Policy) error {
+	if p.Action != "deny" {
+		return fmt.Errorf("policy %s has invalid action %s", p.Name, p.Action)
+	}
+	if p.Plane != "" && p.Plane != "control" && p.Plane != "data" {
+		return fmt.Errorf("policy %s has invalid plane %s", p.Name, p.Plane)
+	}
+	if p.Stage != "" && p.Stage != "ingress" && p.Stage != "egress" {
+		return fmt.Errorf("policy %s has invalid stage %s", p.Name, p.Stage)
+	}
+	switch p.Protocol {
+	case "", "bgp", "icmp", "tcp", "udp":
+	default:
+		return fmt.Errorf("policy %s has invalid protocol %s", p.Name, p.Protocol)
+	}
+	return nil
+}
+
+func hasInterface(n Node, name string) bool {
+	for _, alias := range interfaceAliases(name) {
+		for _, iface := range n.Interfaces {
+			if iface.Name == alias {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nodeOwnsAddress(n Node, addr string) bool {
+	for _, iface := range n.Interfaces {
+		pfx, err := netip.ParsePrefix(iface.Address)
+		if err == nil && pfx.Addr().String() == addr {
+			return true
+		}
+	}
+	if n.Loopback != "" {
+		pfx, err := netip.ParsePrefix(n.Loopback)
+		if err == nil && pfx.Addr().String() == addr {
+			return true
+		}
+	}
+	return false
+}
+
+func neighborLabel(n BGPNeighbor) string {
+	if n.Address != "" {
+		return n.Address
+	}
+	if n.PeerNode != "" {
+		return n.PeerNode
+	}
+	return "<unnamed>"
 }
 
 func (t *Topology) Node(name string) (Node, bool) {
