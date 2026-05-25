@@ -9,7 +9,7 @@ import (
 type frrBehavior struct{ baseDeviceBehavior }
 
 func NewFRRBehavior() DeviceBehavior {
-	return frrBehavior{baseDeviceBehavior{kind: "frr", decision: frrDecisionProcess{}}}
+	return frrBehavior{baseDeviceBehavior{kind: model.KindFRR, decision: frrDecisionProcess{}}}
 }
 
 type frrDecisionProcess struct{}

@@ -24,22 +24,22 @@ type ParsedConfig struct {
 	RoutePolicies  []RoutePolicy
 }
 
-func ParseConfig(kind, path string) (ParsedConfig, error) {
+func ParseConfig(kind DeviceKind, path string) (ParsedConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ParsedConfig{}, err
 	}
 	switch kind {
-	case "frr", "ceos":
+	case KindFRR, KindCEOS:
 		return parseFRRLike(kind, string(data))
-	case "srlinux":
+	case KindSRLinux:
 		return parseSRLinux(string(data))
 	default:
 		return ParsedConfig{}, fmt.Errorf("unsupported config kind %q", kind)
 	}
 }
 
-func parseFRRLike(kind, text string) (ParsedConfig, error) {
+func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 	// TODO: parse cEOS route-map syntax separately. cEOS currently reuses the
 	// FRR-like parser only for interfaces, BGP neighbors, and prefixes.
 	var cfg ParsedConfig
@@ -74,13 +74,13 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		switch {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
-		case kind == "frr" && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
+		case kind == KindFRR && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
 			rule, err := parsePrefixListRule(0, fields[3], fields[4], fields[5:])
 			if err != nil {
 				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
 			}
 			addPrefixListRule(prefixLists, fields[2], rule)
-		case kind == "frr" && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
+		case kind == KindFRR && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
 			seq, err := strconv.Atoi(fields[4])
 			if err != nil {
 				return ParsedConfig{}, err
@@ -90,11 +90,11 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
 			}
 			addPrefixListRule(prefixLists, fields[2], rule)
-		case kind == "frr" && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "as-path" && fields[2] == "access-list" && (fields[4] == "permit" || fields[4] == "deny"):
+		case kind == KindFRR && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "as-path" && fields[2] == "access-list" && (fields[4] == "permit" || fields[4] == "deny"):
 			addStringListRule(asPathLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
-		case kind == "frr" && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "community-list" && fields[2] == "standard" && (fields[4] == "permit" || fields[4] == "deny"):
+		case kind == KindFRR && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "community-list" && fields[2] == "standard" && (fields[4] == "permit" || fields[4] == "deny"):
 			addCommunityListRule(communityLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
-		case kind == "frr" && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
+		case kind == KindFRR && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
 			seq := 0
 			if len(fields) >= 4 {
 				var err error
@@ -107,13 +107,13 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			currentInterface = ""
 			inBGP = false
 			inAF = false
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
 			currentRouteRule.MatchPrefixList = fields[4]
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "next-hop" && fields[3] == "prefix-list":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "next-hop" && fields[3] == "prefix-list":
 			currentRouteRule.MatchNextHopPrefixList = fields[4]
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "as-path":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "as-path":
 			currentRouteRule.MatchASPathList = fields[2]
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "community":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "community":
 			currentRouteRule.MatchCommunityList = fields[2]
 			if len(fields) >= 4 {
 				switch fields[3] {
@@ -124,9 +124,9 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 					return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
 				}
 			}
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
 			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParsedConfig{}, err
@@ -136,7 +136,7 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			} else {
 				currentRouteRule.SetLocalPref = intPtr(v)
 			}
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParsedConfig{}, err
@@ -146,29 +146,29 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			} else {
 				currentRouteRule.SetMED = intPtr(v)
 			}
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 4 && fields[0] == "set" && fields[1] == "as-path" && fields[2] == "prepend":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 4 && fields[0] == "set" && fields[1] == "as-path" && fields[2] == "prepend":
 			path, err := parseASPathFields(fields[3:])
 			if err != nil {
 				return ParsedConfig{}, err
 			}
 			currentRouteRule.SetASPathPrepend = path
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "community":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "community":
 			communities := append([]string(nil), fields[2:]...)
 			if len(communities) > 0 && communities[len(communities)-1] == "additive" {
 				currentRouteRule.SetCommunityAdditive = true
 				communities = communities[:len(communities)-1]
 			}
 			currentRouteRule.SetCommunities = communities
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "origin":
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "origin":
 			switch fields[2] {
 			case "igp", "egp", "incomplete":
 				currentRouteRule.SetOriginCode = fields[2]
 			default:
 				return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map origin %q", line)
 			}
-		case kind == "frr" && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
 			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map statement %q", line)
-		case kind == "frr" && currentRoutePolicy != nil:
+		case kind == KindFRR && currentRoutePolicy != nil:
 			// TODO: support more FRR route-map statements as the lab needs them.
 		case fields[0] == "interface" && len(fields) >= 2:
 			currentInterface = fields[1]
@@ -212,7 +212,7 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			getNeighbor(neighbors, fields[1]).Activated = true
 		case inBGP && inAF && len(fields) >= 3 && fields[0] == "neighbor" && fields[2] == "next-hop-self":
 			getNeighbor(neighbors, fields[1]).NextHopSelf = true
-		case kind == "frr" && inBGP && inAF && len(fields) >= 5 && fields[0] == "neighbor" && fields[2] == "route-map":
+		case kind == KindFRR && inBGP && inAF && len(fields) >= 5 && fields[0] == "neighbor" && fields[2] == "route-map":
 			n := getNeighbor(neighbors, fields[1])
 			switch fields[4] {
 			case "in":
@@ -226,7 +226,7 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		return ParsedConfig{}, err
 	}
 	for _, n := range neighbors {
-		if n.Activated || kind == "srlinux" {
+		if n.Activated || kind == KindSRLinux {
 			cfg.Neighbors = append(cfg.Neighbors, *n)
 		}
 	}

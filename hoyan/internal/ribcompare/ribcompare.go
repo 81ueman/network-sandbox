@@ -128,7 +128,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 		if allowed != nil && !allowed[n.Name] {
 			continue
 		}
-		if ctx.NodeFailed(n.Name) {
+		if ctx.NodeFailed(model.NodeID(n.Name)) {
 			continue
 		}
 		for prefix, rib := range g.RIBTable(n.Name) {
@@ -222,7 +222,7 @@ func Compare(expected []NormalizedBgpRoute, actual []NormalizedBgpRoute) BgpRibC
 func Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
 	collectors := collectorsByKind()
-	for _, kind := range []string{"frr", "ceos", "srlinux"} {
+	for _, kind := range []model.DeviceKind{model.KindFRR, model.KindCEOS, model.KindSRLinux} {
 		collector := collectors[kind]
 		selected := NodesByKind(nodes, kind)
 		if len(selected) == 0 {
@@ -261,10 +261,10 @@ func SupportedNodes(nodes []model.Node) []model.Node {
 }
 
 func FRRNodes(nodes []model.Node) []model.Node {
-	return NodesByKind(nodes, "frr")
+	return NodesByKind(nodes, model.KindFRR)
 }
 
-func NodesByKind(nodes []model.Node, kind string) []model.Node {
+func NodesByKind(nodes []model.Node, kind model.DeviceKind) []model.Node {
 	var out []model.Node
 	for _, n := range nodes {
 		if n.Kind == kind {
@@ -298,11 +298,11 @@ type frrCollector struct{}
 type ceosCollector struct{}
 type srlinuxCollector struct{}
 
-func collectorsByKind() map[string]BgpRibCollector {
-	return map[string]BgpRibCollector{
-		"frr":     frrCollector{},
-		"ceos":    ceosCollector{},
-		"srlinux": srlinuxCollector{},
+func collectorsByKind() map[model.DeviceKind]BgpRibCollector {
+	return map[model.DeviceKind]BgpRibCollector{
+		model.KindFRR:     frrCollector{},
+		model.KindCEOS:    ceosCollector{},
+		model.KindSRLinux: srlinuxCollector{},
 	}
 }
 
@@ -783,7 +783,7 @@ func expectedRouteValid(node model.Node, route sim.RIBEntry) bool {
 	if route.Invalid {
 		return false
 	}
-	if node.Kind == "ceos" && route.NextHop != "" && route.NextHop != route.From {
+	if node.Kind == model.KindCEOS && route.NextHop != "" && route.NextHop != route.From {
 		return false
 	}
 	return true

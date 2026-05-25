@@ -5,7 +5,7 @@ import "github.com/81ueman/network-sandbox/hoyan/internal/model"
 type srlinuxBehavior struct{ baseDeviceBehavior }
 
 func NewSRLinuxBehavior() DeviceBehavior {
-	return srlinuxBehavior{baseDeviceBehavior{kind: "srlinux", decision: srlinuxDecisionProcess{}}}
+	return srlinuxBehavior{baseDeviceBehavior{kind: model.KindSRLinux, decision: srlinuxDecisionProcess{}}}
 }
 
 type srlinuxDecisionProcess struct{}

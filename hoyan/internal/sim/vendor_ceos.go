@@ -9,7 +9,7 @@ import (
 type ceosBehavior struct{ baseDeviceBehavior }
 
 func NewCEOSBehavior() DeviceBehavior {
-	return ceosBehavior{baseDeviceBehavior{kind: "ceos", decision: ceosDecisionProcess{}}}
+	return ceosBehavior{baseDeviceBehavior{kind: model.KindCEOS, decision: ceosDecisionProcess{}}}
 }
 
 type ceosDecisionProcess struct{}
