@@ -558,6 +558,18 @@ func TestPrefixListPermitsEvaluatesOrderedRules(t *testing.T) {
 	}
 }
 
+func TestPrefixListPermitsUsesRulePredicate(t *testing.T) {
+	node := model.Node{PrefixLists: []model.PrefixList{{Name: "PL", Rules: []model.PrefixListRule{
+		{Seq: 10, Action: "permit", Match: model.PrefixRangeSet{Base: model.MustPrefix("10.0.0.0/8"), MinLen: 16, MaxLen: 24}},
+	}}}}
+	if !prefixListPermits(node, "PL", "10.1.0.0/16") {
+		t.Fatalf("predicate prefix-list rule should allow matching prefix")
+	}
+	if prefixListPermits(node, "PL", "10.1.2.128/25") {
+		t.Fatalf("predicate prefix-list rule should deny prefixes outside bounds")
+	}
+}
+
 func routePolicyTestTopology() *model.Topology {
 	return &model.Topology{
 		Nodes: []model.Node{

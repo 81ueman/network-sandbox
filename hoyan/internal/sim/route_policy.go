@@ -102,12 +102,13 @@ func prefixListPermitsAddress(node model.Node, name string, addr string) bool {
 }
 
 func prefixListPermitsPrefix(node model.Node, name string, want netip.Prefix) bool {
+	prefix := model.PrefixFromNetIP(want)
 	for _, prefixList := range node.PrefixLists {
 		if prefixList.Name != name {
 			continue
 		}
 		for _, rule := range prefixList.Rules {
-			if !prefixListRuleMatches(rule, want) {
+			if !prefixListRuleMatches(rule, prefix) {
 				continue
 			}
 			return strings.EqualFold(rule.Action, "permit")
@@ -117,27 +118,16 @@ func prefixListPermitsPrefix(node model.Node, name string, want netip.Prefix) bo
 	return false
 }
 
-func prefixListRuleMatches(rule model.PrefixListRule, want netip.Prefix) bool {
-	if rule.Prefix == "any" {
-		return true
+func prefixListRuleMatches(rule model.PrefixListRule, want model.Prefix) bool {
+	match := rule.Match
+	if match == nil {
+		var err error
+		match, err = model.NewPrefixSet(rule.Prefix, rule.Ge, rule.Le)
+		if err != nil {
+			return false
+		}
 	}
-	got, err := netip.ParsePrefix(rule.Prefix)
-	if err != nil {
-		return false
-	}
-	if !got.Contains(want.Addr()) {
-		return false
-	}
-	minLen := got.Bits()
-	maxLen := got.Bits()
-	if rule.Ge != 0 {
-		minLen = rule.Ge
-		maxLen = want.Addr().BitLen()
-	}
-	if rule.Le != 0 {
-		maxLen = rule.Le
-	}
-	return want.Bits() >= minLen && want.Bits() <= maxLen
+	return match.ContainsPrefix(want)
 }
 
 func asPathListPermits(node model.Node, name string, asPath []uint32) bool {

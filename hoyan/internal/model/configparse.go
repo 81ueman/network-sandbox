@@ -316,6 +316,11 @@ func parsePrefixListRule(seq int, action, prefix string, fields []string) (Prefi
 			return PrefixListRule{}, fmt.Errorf("unsupported prefix-list option %q", fields[i])
 		}
 	}
+	match, err := NewPrefixSet(rule.Prefix, rule.Ge, rule.Le)
+	if err != nil {
+		return PrefixListRule{}, err
+	}
+	rule.Match = match
 	return rule, nil
 }
 

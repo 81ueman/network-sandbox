@@ -72,11 +72,12 @@ type PrefixList struct {
 }
 
 type PrefixListRule struct {
-	Seq    int    `yaml:"seq"`
-	Action string `yaml:"action"`
-	Prefix string `yaml:"prefix"`
-	Ge     int    `yaml:"ge,omitempty"`
-	Le     int    `yaml:"le,omitempty"`
+	Seq    int       `yaml:"seq"`
+	Action string    `yaml:"action"`
+	Prefix string    `yaml:"prefix"`
+	Ge     int       `yaml:"ge,omitempty"`
+	Le     int       `yaml:"le,omitempty"`
+	Match  PrefixSet `yaml:"-"`
 }
 
 type ASPathList struct {

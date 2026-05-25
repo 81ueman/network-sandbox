@@ -174,7 +174,7 @@ router bgp 65001
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
-	if got, want := cfg.PrefixLists, []PrefixList{
+	if got, want := prefixListsWithoutMatches(cfg.PrefixLists), []PrefixList{
 		{Name: "PL-IN", Rules: []PrefixListRule{{Seq: 10, Action: "permit", Prefix: "10.0.0.0/24"}}},
 		{Name: "PL-OUT", Rules: []PrefixListRule{{Seq: 0, Action: "permit", Prefix: "10.0.1.0/24"}}},
 	}; !reflect.DeepEqual(got, want) {
@@ -261,7 +261,7 @@ func TestParseFRRPrefixListDenyAndOrder(t *testing.T) {
 ip prefix-list PL seq 20 permit 10.1.0.0/16
 ip prefix-list PL seq 10 deny 10.0.0.0/8
 `)
-	got := cfg.PrefixLists
+	got := prefixListsWithoutMatches(cfg.PrefixLists)
 	want := []PrefixList{{Name: "PL", Rules: []PrefixListRule{
 		{Seq: 10, Action: "deny", Prefix: "10.0.0.0/8"},
 		{Seq: 20, Action: "permit", Prefix: "10.1.0.0/16"},
@@ -276,7 +276,7 @@ func TestParseFRRPrefixListLeGe(t *testing.T) {
 ip prefix-list PL permit any
 ip prefix-list PL seq 10 permit 10.0.0.0/8 ge 16 le 24
 `)
-	got := cfg.PrefixLists
+	got := prefixListsWithoutMatches(cfg.PrefixLists)
 	want := []PrefixList{{Name: "PL", Rules: []PrefixListRule{
 		{Seq: 0, Action: "permit", Prefix: "any"},
 		{Seq: 10, Action: "permit", Prefix: "10.0.0.0/8", Ge: 16, Le: 24},
@@ -284,6 +284,18 @@ ip prefix-list PL seq 10 permit 10.0.0.0/8 ge 16 le 24
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("PrefixLists = %#v, want %#v", got, want)
 	}
+}
+
+func prefixListsWithoutMatches(in []PrefixList) []PrefixList {
+	out := make([]PrefixList, len(in))
+	for i, prefixList := range in {
+		out[i] = prefixList
+		out[i].Rules = append([]PrefixListRule(nil), prefixList.Rules...)
+		for j := range out[i].Rules {
+			out[i].Rules[j].Match = nil
+		}
+	}
+	return out
 }
 
 func TestValidateRejectsMissingRoutePolicyReferences(t *testing.T) {
