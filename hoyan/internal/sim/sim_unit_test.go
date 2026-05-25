@@ -2,6 +2,8 @@ package sim
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -407,6 +409,32 @@ func TestImportRouteMapSetsLocalPrefInRIB(t *testing.T) {
 	}
 }
 
+func TestParsedCEOSImportRouteMapSetsLocalPrefInRIB(t *testing.T) {
+	cfg := parseCEOSConfigForSim(t, `
+hostname ceos-rx
+ip prefix-list PL seq 10 permit 10.0.0.0/24
+route-map SET-LP permit 10
+   match ip address prefix-list PL
+   set local-preference 260
+router bgp 65002
+   neighbor 192.0.2.0 remote-as 65001
+   address-family ipv4
+      neighbor 192.0.2.0 activate
+      neighbor 192.0.2.0 route-map SET-LP in
+`)
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Kind = model.KindCEOS
+	topo.Nodes[1].PrefixLists = cfg.PrefixLists
+	topo.Nodes[1].RoutePolicies = cfg.RoutePolicies
+	topo.Nodes[1].Neighbors[0].ImportPolicy = cfg.Neighbors[0].ImportPolicy
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 260 {
+		t.Fatalf("rx RIB = %#v, want parsed cEOS local-pref 260", routes)
+	}
+}
+
 func TestRouteMapWithoutMatchMatchesAnyRoute(t *testing.T) {
 	topo := routePolicyTestTopology()
 	topo.Nodes[1].Neighbors[0].ImportPolicy = "SET-LP"
@@ -611,6 +639,19 @@ func routePolicyTestTopology() *model.Topology {
 		},
 		Links: []model.Link{{Name: "origin-rx", A: "origin", B: "rx", Cost: 1, Subnet: "192.0.2.0/31"}},
 	}
+}
+
+func parseCEOSConfigForSim(t *testing.T, config string) model.ParsedConfig {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ceos.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg, err := model.ParseConfig(model.KindCEOS, path)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	return cfg
 }
 
 func TestLookupFIBLongestPrefixAndConditionalFallback(t *testing.T) {

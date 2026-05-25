@@ -73,8 +73,6 @@ func parseConfig(kind DeviceKind, path string, collectWarnings bool) (ParseResul
 }
 
 func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (ParseResult, error) {
-	// TODO: parse cEOS route-map syntax separately. cEOS currently reuses the
-	// FRR-like parser only for interfaces, BGP neighbors, and prefixes.
 	var cfg ParsedConfig
 	var warnings []UnsupportedStatement
 	neighbors := map[string]*BGPNeighbor{}
@@ -110,13 +108,13 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 		switch {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
-		case kind == KindFRR && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
+		case isRouteMapPolicyKind(kind) && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
 			rule, err := parsePrefixListRule(0, fields[3], fields[4], fields[5:])
 			if err != nil {
 				return ParseResult{}, fmt.Errorf("%s: %w", line, err)
 			}
 			addPrefixListRule(prefixLists, fields[2], rule)
-		case kind == KindFRR && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
+		case isRouteMapPolicyKind(kind) && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
 			seq, err := strconv.Atoi(fields[4])
 			if err != nil {
 				return ParseResult{}, err
@@ -130,7 +128,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			addStringListRule(asPathLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
 		case kind == KindFRR && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "community-list" && fields[2] == "standard" && (fields[4] == "permit" || fields[4] == "deny"):
 			addCommunityListRule(communityLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
-		case kind == KindFRR && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
+		case isRouteMapPolicyKind(kind) && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
 			seq := 0
 			if len(fields) >= 4 {
 				var err error
@@ -143,7 +141,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			currentInterface = ""
 			inBGP = false
 			inAF = false
-		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
+		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
 			currentRouteRule.MatchPrefixList = fields[4]
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "next-hop" && fields[3] == "prefix-list":
 			currentRouteRule.MatchNextHopPrefixList = fields[4]
@@ -163,12 +161,12 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 					warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map match statement"))
 				}
 			}
-		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
+		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
 			if !collectWarnings {
-				return ParseResult{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+				return ParseResult{}, fmt.Errorf("unsupported %s route-map match statement %q", routeMapVendorName(kind), line)
 			}
-			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map match statement"))
-		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
+			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, fmt.Sprintf("unsupported %s route-map match statement", routeMapVendorName(kind))))
+		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParseResult{}, err
@@ -178,7 +176,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			} else {
 				currentRouteRule.SetLocalPref = intPtr(v)
 			}
-		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
+		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParseResult{}, err
@@ -211,14 +209,14 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 				}
 				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map origin"))
 			}
-		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
+		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
 			if !collectWarnings {
-				return ParseResult{}, fmt.Errorf("unsupported FRR route-map statement %q", line)
+				return ParseResult{}, fmt.Errorf("unsupported %s route-map statement %q", routeMapVendorName(kind), line)
 			}
-			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map statement"))
-		case kind == KindFRR && currentRoutePolicy != nil:
+			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, fmt.Sprintf("unsupported %s route-map statement", routeMapVendorName(kind))))
+		case isRouteMapPolicyKind(kind) && currentRoutePolicy != nil:
 			if collectWarnings {
-				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map statement"))
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, fmt.Sprintf("unsupported %s route-map statement", routeMapVendorName(kind))))
 			}
 		case fields[0] == "interface" && len(fields) >= 2:
 			currentInterface = fields[1]
@@ -262,7 +260,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			getNeighbor(neighbors, fields[1]).Activated = true
 		case inBGP && inAF && len(fields) >= 3 && fields[0] == "neighbor" && fields[2] == "next-hop-self":
 			getNeighbor(neighbors, fields[1]).NextHopSelf = true
-		case kind == KindFRR && inBGP && inAF && len(fields) >= 5 && fields[0] == "neighbor" && fields[2] == "route-map":
+		case isRouteMapPolicyKind(kind) && inBGP && inAF && len(fields) >= 5 && fields[0] == "neighbor" && fields[2] == "route-map":
 			n := getNeighbor(neighbors, fields[1])
 			switch fields[4] {
 			case "in":
@@ -354,6 +352,19 @@ func unsupportedStatement(vendor, file string, line int, text, reason string) Un
 		Line:   line,
 		Text:   text,
 		Reason: reason,
+	}
+}
+
+func isRouteMapPolicyKind(kind DeviceKind) bool {
+	return kind == KindFRR || kind == KindCEOS
+}
+
+func routeMapVendorName(kind DeviceKind) string {
+	switch kind {
+	case KindCEOS:
+		return "cEOS"
+	default:
+		return "FRR"
 	}
 }
 
