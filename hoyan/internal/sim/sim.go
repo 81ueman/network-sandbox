@@ -168,13 +168,36 @@ func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts
 	if opts.MaxFailures < 0 {
 		return nil, false
 	}
-	if !opts.IncludeLinks && !opts.IncludeNodes {
-		return nil, false
-	}
-	elements := failure.SearchElements(g.topo, opts)
+	elements := g.failureElements(opts)
 	if len(elements) == 0 {
 		return nil, false
 	}
+	if problem, ok := g.symbolicPacketFailureProblem(from, target, opts, elements); ok {
+		if ans, ok := solveSymbolicFailureProblem(problem); ok {
+			return ans, true
+		}
+		return nil, false
+	}
+	forbidden := g.enumerateForbiddenFailures(from, target, opts, elements)
+	ans, ok := solveEnumeratedFailureProblem(solver.FailureProblem{
+		Elements:    elements,
+		MaxFailures: opts.MaxFailures,
+		Forbidden:   forbidden,
+	})
+	if !ok {
+		return nil, false
+	}
+	return ans, true
+}
+
+func (g *Graph) failureElements(opts FailureSearchOptions) []solver.FailureElement {
+	if !opts.IncludeLinks && !opts.IncludeNodes {
+		return nil
+	}
+	return failure.SearchElements(g.topo, opts)
+}
+
+func (g *Graph) enumerateForbiddenFailures(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) [][]solver.FailureElement {
 	var forbidden [][]solver.FailureElement
 	for k := 0; k <= opts.MaxFailures; k++ {
 		failure.FindElementCombo(elements, k, 0, nil, func(combo []solver.FailureElement) bool {
@@ -184,11 +207,36 @@ func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts
 			return false
 		})
 	}
-	ans, err := solver.DefaultBackend().Solve(solver.FailureProblem{
+	return forbidden
+}
+
+func solveEnumeratedFailureProblem(problem solver.FailureProblem) ([]solver.FailureElement, bool) {
+	ans, err := solver.DefaultBackend().Solve(problem)
+	if err != nil || !ans.Sat {
+		return nil, false
+	}
+	return ans.Failures, true
+}
+
+func (g *Graph) symbolicPacketFailureProblem(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) (solver.SymbolicFailureProblem, bool) {
+	packet, ok := target.(PacketTarget)
+	if !ok {
+		return solver.SymbolicFailureProblem{}, false
+	}
+	result := g.SymbolicPacketReachability(from, packet.To, packet.Protocol)
+	return solver.SymbolicFailureProblem{
 		Elements:    elements,
 		MaxFailures: opts.MaxFailures,
-		Forbidden:   forbidden,
-	})
+		Goal:        failure.BoolExpr(result.Unreachable),
+	}, true
+}
+
+func solveSymbolicFailureProblem(problem solver.SymbolicFailureProblem) ([]solver.FailureElement, bool) {
+	backend, ok := solver.DefaultBackend().(solver.SymbolicBackend)
+	if !ok {
+		return nil, false
+	}
+	ans, err := backend.SolveSymbolic(problem)
 	if err != nil || !ans.Sat {
 		return nil, false
 	}

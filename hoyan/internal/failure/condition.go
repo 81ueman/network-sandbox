@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
+	"github.com/81ueman/network-sandbox/hoyan/internal/symbolic"
 )
 
 type Cond interface {
@@ -192,6 +193,41 @@ func normalizeCond(c Cond) Cond {
 		return simplifyNot(x.c)
 	default:
 		return c
+	}
+}
+
+func BoolExpr(c Cond) symbolic.Expr {
+	c = normalizeCond(c)
+	switch x := c.(type) {
+	case trueCond:
+		return symbolic.True()
+	case falseCond:
+		return symbolic.False()
+	case varCond:
+		switch x.kind {
+		case condVarNode:
+			return symbolic.NodeVar(x.name)
+		case condVarLink:
+			return symbolic.LinkVar(x.name)
+		default:
+			return symbolic.True()
+		}
+	case andCond:
+		children := make([]symbolic.Expr, 0, len(x))
+		for _, child := range x {
+			children = append(children, BoolExpr(child))
+		}
+		return symbolic.And(children...)
+	case orCond:
+		children := make([]symbolic.Expr, 0, len(x))
+		for _, child := range x {
+			children = append(children, BoolExpr(child))
+		}
+		return symbolic.Or(children...)
+	case notCond:
+		return symbolic.Not(BoolExpr(x.c))
+	default:
+		return symbolic.True()
 	}
 }
 

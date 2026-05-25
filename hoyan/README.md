@@ -32,7 +32,11 @@ Linux/FRR data-plane ACLs are stored as nftables rulesets under
 `configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
 `hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
 
-The normal build uses a small enumerating solver for failure sets. With Z3:
+The normal build uses a small solver for failure sets. The legacy
+`FailureProblem` path still passes already-enumerated bad combinations to the
+backend; that mode does not encode reachability itself. Packet reachability can
+also be converted to a symbolic BoolExpr goal (`NOT(reachable)`) and solved by
+the symbolic backend without first materializing every bad combo. With Z3:
 
 ```bash
 go run -tags z3 ./cmd/hoyan-verify
