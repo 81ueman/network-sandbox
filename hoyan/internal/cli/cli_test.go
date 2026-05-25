@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ func TestRootHelpListsSubcommands(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	help := out.String()
-	for _, want := range []string{"verify", "live-check", "rib-compare", "render-topology"} {
+	for _, want := range []string{"verify", "live-check", "rib-compare", "render-topology", "model"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help output missing %q:\n%s", want, help)
 		}
@@ -102,6 +103,99 @@ topology:
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered topology missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestModelRIBCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) == 0 {
+		t.Fatalf("rows = 0, want modeled RIB entries")
+	}
+	for _, row := range rows {
+		if row["node"] != "bj-edge1" || row["prefix"] != "10.4.0.0/16" {
+			t.Fatalf("unexpected row filter result: %#v", row)
+		}
+		if row["condition"] == "" || row["selected_condition"] == "" {
+			t.Fatalf("row missing conditions: %#v", row)
+		}
+	}
+}
+
+func TestModelFIBCommandOutputsTable(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelFIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"NODE", "PREFIX", "NEXT-HOP", "CONDITION", "bj-edge1", "10.4.0.0/16"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestModelCommandRejectsUnknownNode(t *testing.T) {
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "missing-node",
+	})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown node "missing-node"`) {
+		t.Fatalf("Execute() error = %v, want unknown node", err)
+	}
+}
+
+func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelSymbolicPacketCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--from", "cust-bj",
+		"--to", "10.4.1.10",
+		"--protocol", "tcp",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if result["from"] != "cust-bj" || result["to"] != "10.4.1.10" || result["protocol"] != "tcp" {
+		t.Fatalf("unexpected symbolic packet metadata: %#v", result)
+	}
+	if result["reachable_condition"] == "" || result["unreachable_condition"] == "" {
+		t.Fatalf("missing reachability conditions: %#v", result)
 	}
 }
 

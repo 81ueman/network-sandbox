@@ -44,6 +44,23 @@ go run -tags z3 ./cmd/hoyan verify
 
 ## Compare Modeled BGP RIBs With Live Nodes
 
+## Inspect Modeled RIB, FIB, and Symbolic Paths
+
+Use `hoyan model` to inspect the offline model built from the containerlab
+topology and device configs without collecting live device state:
+
+```bash
+go run ./cmd/hoyan model rib --node bj-edge1
+go run ./cmd/hoyan model rib --node bj-edge1 --prefix 10.4.0.0/16 --format json
+go run ./cmd/hoyan model fib --node bj-edge1
+go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
+go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protocol tcp
+```
+
+The RIB view includes route attributes, provenance, condition, and selected
+condition. The FIB view includes next-hop, path, cost, and install condition.
+Use `--format json` when feeding the output to `jq` or Codex.
+
 When running Hoyan from multiple git worktrees, render an isolated topology per
 worktree first. The suffix is appended to the lab name and Docker management
 network name, derives a separate `172.86.<n>.0/24` management subnet, keeps
