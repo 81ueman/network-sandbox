@@ -29,11 +29,7 @@ func (e *Engine) RouteReachable(from, prefix string, failures failure.Set) (Path
 	if best == nil {
 		return Path{}, false
 	}
-	nodes := append([]string(nil), best.Nodes...)
-	links := append([]string(nil), best.Links...)
-	reverse(nodes)
-	reverse(links)
-	return Path{Nodes: nodes, Links: links, Cost: e.idx.PathCost(best.Links)}, true
+	return routePath(e.idx, *best), true
 }
 
 func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set) (Path, bool, string) {

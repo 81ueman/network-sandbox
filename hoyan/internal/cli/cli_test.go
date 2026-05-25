@@ -199,6 +199,36 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 	}
 }
 
+func TestModelSymbolicRouteCommandOutputsJSON(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelSymbolicRouteCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--from", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if result["from"] != "bj-edge1" || result["prefix"] != "10.4.0.0/16" {
+		t.Fatalf("unexpected symbolic route metadata: %#v", result)
+	}
+	if result["reachable_condition"] == "" || result["unreachable_condition"] == "" {
+		t.Fatalf("missing reachability conditions: %#v", result)
+	}
+	paths, ok := result["paths"].([]any)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("missing symbolic route paths: %#v", result)
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {
