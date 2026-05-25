@@ -79,7 +79,7 @@ func LinkFailureScenario(topo *model.Topology, linkName string) (RIBFailureScena
 	}
 	return RIBFailureScenario{
 		Name:     "link-" + link.Name,
-		Failures: sim.LinkFailures(link.Name),
+		Failures: sim.LinkFailures(model.LinkID(link.Name)),
 		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
 			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.A, "-i", link.AIntf, "--loss", "100"); err != nil {
 				return fmt.Errorf("netem set %s:%s: %w", link.A, link.AIntf, err)
@@ -109,7 +109,7 @@ func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScena
 	}
 	return RIBFailureScenario{
 		Name:        "node-" + nodeName,
-		Failures:    sim.NodeFailures(nodeName),
+		Failures:    sim.NodeFailures(model.NodeID(nodeName)),
 		ActiveNodes: activeSupportedNodes(topo.Nodes, map[string]bool{nodeName: true}),
 		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
 			containerName := node.RuntimeName()

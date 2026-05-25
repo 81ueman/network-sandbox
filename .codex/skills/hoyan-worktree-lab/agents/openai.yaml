@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hoyan Worktree Lab"
+  short_description: "Start hoyan work from latest main"
+  default_prompt: "Use $hoyan-worktree-lab before working in a hoyan folder so the task starts from latest main in a new worktree."

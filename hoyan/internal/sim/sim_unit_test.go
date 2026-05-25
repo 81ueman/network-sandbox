@@ -24,10 +24,10 @@ func testGraph(topo *model.Topology) *Graph {
 		adj:         map[string][]edge{},
 		rib:         map[string]map[string][]RIBEntry{},
 		fib:         map[string][]FIBEntry{},
-		linksByName: map[string]model.Link{},
+		linksByName: map[model.LinkID]model.Link{},
 	}
 	for _, link := range topo.Links {
-		g.linksByName[link.Name] = link
+		g.linksByName[model.LinkID(link.Name)] = link
 	}
 	return g
 }
@@ -48,7 +48,7 @@ func TestFailureSetAndContext(t *testing.T) {
 
 	ctx := FailureContext{
 		Failures: failures,
-		LinksByName: map[string]model.Link{
+		LinksByName: map[model.LinkID]model.Link{
 			"a-b":        {Name: "a-b", A: "a", B: "b"},
 			"b-c":        {Name: "b-c", A: "b", B: "c"},
 			"prefixed":   {Name: "prefixed", A: "x", B: "y"},
@@ -60,7 +60,7 @@ func TestFailureSetAndContext(t *testing.T) {
 		t.Fatalf("NodeFailed returned unexpected values")
 	}
 	for _, link := range []string{"raw-link", "prefixed", "a-b"} {
-		if !ctx.LinkFailed(link) {
+		if !ctx.LinkFailed(model.LinkID(link)) {
 			t.Fatalf("LinkFailed(%q) = false, want true", link)
 		}
 	}
@@ -82,7 +82,7 @@ func TestFailureSetFromElements(t *testing.T) {
 func TestTypedConditionEvaluation(t *testing.T) {
 	ctx := FailureContext{
 		Failures: NodeFailures("a"),
-		LinksByName: map[string]model.Link{
+		LinksByName: map[model.LinkID]model.Link{
 			"a-b": {Name: "a-b", A: "a", B: "b"},
 			"b-c": {Name: "b-c", A: "b", B: "c"},
 		},
@@ -248,7 +248,7 @@ func TestAdvertisementConditionsFixedPointPropagatesMultipleHops(t *testing.T) {
 		t.Fatalf("downstream condition should be true with all parent conditions true: %s", child.Condition.String())
 	}
 	for _, failed := range []string{"origin-mid1", "mid1-mid2", "mid2-down"} {
-		if child.Condition.Eval(FailureContext{Failures: LinkFailures(failed)}) {
+		if child.Condition.Eval(FailureContext{Failures: LinkFailures(model.LinkID(failed))}) {
 			t.Fatalf("downstream condition should depend on %s: %s", failed, child.Condition.String())
 		}
 	}
@@ -295,7 +295,7 @@ func TestConvergeAdvertisementConditionsHandlesDeepRouteChain(t *testing.T) {
 		t.Fatalf("deep chain condition should converge true with no failures: %s", deepest.Condition.String())
 	}
 	for _, failed := range []string{"a-b", "f-g", "k-l"} {
-		if deepest.Condition.Eval(FailureContext{Failures: LinkFailures(failed)}) {
+		if deepest.Condition.Eval(FailureContext{Failures: LinkFailures(model.LinkID(failed))}) {
 			t.Fatalf("deep chain condition should include %s: %s", failed, deepest.Condition.String())
 		}
 	}

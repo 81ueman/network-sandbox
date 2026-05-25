@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub PR Issue Closing"
+  short_description: "Add closing issue references to PR bodies"
+  default_prompt: "Use $gh-pr-close-issue when creating a pull request for issue-backed work."
