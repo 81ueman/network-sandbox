@@ -169,8 +169,9 @@ func expectedPath(topo *model.Topology, node model.Node, route sim.RIBEntry, ctx
 }
 
 func expectedRouteOrigin(route sim.RIBEntry) string {
-	// TODO: carry a modeled BGP origin-code field if config parsing starts
-	// deriving one. RIBEntry.Origin is currently the origin node name.
+	if route.OriginCode != "" {
+		return route.OriginCode
+	}
 	return "igp"
 }
 

@@ -46,6 +46,8 @@ type RIBEntry struct {
 	Nodes        []string
 	Links        []string
 	ASPath       []uint32
+	Communities  []string
+	OriginCode   string
 	LocalPref    int
 	MED          int
 	LearnedIBGP  bool
@@ -455,22 +457,24 @@ func (g *Graph) simulateControlPlane() {
 		for _, prefix := range origin.Prefixes {
 			originCond := NodeVar(origin.Name)
 			g.addRIB(origin.Name, prefix, RIBEntry{
-				Prefix:    prefix,
-				Origin:    origin.Name,
-				Nodes:     []string{origin.Name},
-				ASPath:    nil,
-				LocalPref: 100,
-				BaseCond:  originCond,
-				Condition: originCond,
+				Prefix:     prefix,
+				Origin:     origin.Name,
+				Nodes:      []string{origin.Name},
+				ASPath:     nil,
+				OriginCode: "igp",
+				LocalPref:  100,
+				BaseCond:   originCond,
+				Condition:  originCond,
 			})
 			g.walkBGP(RIBEntry{
-				Prefix:    prefix,
-				Origin:    origin.Name,
-				NextHop:   "",
-				Nodes:     []string{origin.Name},
-				ASPath:    nil,
-				BaseCond:  originCond,
-				Condition: originCond,
+				Prefix:     prefix,
+				Origin:     origin.Name,
+				NextHop:    "",
+				Nodes:      []string{origin.Name},
+				ASPath:     nil,
+				OriginCode: "igp",
+				BaseCond:   originCond,
+				Condition:  originCond,
 			})
 		}
 	}
@@ -603,7 +607,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !exported.Accept {
 			continue
 		}
-		exportPolicy := applyRoutePolicy(curNode, session.ExportPolicy, exported.Route)
+		exportPolicy := applyRoutePolicy(g.topo, curNode, next, session.ExportPolicy, exported.Route)
 		if !exportPolicy.Accept {
 			continue
 		}
@@ -617,7 +621,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !imported.Accept {
 			continue
 		}
-		importPolicy := applyRoutePolicy(nextNode, receiverSession.ImportPolicy, imported.Route)
+		importPolicy := applyRoutePolicy(g.topo, nextNode, current, receiverSession.ImportPolicy, imported.Route)
 		if !importPolicy.Accept {
 			continue
 		}

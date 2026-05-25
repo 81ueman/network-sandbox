@@ -420,6 +420,66 @@ func TestExportRouteMapSetsMEDInRIB(t *testing.T) {
 	}
 }
 
+func TestRouteMapCommunitySetAndMatch(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[0].Neighbors[0].ExportPolicy = "TAG"
+	topo.Nodes[0].RoutePolicies = []model.RoutePolicy{{Name: "TAG", Rules: []model.RoutePolicyRule{{Action: "permit", SetCommunities: []string{"65001:100"}, SetCommunityAdditive: true}}}}
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "MATCH-COMM"
+	topo.Nodes[1].CommunityLists = []model.CommunityList{{Name: "BJ", Rules: []model.StringListRule{{Action: "permit", Pattern: "65001:100"}}}}
+	lp := 275
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "MATCH-COMM", Rules: []model.RoutePolicyRule{{Action: "permit", MatchCommunityList: "BJ", SetLocalPref: &lp}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 275 || !reflect.DeepEqual(routes[0].Communities, []string{"65001:100"}) {
+		t.Fatalf("rx RIB = %#v, want community-driven local-pref 275", routes)
+	}
+}
+
+func TestRouteMapASPathMatchAndPrepend(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[0].Neighbors[0].ExportPolicy = "PREPEND"
+	topo.Nodes[0].RoutePolicies = []model.RoutePolicy{{Name: "PREPEND", Rules: []model.RoutePolicyRule{{Action: "permit", SetASPathPrepend: []uint32{65001, 65001}}}}}
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "MATCH-AS"
+	topo.Nodes[1].ASPathLists = []model.ASPathList{{Name: "FROM-ORIGIN", Rules: []model.StringListRule{{Action: "permit", Pattern: "^65001 65001 65001$"}}}}
+	lp := 280
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "MATCH-AS", Rules: []model.RoutePolicyRule{{Action: "permit", MatchASPathList: "FROM-ORIGIN", SetLocalPref: &lp}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 280 || !reflect.DeepEqual(routes[0].ASPath, []uint32{65001, 65001, 65001}) {
+		t.Fatalf("rx RIB = %#v, want prepended AS path and local-pref 280", routes)
+	}
+}
+
+func TestRouteMapNextHopPrefixListMatch(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "MATCH-NH"
+	topo.Nodes[1].PrefixLists = []model.PrefixList{{Name: "NH", Rules: []model.PrefixListRule{{Action: "permit", Prefix: "192.0.2.0/31", Le: 32}}}}
+	med := 44
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "MATCH-NH", Rules: []model.RoutePolicyRule{{Action: "permit", MatchNextHopPrefixList: "NH", SetMED: &med}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].MED != 44 {
+		t.Fatalf("rx RIB = %#v, want next-hop matched MED 44", routes)
+	}
+}
+
+func TestRouteMapDeltasAndOriginCode(t *testing.T) {
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Neighbors[0].ImportPolicy = "DELTA"
+	lpDelta := 25
+	medDelta := 12
+	topo.Nodes[1].RoutePolicies = []model.RoutePolicy{{Name: "DELTA", Rules: []model.RoutePolicyRule{{Action: "permit", SetLocalPrefDelta: &lpDelta, SetMEDDelta: &medDelta, SetOriginCode: "incomplete"}}}}
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 125 || routes[0].MED != 12 || routes[0].OriginCode != "incomplete" {
+		t.Fatalf("rx RIB = %#v, want local-pref 125 MED 12 origin incomplete", routes)
+	}
+}
+
 func TestImportRouteMapDenySuppressesRoute(t *testing.T) {
 	topo := routePolicyTestTopology()
 	topo.Nodes[1].Neighbors[0].ImportPolicy = "DENY"
@@ -479,6 +539,7 @@ func TestPrefixListPermitsEvaluatesOrderedRules(t *testing.T) {
 		{Seq: 10, Action: "deny", Prefix: "10.0.0.0/8"},
 		{Seq: 20, Action: "permit", Prefix: "10.0.0.0/8"},
 		{Seq: 30, Action: "permit", Prefix: "10.1.0.0/16"},
+		{Seq: 40, Action: "permit", Prefix: "10.2.0.0/16", Ge: 24, Le: 28},
 	}}}}
 	if prefixListPermits(node, "PL", "10.0.0.0/8") {
 		t.Fatalf("deny rule before permit should deny exact 10.0.0.0/8")
@@ -488,6 +549,12 @@ func TestPrefixListPermitsEvaluatesOrderedRules(t *testing.T) {
 	}
 	if prefixListPermits(node, "PL", "10.2.0.0/16") {
 		t.Fatalf("no matching prefix-list rule should deny route")
+	}
+	if !prefixListPermits(node, "PL", "10.2.1.0/24") {
+		t.Fatalf("ge/le prefix-list rule should allow /24")
+	}
+	if prefixListPermits(node, "PL", "10.2.1.0/29") {
+		t.Fatalf("ge/le prefix-list rule should deny longer than le")
 	}
 }
 

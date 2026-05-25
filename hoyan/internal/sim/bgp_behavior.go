@@ -44,6 +44,7 @@ func (b baseDeviceBehavior) ExportRoute(from model.Node, to model.Node, session 
 
 	out := route
 	out.ASPath = append([]uint32(nil), route.ASPath...)
+	out.Communities = append([]string(nil), route.Communities...)
 	if !isIBGP {
 		out.ASPath = prependASN(from.ASN, out.ASPath)
 	}

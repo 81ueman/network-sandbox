@@ -17,18 +17,20 @@ type Topology struct {
 }
 
 type Node struct {
-	Name          string        `yaml:"name"`
-	Kind          string        `yaml:"kind"`
-	Role          string        `yaml:"role"`
-	ASN           uint32        `yaml:"asn"`
-	MgmtIPv4      string        `yaml:"mgmt_ipv4"`
-	Loopback      string        `yaml:"loopback"`
-	ConfigPath    string        `yaml:"config_path"`
-	Prefixes      []string      `yaml:"prefixes"`
-	Interfaces    []Interface   `yaml:"interfaces"`
-	Neighbors     []BGPNeighbor `yaml:"neighbors"`
-	PrefixLists   []PrefixList  `yaml:"prefix_lists"`
-	RoutePolicies []RoutePolicy `yaml:"route_policies"`
+	Name           string          `yaml:"name"`
+	Kind           string          `yaml:"kind"`
+	Role           string          `yaml:"role"`
+	ASN            uint32          `yaml:"asn"`
+	MgmtIPv4       string          `yaml:"mgmt_ipv4"`
+	Loopback       string          `yaml:"loopback"`
+	ConfigPath     string          `yaml:"config_path"`
+	Prefixes       []string        `yaml:"prefixes"`
+	Interfaces     []Interface     `yaml:"interfaces"`
+	Neighbors      []BGPNeighbor   `yaml:"neighbors"`
+	PrefixLists    []PrefixList    `yaml:"prefix_lists"`
+	ASPathLists    []ASPathList    `yaml:"as_path_lists"`
+	CommunityLists []CommunityList `yaml:"community_lists"`
+	RoutePolicies  []RoutePolicy   `yaml:"route_policies"`
 }
 
 type Link struct {
@@ -65,6 +67,24 @@ type PrefixListRule struct {
 	Seq    int    `yaml:"seq"`
 	Action string `yaml:"action"`
 	Prefix string `yaml:"prefix"`
+	Ge     int    `yaml:"ge,omitempty"`
+	Le     int    `yaml:"le,omitempty"`
+}
+
+type ASPathList struct {
+	Name  string           `yaml:"name"`
+	Rules []StringListRule `yaml:"rules"`
+}
+
+type CommunityList struct {
+	Name  string           `yaml:"name"`
+	Rules []StringListRule `yaml:"rules"`
+}
+
+type StringListRule struct {
+	Seq     int    `yaml:"seq"`
+	Action  string `yaml:"action"`
+	Pattern string `yaml:"pattern"`
 }
 
 type RoutePolicy struct {
@@ -73,11 +93,21 @@ type RoutePolicy struct {
 }
 
 type RoutePolicyRule struct {
-	Seq             int    `yaml:"seq"`
-	Action          string `yaml:"action"`
-	MatchPrefixList string `yaml:"match_prefix_list"`
-	SetLocalPref    *int   `yaml:"set_local_pref,omitempty"`
-	SetMED          *int   `yaml:"set_med,omitempty"`
+	Seq                    int      `yaml:"seq"`
+	Action                 string   `yaml:"action"`
+	MatchPrefixList        string   `yaml:"match_prefix_list"`
+	MatchNextHopPrefixList string   `yaml:"match_next_hop_prefix_list"`
+	MatchASPathList        string   `yaml:"match_as_path_list"`
+	MatchCommunityList     string   `yaml:"match_community_list"`
+	MatchCommunityExact    bool     `yaml:"match_community_exact,omitempty"`
+	SetLocalPref           *int     `yaml:"set_local_pref,omitempty"`
+	SetLocalPrefDelta      *int     `yaml:"set_local_pref_delta,omitempty"`
+	SetMED                 *int     `yaml:"set_med,omitempty"`
+	SetMEDDelta            *int     `yaml:"set_med_delta,omitempty"`
+	SetASPathPrepend       []uint32 `yaml:"set_as_path_prepend,omitempty"`
+	SetCommunities         []string `yaml:"set_communities,omitempty"`
+	SetCommunityAdditive   bool     `yaml:"set_community_additive,omitempty"`
+	SetOriginCode          string   `yaml:"set_origin_code,omitempty"`
 }
 
 type Policy struct {
@@ -194,9 +224,35 @@ func (t *Topology) Validate() error {
 }
 
 func validateRoutePolicyReferences(n Node) error {
+	prefixLists := map[string]bool{}
+	for _, list := range n.PrefixLists {
+		prefixLists[list.Name] = true
+	}
+	asPathLists := map[string]bool{}
+	for _, list := range n.ASPathLists {
+		asPathLists[list.Name] = true
+	}
+	communityLists := map[string]bool{}
+	for _, list := range n.CommunityLists {
+		communityLists[list.Name] = true
+	}
 	routePolicies := map[string]bool{}
 	for _, policy := range n.RoutePolicies {
 		routePolicies[policy.Name] = true
+		for _, rule := range policy.Rules {
+			if rule.MatchPrefixList != "" && !prefixLists[rule.MatchPrefixList] {
+				return fmt.Errorf("node %s route policy %s rule %d references missing prefix-list %s", n.Name, policy.Name, rule.Seq, rule.MatchPrefixList)
+			}
+			if rule.MatchNextHopPrefixList != "" && !prefixLists[rule.MatchNextHopPrefixList] {
+				return fmt.Errorf("node %s route policy %s rule %d references missing next-hop prefix-list %s", n.Name, policy.Name, rule.Seq, rule.MatchNextHopPrefixList)
+			}
+			if rule.MatchASPathList != "" && !asPathLists[rule.MatchASPathList] {
+				return fmt.Errorf("node %s route policy %s rule %d references missing as-path list %s", n.Name, policy.Name, rule.Seq, rule.MatchASPathList)
+			}
+			if rule.MatchCommunityList != "" && !communityLists[rule.MatchCommunityList] {
+				return fmt.Errorf("node %s route policy %s rule %d references missing community-list %s", n.Name, policy.Name, rule.Seq, rule.MatchCommunityList)
+			}
+		}
 	}
 	for _, neighbor := range n.Neighbors {
 		if neighbor.ImportPolicy != "" && !routePolicies[neighbor.ImportPolicy] {

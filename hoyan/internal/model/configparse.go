@@ -11,15 +11,17 @@ import (
 )
 
 type ParsedConfig struct {
-	Hostname      string
-	ASN           uint32
-	RouterID      string
-	Loopback      string
-	Interfaces    []Interface
-	Prefixes      []string
-	Neighbors     []BGPNeighbor
-	PrefixLists   []PrefixList
-	RoutePolicies []RoutePolicy
+	Hostname       string
+	ASN            uint32
+	RouterID       string
+	Loopback       string
+	Interfaces     []Interface
+	Prefixes       []string
+	Neighbors      []BGPNeighbor
+	PrefixLists    []PrefixList
+	ASPathLists    []ASPathList
+	CommunityLists []CommunityList
+	RoutePolicies  []RoutePolicy
 }
 
 func ParseConfig(kind, path string) (ParsedConfig, error) {
@@ -43,6 +45,8 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 	var cfg ParsedConfig
 	neighbors := map[string]*BGPNeighbor{}
 	prefixLists := map[string]*PrefixList{}
+	asPathLists := map[string]*ASPathList{}
+	communityLists := map[string]*CommunityList{}
 	routePolicies := map[string]*RoutePolicy{}
 	var currentInterface string
 	var currentRoutePolicy *RoutePolicy
@@ -71,19 +75,25 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		case fields[0] == "hostname" && len(fields) >= 2:
 			cfg.Hostname = fields[1]
 		case kind == "frr" && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
-			if hasPrefixListRange(fields[5:]) {
-				return ParsedConfig{}, fmt.Errorf("unsupported FRR prefix-list le/ge in %q", line)
+			rule, err := parsePrefixListRule(0, fields[3], fields[4], fields[5:])
+			if err != nil {
+				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
 			}
-			addPrefixListRule(prefixLists, fields[2], 0, fields[3], fields[4])
+			addPrefixListRule(prefixLists, fields[2], rule)
 		case kind == "frr" && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
-			if hasPrefixListRange(fields[7:]) {
-				return ParsedConfig{}, fmt.Errorf("unsupported FRR prefix-list le/ge in %q", line)
-			}
 			seq, err := strconv.Atoi(fields[4])
 			if err != nil {
 				return ParsedConfig{}, err
 			}
-			addPrefixListRule(prefixLists, fields[2], seq, fields[5], fields[6])
+			rule, err := parsePrefixListRule(seq, fields[5], fields[6], fields[7:])
+			if err != nil {
+				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
+			}
+			addPrefixListRule(prefixLists, fields[2], rule)
+		case kind == "frr" && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "as-path" && fields[2] == "access-list" && (fields[4] == "permit" || fields[4] == "deny"):
+			addStringListRule(asPathLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
+		case kind == "frr" && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "community-list" && fields[2] == "standard" && (fields[4] == "permit" || fields[4] == "deny"):
+			addCommunityListRule(communityLists, fields[3], StringListRule{Action: fields[4], Pattern: strings.Join(fields[5:], " ")})
 		case kind == "frr" && len(fields) >= 4 && fields[0] == "route-map" && (fields[2] == "permit" || fields[2] == "deny"):
 			seq := 0
 			if len(fields) >= 4 {
@@ -99,22 +109,65 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 			inAF = false
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "address" && fields[3] == "prefix-list":
 			currentRouteRule.MatchPrefixList = fields[4]
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 5 && fields[0] == "match" && fields[1] == "ip" && fields[2] == "next-hop" && fields[3] == "prefix-list":
+			currentRouteRule.MatchNextHopPrefixList = fields[4]
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "as-path":
+			currentRouteRule.MatchASPathList = fields[2]
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "match" && fields[1] == "community":
+			currentRouteRule.MatchCommunityList = fields[2]
+			if len(fields) >= 4 {
+				switch fields[3] {
+				case "exact-match":
+					currentRouteRule.MatchCommunityExact = true
+				case "any":
+				default:
+					return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+				}
+			}
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
-			// TODO: support FRR community/as-path/next-hop/source-protocol
-			// matches when the lab needs them.
 			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
-			v, err := strconv.Atoi(fields[2])
+			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParsedConfig{}, err
 			}
-			currentRouteRule.SetLocalPref = intPtr(v)
+			if delta {
+				currentRouteRule.SetLocalPrefDelta = intPtr(v)
+			} else {
+				currentRouteRule.SetLocalPref = intPtr(v)
+			}
 		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
-			v, err := strconv.Atoi(fields[2])
+			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
 				return ParsedConfig{}, err
 			}
-			currentRouteRule.SetMED = intPtr(v)
+			if delta {
+				currentRouteRule.SetMEDDelta = intPtr(v)
+			} else {
+				currentRouteRule.SetMED = intPtr(v)
+			}
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 4 && fields[0] == "set" && fields[1] == "as-path" && fields[2] == "prepend":
+			path, err := parseASPathFields(fields[3:])
+			if err != nil {
+				return ParsedConfig{}, err
+			}
+			currentRouteRule.SetASPathPrepend = path
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "community":
+			communities := append([]string(nil), fields[2:]...)
+			if len(communities) > 0 && communities[len(communities)-1] == "additive" {
+				currentRouteRule.SetCommunityAdditive = true
+				communities = communities[:len(communities)-1]
+			}
+			currentRouteRule.SetCommunities = communities
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "origin":
+			switch fields[2] {
+			case "igp", "egp", "incomplete":
+				currentRouteRule.SetOriginCode = fields[2]
+			default:
+				return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map origin %q", line)
+			}
+		case kind == "frr" && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
+			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map statement %q", line)
 		case kind == "frr" && currentRoutePolicy != nil:
 			// TODO: support more FRR route-map statements as the lab needs them.
 		case fields[0] == "interface" && len(fields) >= 2:
@@ -178,6 +231,8 @@ func parseFRRLike(kind, text string) (ParsedConfig, error) {
 		}
 	}
 	cfg.PrefixLists = sortedPrefixLists(prefixLists)
+	cfg.ASPathLists = sortedASPathLists(asPathLists)
+	cfg.CommunityLists = sortedCommunityLists(communityLists)
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
 	if cfg.Loopback == "" && cfg.RouterID != "" {
 		cfg.Loopback = cfg.RouterID + "/32"
@@ -235,15 +290,6 @@ func parseSRLinux(text string) (ParsedConfig, error) {
 	return cfg, nil
 }
 
-func hasPrefixListRange(fields []string) bool {
-	for _, field := range fields {
-		if field == "le" || field == "ge" {
-			return true
-		}
-	}
-	return false
-}
-
 func getNeighbor(neighbors map[string]*BGPNeighbor, addr string) *BGPNeighbor {
 	if neighbors[addr] == nil {
 		neighbors[addr] = &BGPNeighbor{Address: addr}
@@ -251,11 +297,65 @@ func getNeighbor(neighbors map[string]*BGPNeighbor, addr string) *BGPNeighbor {
 	return neighbors[addr]
 }
 
-func addPrefixListRule(prefixLists map[string]*PrefixList, name string, seq int, action string, prefix string) {
+func parsePrefixListRule(seq int, action, prefix string, fields []string) (PrefixListRule, error) {
+	rule := PrefixListRule{Seq: seq, Action: action, Prefix: prefix}
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 >= len(fields) {
+			return PrefixListRule{}, fmt.Errorf("invalid prefix-list range")
+		}
+		v, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			return PrefixListRule{}, err
+		}
+		switch fields[i] {
+		case "ge":
+			rule.Ge = v
+		case "le":
+			rule.Le = v
+		default:
+			return PrefixListRule{}, fmt.Errorf("unsupported prefix-list option %q", fields[i])
+		}
+	}
+	return rule, nil
+}
+
+func parseRouteMapInt(raw string) (int, bool, error) {
+	delta := strings.HasPrefix(raw, "+") || strings.HasPrefix(raw, "-")
+	v, err := strconv.Atoi(raw)
+	return v, delta, err
+}
+
+func parseASPathFields(fields []string) ([]uint32, error) {
+	var out []uint32
+	for _, field := range fields {
+		asn, err := strconv.ParseUint(field, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, uint32(asn))
+	}
+	return out, nil
+}
+
+func addPrefixListRule(prefixLists map[string]*PrefixList, name string, rule PrefixListRule) {
 	if prefixLists[name] == nil {
 		prefixLists[name] = &PrefixList{Name: name}
 	}
-	prefixLists[name].Rules = append(prefixLists[name].Rules, PrefixListRule{Seq: seq, Action: action, Prefix: prefix})
+	prefixLists[name].Rules = append(prefixLists[name].Rules, rule)
+}
+
+func addStringListRule(asPathLists map[string]*ASPathList, name string, rule StringListRule) {
+	if asPathLists[name] == nil {
+		asPathLists[name] = &ASPathList{Name: name}
+	}
+	asPathLists[name].Rules = append(asPathLists[name].Rules, rule)
+}
+
+func addCommunityListRule(communityLists map[string]*CommunityList, name string, rule StringListRule) {
+	if communityLists[name] == nil {
+		communityLists[name] = &CommunityList{Name: name}
+	}
+	communityLists[name].Rules = append(communityLists[name].Rules, rule)
 }
 
 func addRoutePolicyRule(routePolicies map[string]*RoutePolicy, name string, action string, seq int) (*RoutePolicy, *RoutePolicyRule) {
@@ -275,6 +375,32 @@ func sortedPrefixLists(prefixLists map[string]*PrefixList) []PrefixList {
 		sort.Slice(cp.Rules, func(i, j int) bool {
 			return cp.Rules[i].Seq < cp.Rules[j].Seq
 		})
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func sortedASPathLists(asPathLists map[string]*ASPathList) []ASPathList {
+	var out []ASPathList
+	for _, list := range asPathLists {
+		cp := *list
+		cp.Rules = append([]StringListRule(nil), list.Rules...)
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func sortedCommunityLists(communityLists map[string]*CommunityList) []CommunityList {
+	var out []CommunityList
+	for _, list := range communityLists {
+		cp := *list
+		cp.Rules = append([]StringListRule(nil), list.Rules...)
 		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool {
