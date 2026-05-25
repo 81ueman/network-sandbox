@@ -66,6 +66,26 @@ func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
 	if neighbor == nil || neighbor.ExportPolicy != "HZ-TRANSIT-OUT" {
 		t.Fatalf("core-hz neighbor 198.18.30.7 = %#v, want export policy HZ-TRANSIT-OUT", neighbor)
 	}
+	coreSH, ok := topo.Node("core-sh")
+	if !ok {
+		t.Fatalf("core-sh not found")
+	}
+	if prefixListByName(coreSH.PrefixLists, "SH-LOCAL") == nil {
+		t.Fatalf("core-sh SH-LOCAL prefix-list not loaded: %#v", coreSH.PrefixLists)
+	}
+	if routePolicyByName(coreSH.RoutePolicies, "PREFER-SH-LOCAL") == nil || routePolicyByName(coreSH.RoutePolicies, "SH-TRANSIT-OUT") == nil {
+		t.Fatalf("core-sh route policies not loaded: %#v", coreSH.RoutePolicies)
+	}
+	for _, addr := range []string{"198.18.10.4", "198.18.10.6"} {
+		neighbor := neighborByAddress(coreSH.Neighbors, addr)
+		if neighbor == nil || neighbor.ImportPolicy != "PREFER-SH-LOCAL" {
+			t.Fatalf("core-sh neighbor %s = %#v, want import policy PREFER-SH-LOCAL", addr, neighbor)
+		}
+	}
+	neighbor = neighborByAddress(coreSH.Neighbors, "198.18.30.3")
+	if neighbor == nil || neighbor.ExportPolicy != "SH-TRANSIT-OUT" {
+		t.Fatalf("core-sh neighbor 198.18.30.3 = %#v, want export policy SH-TRANSIT-OUT", neighbor)
+	}
 }
 
 func TestOriginLookups(t *testing.T) {
@@ -637,6 +657,25 @@ func TestParseCEOSConfig(t *testing.T) {
 	if len(cfg.Neighbors) != 6 {
 		t.Fatalf("neighbors = %d, want 6", len(cfg.Neighbors))
 	}
+	if prefixListByName(cfg.PrefixLists, "SH-LOCAL") == nil {
+		t.Fatalf("SH-LOCAL prefix-list not parsed: %#v", cfg.PrefixLists)
+	}
+	policy := routePolicyByName(cfg.RoutePolicies, "PREFER-SH-LOCAL")
+	if policy == nil || len(policy.Rules) != 2 || policy.Rules[0].MatchPrefixList != "SH-LOCAL" || policy.Rules[0].SetLocalPref == nil || *policy.Rules[0].SetLocalPref != 225 {
+		t.Fatalf("PREFER-SH-LOCAL = %#v", policy)
+	}
+	policy = routePolicyByName(cfg.RoutePolicies, "SH-TRANSIT-OUT")
+	if policy == nil || len(policy.Rules) != 2 || policy.Rules[0].MatchPrefixList != "SH-LOCAL" || policy.Rules[0].SetMED == nil || *policy.Rules[0].SetMED != 9 {
+		t.Fatalf("SH-TRANSIT-OUT = %#v", policy)
+	}
+	neighbor := neighborByAddress(cfg.Neighbors, "198.18.10.4")
+	if neighbor == nil || neighbor.ImportPolicy != "PREFER-SH-LOCAL" {
+		t.Fatalf("neighbor 198.18.10.4 = %#v", neighbor)
+	}
+	neighbor = neighborByAddress(cfg.Neighbors, "198.18.30.3")
+	if neighbor == nil || neighbor.ExportPolicy != "SH-TRANSIT-OUT" {
+		t.Fatalf("neighbor 198.18.30.3 = %#v", neighbor)
+	}
 	var found bool
 	for _, iface := range cfg.Interfaces {
 		if iface.Name == "Ethernet1" && iface.Address == "198.18.10.5/31" {
@@ -645,6 +684,119 @@ func TestParseCEOSConfig(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Ethernet1 address not parsed: %#v", cfg.Interfaces)
+	}
+}
+
+func TestParseCEOSRouteMaps(t *testing.T) {
+	config := `
+hostname ceos1
+ip prefix-list PL-IN seq 10 permit 10.0.0.0/24
+ip prefix-list PL-IN seq 20 deny 10.0.1.0/24
+ip prefix-list PL-OUT permit 10.0.2.0/24 ge 25 le 28
+route-map RM-IN permit 10
+   match ip address prefix-list PL-IN
+   set local-preference 250
+route-map RM-OUT permit 20
+   match ip address prefix-list PL-OUT
+   set metric 77
+route-map RM-DENY deny 30
+   match ip address prefix-list PL-IN
+router bgp 65001
+   router-id 10.255.0.1
+   neighbor 192.0.2.1 remote-as 65002
+   address-family ipv4
+      neighbor 192.0.2.1 activate
+      neighbor 192.0.2.1 route-map RM-IN in
+      neighbor 192.0.2.1 route-map RM-OUT out
+`
+	cfg := parseCEOSConfigText(t, config)
+	if got, want := prefixListsWithoutMatches(cfg.PrefixLists), []PrefixList{
+		{Name: "PL-IN", Rules: []PrefixListRule{
+			{Seq: 10, Action: "permit", Prefix: "10.0.0.0/24"},
+			{Seq: 20, Action: "deny", Prefix: "10.0.1.0/24"},
+		}},
+		{Name: "PL-OUT", Rules: []PrefixListRule{{Seq: 0, Action: "permit", Prefix: "10.0.2.0/24", Ge: 25, Le: 28}}},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PrefixLists = %#v, want %#v", got, want)
+	}
+	rmIn := routePolicyByName(cfg.RoutePolicies, "RM-IN")
+	if rmIn == nil || len(rmIn.Rules) != 1 || rmIn.Rules[0].MatchPrefixList != "PL-IN" || rmIn.Rules[0].SetLocalPref == nil || *rmIn.Rules[0].SetLocalPref != 250 {
+		t.Fatalf("RM-IN = %#v", rmIn)
+	}
+	rmOut := routePolicyByName(cfg.RoutePolicies, "RM-OUT")
+	if rmOut == nil || len(rmOut.Rules) != 1 || rmOut.Rules[0].MatchPrefixList != "PL-OUT" || rmOut.Rules[0].SetMED == nil || *rmOut.Rules[0].SetMED != 77 {
+		t.Fatalf("RM-OUT = %#v", rmOut)
+	}
+	rmDeny := routePolicyByName(cfg.RoutePolicies, "RM-DENY")
+	if rmDeny == nil || len(rmDeny.Rules) != 1 || rmDeny.Rules[0].Action != "deny" || rmDeny.Rules[0].MatchPrefixList != "PL-IN" {
+		t.Fatalf("RM-DENY = %#v", rmDeny)
+	}
+	if len(cfg.Neighbors) != 1 || cfg.Neighbors[0].ImportPolicy != "RM-IN" || cfg.Neighbors[0].ExportPolicy != "RM-OUT" {
+		t.Fatalf("Neighbors = %#v", cfg.Neighbors)
+	}
+}
+
+func TestLoadLabTopologyIncludesCEOSRouteMaps(t *testing.T) {
+	dir := t.TempDir()
+	config := `
+hostname ceos1
+ip prefix-list PL seq 10 permit 10.0.0.0/24
+route-map RM-IN permit 10
+   match ip address prefix-list PL
+   set local-preference 250
+route-map RM-OUT permit 20
+   set metric 77
+router bgp 65001
+   router-id 10.255.0.1
+   neighbor 192.0.2.1 remote-as 65002
+   address-family ipv4
+      neighbor 192.0.2.1 activate
+      neighbor 192.0.2.1 route-map RM-IN in
+      neighbor 192.0.2.1 route-map RM-OUT out
+`
+	if err := os.WriteFile(filepath.Join(dir, "ceos.cfg"), []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	topology := `
+name: ceos-policy
+topology:
+  nodes:
+    ceos1:
+      kind: arista_ceos
+      startup-config: ceos.cfg
+`
+	topologyPath := filepath.Join(dir, "lab.clab.yml")
+	if err := os.WriteFile(topologyPath, []byte(topology), 0o644); err != nil {
+		t.Fatalf("WriteFile(topology) error = %v", err)
+	}
+	topo, err := LoadLabTopology(topologyPath, "")
+	if err != nil {
+		t.Fatalf("LoadLabTopology() error = %v", err)
+	}
+	node, ok := topo.Node("ceos1")
+	if !ok {
+		t.Fatalf("ceos1 not found")
+	}
+	if prefixListByName(node.PrefixLists, "PL") == nil {
+		t.Fatalf("PL prefix-list not propagated: %#v", node.PrefixLists)
+	}
+	if routePolicyByName(node.RoutePolicies, "RM-IN") == nil || routePolicyByName(node.RoutePolicies, "RM-OUT") == nil {
+		t.Fatalf("route policies not propagated: %#v", node.RoutePolicies)
+	}
+	neighbor := neighborByAddress(node.Neighbors, "192.0.2.1")
+	if neighbor == nil || neighbor.ImportPolicy != "RM-IN" || neighbor.ExportPolicy != "RM-OUT" {
+		t.Fatalf("neighbor = %#v, want route-map bindings", neighbor)
+	}
+}
+
+func TestParseCEOSRouteMapRejectsUnsupportedMatch(t *testing.T) {
+	_, err := parseCEOSConfigTextResult(t, `
+route-map RM permit 10
+   match as-path ASPATH
+   set local-preference 200
+`)
+	if err == nil || !strings.Contains(err.Error(), "unsupported cEOS route-map match statement") {
+		t.Fatalf("ParseConfig() error = %v, want unsupported cEOS match", err)
 	}
 }
 
@@ -722,4 +874,22 @@ func parseFRRConfigTextResult(t *testing.T, config string) (ParsedConfig, error)
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return ParseConfig("frr", path)
+}
+
+func parseCEOSConfigText(t *testing.T, config string) ParsedConfig {
+	t.Helper()
+	cfg, err := parseCEOSConfigTextResult(t, config)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	return cfg
+}
+
+func parseCEOSConfigTextResult(t *testing.T, config string) (ParsedConfig, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ceos.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return ParseConfig("ceos", path)
 }
