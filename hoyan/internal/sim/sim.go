@@ -11,16 +11,10 @@ import (
 )
 
 type Graph struct {
-	topo        *model.Topology
-	adj         map[string][]edge
-	rib         map[string]map[string][]RIBEntry
-	fib         map[string][]FIBEntry
-	linksByName map[model.LinkID]model.Link
-}
-
-type edge struct {
-	to   string
-	link model.Link
+	topo      *model.Topology
+	topoIndex *model.TopologyIndex
+	rib       map[string]map[string][]RIBEntry
+	fib       map[string][]FIBEntry
 }
 
 type Path struct {
@@ -219,20 +213,11 @@ func (c notCond) Eval(ctx FailureContext) bool {
 func (c notCond) String() string { return "!(" + c.c.String() + ")" }
 
 func NewGraph(topo *model.Topology) *Graph {
-	g := &Graph{topo: topo, adj: map[string][]edge{}, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}, linksByName: map[model.LinkID]model.Link{}}
-	for _, l := range topo.Links {
-		g.adj[l.A] = append(g.adj[l.A], edge{to: l.B, link: l})
-		g.adj[l.B] = append(g.adj[l.B], edge{to: l.A, link: l})
-		g.linksByName[model.LinkID(l.Name)] = l
+	idx, err := model.BuildTopologyIndex(topo)
+	if err != nil {
+		panic(err)
 	}
-	for node := range g.adj {
-		sort.Slice(g.adj[node], func(i, j int) bool {
-			if g.adj[node][i].link.Cost == g.adj[node][j].link.Cost {
-				return g.adj[node][i].to < g.adj[node][j].to
-			}
-			return g.adj[node][i].link.Cost < g.adj[node][j].link.Cost
-		})
-	}
+	g := &Graph{topo: topo, topoIndex: idx, rib: map[string]map[string][]RIBEntry{}, fib: map[string][]FIBEntry{}}
 	g.simulateControlPlane()
 	g.deriveFIB()
 	return g
@@ -261,14 +246,7 @@ func (g *Graph) FailureContext(failures FailureSet) FailureContext {
 	if failures.Nodes == nil {
 		failures.Nodes = map[model.NodeID]bool{}
 	}
-	linksByName := g.linksByName
-	if linksByName == nil {
-		linksByName = map[model.LinkID]model.Link{}
-		for _, link := range g.topo.Links {
-			linksByName[model.LinkID(link.Name)] = link
-		}
-	}
-	return FailureContext{Failures: failures, LinksByName: linksByName}
+	return FailureContext{Failures: failures, LinksByName: g.topoIndex.LinksByName}
 }
 
 func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, bool) {
@@ -295,12 +273,12 @@ func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, 
 	links := append([]string(nil), best.Links...)
 	reverse(nodes)
 	reverse(links)
-	return Path{Nodes: nodes, Links: links, Cost: g.pathCost(best.Links)}, true
+	return Path{Nodes: nodes, Links: links, Cost: g.topoIndex.PathCost(best.Links)}, true
 }
 
 func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) (Path, bool, string) {
 	ctx := g.FailureContext(failures)
-	dstNode, dstPrefix, ok := g.topo.OriginForIP(to)
+	dstNode, dstPrefix, ok := g.topoIndex.OriginForIP(to)
 	if !ok {
 		return Path{}, false, "destination prefix not advertised"
 	}
@@ -324,7 +302,7 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 		if g.originates(current, dstPrefix.NetIP()) {
 			return full, true, ""
 		}
-		currentNode, _ := g.topo.Node(current)
+		currentNode, _ := g.topoIndex.Node(current)
 		if pol, ok := behaviorFor(currentNode.Kind).CheckDataIngress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol}, g.topo.Policies); ok {
 			return full, false, "denied by policy " + pol
 		}
@@ -341,7 +319,7 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 		if ctx.NodeFailed(model.NodeID(rule.NextHop)) {
 			return full, false, "next-hop node is down"
 		}
-		link, ok := g.linkBetween(current, rule.NextHop)
+		link, ok := g.topoIndex.LinkBetween(current, rule.NextHop)
 		if !ok || ctx.LinkFailed(model.LinkID(link.Name)) {
 			return full, false, "next-hop link is down"
 		}
@@ -489,7 +467,7 @@ func (g *Graph) simulateControlPlane() {
 func (g *Graph) selectRoutes() {
 	for node, byPrefix := range g.rib {
 		for prefix, routes := range byPrefix {
-			n, _ := g.topo.Node(node)
+			n, _ := g.topoIndex.Node(node)
 			behavior := behaviorFor(n.Kind)
 			routes = behavior.SelectRoutes(n, routes)
 			for i := range routes {
@@ -593,15 +571,15 @@ func (g *Graph) parentRoute(route RIBEntry) (RIBEntry, bool) {
 
 func (g *Graph) walkBGP(route RIBEntry) {
 	current := route.Nodes[len(route.Nodes)-1]
-	curNode, _ := g.topo.Node(current)
+	curNode, _ := g.topoIndex.Node(current)
 	curBehavior := behaviorFor(curNode.Kind)
-	for _, e := range g.adj[current] {
-		next := e.to
+	for _, e := range g.topoIndex.Adj[model.NodeID(current)] {
+		next := string(e.To)
 		session, ok := g.bgpSession(current, next)
 		if !ok {
 			continue
 		}
-		nextNode, _ := g.topo.Node(next)
+		nextNode, _ := g.topoIndex.Node(next)
 		nextBehavior := behaviorFor(nextNode.Kind)
 		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix.String(), Route: route}
 		if !curBehavior.CheckControlEgress(curNode, exportMsg, g.topo.Policies) {
@@ -611,7 +589,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !exported.Accept {
 			continue
 		}
-		exportPolicy := applyRoutePolicy(g.topo, curNode, next, session.ExportPolicy, exported.Route)
+		exportPolicy := applyRoutePolicy(g.topoIndex, curNode, next, session.ExportPolicy, exported.Route)
 		if !exportPolicy.Accept {
 			continue
 		}
@@ -625,7 +603,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if !imported.Accept {
 			continue
 		}
-		importPolicy := applyRoutePolicy(g.topo, nextNode, current, receiverSession.ImportPolicy, imported.Route)
+		importPolicy := applyRoutePolicy(g.topoIndex, nextNode, current, receiverSession.ImportPolicy, imported.Route)
 		if !importPolicy.Accept {
 			continue
 		}
@@ -634,9 +612,9 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		if revisitsNode && !imported.Route.Invalid {
 			continue
 		}
-		nextLinks := append(append([]string(nil), imported.Route.Links...), e.link.Name)
+		nextLinks := append(append([]string(nil), imported.Route.Links...), e.Link.Name)
 		nextNodes := append(append([]string(nil), imported.Route.Nodes...), next)
-		nextCond := And(imported.Route.Condition, LinkVar(e.link.Name), NodeVar(next))
+		nextCond := And(imported.Route.Condition, LinkVar(e.Link.Name), NodeVar(next))
 
 		entry := imported.Route
 		entry.From = current
@@ -655,7 +633,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 }
 
 func (g *Graph) bgpSession(a, b string) (model.BGPNeighbor, bool) {
-	an, ok := g.topo.Node(a)
+	an, ok := g.topoIndex.Node(a)
 	if !ok {
 		return model.BGPNeighbor{}, false
 	}
@@ -670,7 +648,7 @@ func (g *Graph) bgpSession(a, b string) (model.BGPNeighbor, bool) {
 func (g *Graph) deriveFIB() {
 	for node, byPrefix := range g.rib {
 		var entries []FIBEntry
-		n, _ := g.topo.Node(node)
+		n, _ := g.topoIndex.Node(node)
 		behavior := behaviorFor(n.Kind)
 		for _, routes := range byPrefix {
 			seenSelected := map[string]bool{}
@@ -691,7 +669,7 @@ func (g *Graph) deriveFIB() {
 				entries = append(entries, FIBEntry{
 					Prefix:    route.Prefix.NetIP(),
 					NextHop:   route.NextHop,
-					Path:      Path{Nodes: route.Nodes, Links: route.Links, Cost: g.pathCost(route.Links)},
+					Path:      Path{Nodes: route.Nodes, Links: route.Links, Cost: g.topoIndex.PathCost(route.Links)},
 					Condition: route.SelectedCond,
 				})
 			}
@@ -742,7 +720,7 @@ func (g *Graph) lookupFIB(node, dst string, ctx FailureContext) (FIBEntry, bool)
 }
 
 func (g *Graph) originates(node string, prefix netip.Prefix) bool {
-	n, ok := g.topo.Node(node)
+	n, ok := g.topoIndex.Node(node)
 	if !ok {
 		return false
 	}
@@ -752,28 +730,6 @@ func (g *Graph) originates(node string, prefix netip.Prefix) bool {
 		}
 	}
 	return false
-}
-
-func (g *Graph) linkBetween(a, b string) (model.Link, bool) {
-	for _, l := range g.topo.Links {
-		if (l.A == a && l.B == b) || (l.A == b && l.B == a) {
-			return l, true
-		}
-	}
-	return model.Link{}, false
-}
-
-func (g *Graph) pathCost(links []string) int {
-	cost := 0
-	for _, name := range links {
-		for _, l := range g.topo.Links {
-			if l.Name == name {
-				cost += l.Cost
-				break
-			}
-		}
-	}
-	return cost
 }
 
 func routeKey(r RIBEntry) string {

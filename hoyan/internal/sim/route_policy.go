@@ -10,7 +10,7 @@ import (
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 )
 
-func applyRoutePolicy(topo *model.Topology, node model.Node, peerName string, policyName string, route RIBEntry) BGPRouteDecision {
+func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string, policyName string, route RIBEntry) BGPRouteDecision {
 	if policyName == "" {
 		return BGPRouteDecision{Route: route, Accept: true}
 	}
@@ -19,7 +19,7 @@ func applyRoutePolicy(topo *model.Topology, node model.Node, peerName string, po
 		return BGPRouteDecision{Route: route, Accept: true}
 	}
 	for _, rule := range policy.Rules {
-		if !routePolicyRuleMatches(topo, node, peerName, rule, route) {
+		if !routePolicyRuleMatches(idx, node, peerName, rule, route) {
 			continue
 		}
 		if strings.EqualFold(rule.Action, "deny") {
@@ -57,11 +57,11 @@ func applyRoutePolicy(topo *model.Topology, node model.Node, peerName string, po
 	return BGPRouteDecision{Route: route, Accept: false, Reason: "route-map implicit deny"}
 }
 
-func routePolicyRuleMatches(topo *model.Topology, node model.Node, peerName string, rule model.RoutePolicyRule, route RIBEntry) bool {
+func routePolicyRuleMatches(idx *model.TopologyIndex, node model.Node, peerName string, rule model.RoutePolicyRule, route RIBEntry) bool {
 	if rule.MatchPrefixList != "" && !prefixListPermitsPrefix(node, rule.MatchPrefixList, route.Prefix.NetIP()) {
 		return false
 	}
-	if rule.MatchNextHopPrefixList != "" && !prefixListPermitsAddress(node, rule.MatchNextHopPrefixList, routeNextHopForPolicy(topo, node.Name, peerName, route)) {
+	if rule.MatchNextHopPrefixList != "" && !prefixListPermitsAddress(node, rule.MatchNextHopPrefixList, routeNextHopForPolicy(idx, node.Name, peerName, route)) {
 		return false
 	}
 	if rule.MatchASPathList != "" && !asPathListPermits(node, rule.MatchASPathList, route.ASPath) {
@@ -196,41 +196,44 @@ func communityListPermits(node model.Node, name string, communities []string, ex
 	return false
 }
 
-func routeNextHopForPolicy(topo *model.Topology, node string, peerName string, route RIBEntry) string {
+func routeNextHopForPolicy(idx *model.TopologyIndex, node string, peerName string, route RIBEntry) string {
 	if route.NextHop == "" {
 		return ""
 	}
 	if route.NextHop == node && peerName != "" {
-		return peerAddress(topo, peerName, node)
+		return peerAddress(idx, peerName, node)
 	}
-	if direct := peerAddress(topo, node, route.NextHop); direct != route.NextHop {
+	if direct := peerAddress(idx, node, route.NextHop); direct != route.NextHop {
 		return direct
 	}
 	for i := 0; i+1 < len(route.Nodes); i++ {
 		if route.Nodes[i] != route.NextHop {
 			continue
 		}
-		if addr := peerAddress(topo, route.Nodes[i+1], route.NextHop); addr != route.NextHop {
+		if addr := peerAddress(idx, route.Nodes[i+1], route.NextHop); addr != route.NextHop {
 			return addr
 		}
 	}
 	return route.NextHop
 }
 
-func peerAddress(topo *model.Topology, node, peer string) string {
+func peerAddress(idx *model.TopologyIndex, node, peer string) string {
 	if peer == "" {
 		return ""
 	}
-	for _, l := range topo.Links {
-		a, b := linkAddresses(l.Subnet)
-		switch {
-		case l.A == node && l.B == peer:
-			return trimMask(b)
-		case l.B == node && l.A == peer:
-			return trimMask(a)
-		}
+	link, ok := idx.LinkBetween(node, peer)
+	if !ok {
+		return peer
 	}
-	return peer
+	a, b := linkAddresses(link.Subnet)
+	switch {
+	case link.A == node && link.B == peer:
+		return trimMask(b)
+	case link.B == node && link.A == peer:
+		return trimMask(a)
+	default:
+		return peer
+	}
 }
 
 func linkAddresses(raw string) (string, string) {
