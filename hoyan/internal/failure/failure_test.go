@@ -1,10 +1,12 @@
 package failure
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/solver"
+	"github.com/81ueman/network-sandbox/hoyan/internal/symbolic"
 )
 
 func TestSetAndContext(t *testing.T) {
@@ -43,6 +45,19 @@ func TestSetFromElements(t *testing.T) {
 	})
 	if !failures.Links["a-b"] || !failures.Nodes["b"] {
 		t.Fatalf("SetFromElements() = %#v", failures)
+	}
+}
+
+func TestBoolExprConvertsCondTree(t *testing.T) {
+	expr := BoolExpr(Not(And(LinkVar("a-b"), Or(NodeVar("a"), False()))))
+	if expr.Kind != symbolic.KindNot {
+		t.Fatalf("expr kind = %s, want not: %s", expr.Kind, expr)
+	}
+	text := expr.String()
+	for _, want := range []string{"link:a-b", "node:a"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("BoolExpr() = %s, want %s", text, want)
+		}
 	}
 }
 

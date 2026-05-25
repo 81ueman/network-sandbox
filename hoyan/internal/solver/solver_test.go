@@ -1,6 +1,10 @@
 package solver
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/81ueman/network-sandbox/hoyan/internal/symbolic"
+)
 
 func TestEnumeratingBackend(t *testing.T) {
 	ans, err := DefaultBackend().Solve(FailureProblem{
@@ -63,6 +67,35 @@ func TestEnumeratingBackendMixedElements(t *testing.T) {
 	}
 	if !ans.Sat || len(ans.Failures) != 1 || ans.Failures[0].Kind != FailureNode || ans.Failures[0].Name != "n1" {
 		t.Fatalf("answer = %#v, want node n1", ans)
+	}
+}
+
+func TestEnumeratingBackendSymbolicGoal(t *testing.T) {
+	reachable := symbolic.Or(
+		symbolic.And(symbolic.LinkVar("a"), symbolic.LinkVar("b")),
+		symbolic.And(symbolic.LinkVar("c"), symbolic.LinkVar("d")),
+	)
+	ans, err := (EnumeratingBackend{}).SolveSymbolic(SymbolicFailureProblem{
+		Elements:    linkElements("a", "b", "c", "d"),
+		MaxFailures: 1,
+		Goal:        symbolic.Not(reachable),
+	})
+	if err != nil {
+		t.Fatalf("SolveSymbolic() error = %v", err)
+	}
+	if ans.Sat {
+		t.Fatalf("answer = %#v, want unsat with one failure against redundant paths", ans)
+	}
+	ans, err = (EnumeratingBackend{}).SolveSymbolic(SymbolicFailureProblem{
+		Elements:    linkElements("a", "b", "c", "d"),
+		MaxFailures: 2,
+		Goal:        symbolic.Not(reachable),
+	})
+	if err != nil {
+		t.Fatalf("SolveSymbolic() error = %v", err)
+	}
+	if !ans.Sat || len(ans.Failures) != 2 {
+		t.Fatalf("answer = %#v, want two-failure symbolic cut", ans)
 	}
 }
 
