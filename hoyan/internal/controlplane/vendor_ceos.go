@@ -31,6 +31,7 @@ func (b ceosBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEn
 }
 
 func (b ceosBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
+	route = route.Normalize()
 	if !b.baseDeviceBehavior.RouteValidForRIB(device, route) {
 		return false
 	}

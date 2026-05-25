@@ -15,6 +15,8 @@ func NewFRRBehavior() DeviceBehavior {
 type frrDecisionProcess struct{}
 
 func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+	a = a.Normalize()
+	b = b.Normalize()
 	if a.LocalPref != b.LocalPref {
 		return a.LocalPref > b.LocalPref
 	}

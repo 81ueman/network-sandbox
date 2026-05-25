@@ -57,6 +57,35 @@ func TestBGPBuildsRankedExtendedRIB(t *testing.T) {
 	}
 }
 
+func TestRIBEntryKeepsOriginNodeAndBGPOriginCodeSeparate(t *testing.T) {
+	g := loadGraph(t)
+
+	local := g.RIB("hz-edge1", "10.4.0.0/16")
+	if len(local) == 0 {
+		t.Fatalf("local RIB entry missing")
+	}
+	if local[0].Provenance.OriginNode != "hz-edge1" || local[0].Attrs.OriginCode != "igp" {
+		t.Fatalf("local route origin node/code = %q/%q, want hz-edge1/igp: %#v", local[0].Provenance.OriginNode, local[0].Attrs.OriginCode, local[0])
+	}
+
+	var propagated RIBEntry
+	for _, r := range g.RIB("bj-edge1", "10.4.0.0/16") {
+		if r.Provenance.OriginNode == "hz-edge1" && r.From != "" {
+			propagated = r
+			break
+		}
+	}
+	if propagated.Provenance.OriginNode == "" {
+		t.Fatalf("propagated hz route not found")
+	}
+	if propagated.Provenance.OriginNode == string(propagated.Attrs.OriginCode) {
+		t.Fatalf("propagated route mixed provenance origin and BGP origin-code: %#v", propagated)
+	}
+	if !propagated.ForwardingNextHop.Valid() || propagated.ForwardingNextHop.Node == "" || propagated.ForwardingNextHop.Addr != "" {
+		t.Fatalf("simulated next-hop should be a node before live address resolution: %#v", propagated.ForwardingNextHop)
+	}
+}
+
 func TestBGPRejectsASLoops(t *testing.T) {
 	g := loadGraph(t)
 	for _, r := range g.RIB("gz-edge1", "10.3.1.10/32") {
