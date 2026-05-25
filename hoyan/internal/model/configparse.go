@@ -24,25 +24,59 @@ type ParsedConfig struct {
 	RoutePolicies  []RoutePolicy
 }
 
+type ParseResult struct {
+	Config   ParsedConfig
+	Warnings []UnsupportedStatement
+}
+
+type UnsupportedStatement struct {
+	Vendor string
+	File   string
+	Line   int
+	Text   string
+	Reason string
+}
+
+func (w UnsupportedStatement) String() string {
+	loc := w.File
+	if w.Line > 0 {
+		loc = fmt.Sprintf("%s:%d", loc, w.Line)
+	}
+	if loc == "" {
+		loc = w.Vendor
+	}
+	return fmt.Sprintf("%s: %s: %s", loc, w.Reason, w.Text)
+}
+
 func ParseConfig(kind DeviceKind, path string) (ParsedConfig, error) {
+	result, err := parseConfig(kind, path, false)
+	return result.Config, err
+}
+
+func ParseConfigWithWarnings(kind DeviceKind, path string) (ParseResult, error) {
+	return parseConfig(kind, path, true)
+}
+
+func parseConfig(kind DeviceKind, path string, collectWarnings bool) (ParseResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ParsedConfig{}, err
+		return ParseResult{}, err
 	}
 	switch kind {
 	case KindFRR, KindCEOS:
-		return parseFRRLike(kind, string(data))
+		return parseFRRLike(kind, path, string(data), collectWarnings)
 	case KindSRLinux:
-		return parseSRLinux(string(data))
+		return parseSRLinux(path, string(data), collectWarnings)
 	default:
-		return ParsedConfig{}, fmt.Errorf("unsupported config kind %q", kind)
+		return ParseResult{}, fmt.Errorf("unsupported config kind %q", kind)
 	}
 }
 
-func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
+func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (ParseResult, error) {
 	// TODO: parse cEOS route-map syntax separately. cEOS currently reuses the
 	// FRR-like parser only for interfaces, BGP neighbors, and prefixes.
 	var cfg ParsedConfig
+	var warnings []UnsupportedStatement
 	neighbors := map[string]*BGPNeighbor{}
 	prefixLists := map[string]*PrefixList{}
 	asPathLists := map[string]*ASPathList{}
@@ -54,7 +88,9 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 	inBGP := false
 	inAF := false
 	scanner := bufio.NewScanner(strings.NewReader(text))
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		raw := scanner.Text()
 		line := strings.TrimSpace(raw)
 		if !strings.HasPrefix(raw, " ") && !strings.HasPrefix(line, "route-map ") {
@@ -77,17 +113,17 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		case kind == KindFRR && len(fields) >= 5 && fields[0] == "ip" && fields[1] == "prefix-list" && (fields[3] == "permit" || fields[3] == "deny"):
 			rule, err := parsePrefixListRule(0, fields[3], fields[4], fields[5:])
 			if err != nil {
-				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
+				return ParseResult{}, fmt.Errorf("%s: %w", line, err)
 			}
 			addPrefixListRule(prefixLists, fields[2], rule)
 		case kind == KindFRR && len(fields) >= 7 && fields[0] == "ip" && fields[1] == "prefix-list" && fields[3] == "seq" && (fields[5] == "permit" || fields[5] == "deny"):
 			seq, err := strconv.Atoi(fields[4])
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			rule, err := parsePrefixListRule(seq, fields[5], fields[6], fields[7:])
 			if err != nil {
-				return ParsedConfig{}, fmt.Errorf("%s: %w", line, err)
+				return ParseResult{}, fmt.Errorf("%s: %w", line, err)
 			}
 			addPrefixListRule(prefixLists, fields[2], rule)
 		case kind == KindFRR && len(fields) >= 6 && fields[0] == "bgp" && fields[1] == "as-path" && fields[2] == "access-list" && (fields[4] == "permit" || fields[4] == "deny"):
@@ -100,7 +136,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 				var err error
 				seq, err = strconv.Atoi(fields[3])
 				if err != nil {
-					return ParsedConfig{}, err
+					return ParseResult{}, err
 				}
 			}
 			currentRoutePolicy, currentRouteRule = addRoutePolicyRule(routePolicies, fields[1], fields[2], seq)
@@ -121,15 +157,21 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 					currentRouteRule.MatchCommunityExact = true
 				case "any":
 				default:
-					return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+					if !collectWarnings {
+						return ParseResult{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+					}
+					warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map match statement"))
 				}
 			}
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && fields[0] == "match":
-			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+			if !collectWarnings {
+				return ParseResult{}, fmt.Errorf("unsupported FRR route-map match statement %q", line)
+			}
+			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map match statement"))
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "local-preference":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			if delta {
 				currentRouteRule.SetLocalPrefDelta = intPtr(v)
@@ -139,7 +181,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "metric":
 			v, delta, err := parseRouteMapInt(fields[2])
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			if delta {
 				currentRouteRule.SetMEDDelta = intPtr(v)
@@ -149,7 +191,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 4 && fields[0] == "set" && fields[1] == "as-path" && fields[2] == "prepend":
 			path, err := parseASPathFields(fields[3:])
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			currentRouteRule.SetASPathPrepend = path
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 3 && fields[0] == "set" && fields[1] == "community":
@@ -164,12 +206,20 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 			case "igp", "egp", "incomplete":
 				currentRouteRule.SetOriginCode = fields[2]
 			default:
-				return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map origin %q", line)
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("unsupported FRR route-map origin %q", line)
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map origin"))
 			}
 		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
-			return ParsedConfig{}, fmt.Errorf("unsupported FRR route-map statement %q", line)
+			if !collectWarnings {
+				return ParseResult{}, fmt.Errorf("unsupported FRR route-map statement %q", line)
+			}
+			warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map statement"))
 		case kind == KindFRR && currentRoutePolicy != nil:
-			// TODO: support more FRR route-map statements as the lab needs them.
+			if collectWarnings {
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map statement"))
+			}
 		case fields[0] == "interface" && len(fields) >= 2:
 			currentInterface = fields[1]
 			inBGP = false
@@ -185,7 +235,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		case len(fields) >= 3 && fields[0] == "router" && fields[1] == "bgp":
 			asn, err := strconv.ParseUint(fields[2], 10, 32)
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			cfg.ASN = uint32(asn)
 			inBGP = true
@@ -202,7 +252,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		case inBGP && len(fields) >= 4 && fields[0] == "neighbor" && fields[2] == "remote-as":
 			asn, err := strconv.ParseUint(fields[3], 10, 32)
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			n := getNeighbor(neighbors, fields[1])
 			n.RemoteAS = uint32(asn)
@@ -223,7 +273,7 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return ParsedConfig{}, err
+		return ParseResult{}, err
 	}
 	for _, n := range neighbors {
 		if n.Activated || kind == KindSRLinux {
@@ -237,23 +287,30 @@ func parseFRRLike(kind DeviceKind, text string) (ParsedConfig, error) {
 	if cfg.Loopback == "" && cfg.RouterID != "" {
 		cfg.Loopback = cfg.RouterID + "/32"
 	}
-	return cfg, nil
+	return ParseResult{Config: cfg, Warnings: warnings}, nil
 }
 
-func parseSRLinux(text string) (ParsedConfig, error) {
+func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) {
 	// TODO: parse SR Linux routing-policy and BGP import/export policy once
 	// live lab configs use them.
 	var cfg ParsedConfig
+	var warnings []UnsupportedStatement
 	groupAS := map[string]uint32{}
 	neighborGroup := map[string]string{}
 	scanner := bufio.NewScanner(strings.NewReader(text))
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] != "set" {
 			continue
 		}
 		switch {
+		case collectWarnings && containsSeq(fields, "routing-policy"):
+			warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, "unsupported SR Linux routing-policy statement"))
+		case collectWarnings && containsSeq(fields, "protocols", "bgp") && containsAnyField(fields, "import-policy", "export-policy"):
+			warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, "unsupported SR Linux BGP import/export policy statement"))
 		case containsSeq(fields, "system", "name", "host-name") && len(fields) > 0:
 			cfg.Hostname = fields[len(fields)-1]
 		case containsSeq(fields, "interface") && containsSeq(fields, "ipv4", "address") && len(fields) > 0:
@@ -263,7 +320,7 @@ func parseSRLinux(text string) (ParsedConfig, error) {
 		case containsSeq(fields, "protocols", "bgp", "autonomous-system") && len(fields) > 0:
 			asn, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			cfg.ASN = uint32(asn)
 		case containsSeq(fields, "protocols", "bgp", "router-id") && len(fields) > 0:
@@ -273,7 +330,7 @@ func parseSRLinux(text string) (ParsedConfig, error) {
 			group := fieldAfter(fields, "group")
 			asn, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
 			if err != nil {
-				return ParsedConfig{}, err
+				return ParseResult{}, err
 			}
 			groupAS[group] = uint32(asn)
 		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsSeq(fields, "peer-group"):
@@ -282,12 +339,22 @@ func parseSRLinux(text string) (ParsedConfig, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return ParsedConfig{}, err
+		return ParseResult{}, err
 	}
 	for addr, group := range neighborGroup {
 		cfg.Neighbors = append(cfg.Neighbors, BGPNeighbor{Address: addr, RemoteAS: groupAS[group], Activated: true})
 	}
-	return cfg, nil
+	return ParseResult{Config: cfg, Warnings: warnings}, nil
+}
+
+func unsupportedStatement(vendor, file string, line int, text, reason string) UnsupportedStatement {
+	return UnsupportedStatement{
+		Vendor: vendor,
+		File:   file,
+		Line:   line,
+		Text:   text,
+		Reason: reason,
+	}
 }
 
 func getNeighbor(neighbors map[string]*BGPNeighbor, addr string) *BGPNeighbor {
@@ -459,6 +526,17 @@ func containsSeq(fields []string, seq ...string) bool {
 		if f == seq[pos] {
 			pos++
 			if pos == len(seq) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsAnyField(fields []string, matches ...string) bool {
+	for _, field := range fields {
+		for _, match := range matches {
+			if field == match {
 				return true
 			}
 		}

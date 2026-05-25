@@ -39,16 +39,26 @@ type clabNode struct {
 }
 
 func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
+	topo, _, err := loadLabTopology(clabPath, policyPath, false)
+	return topo, err
+}
+
+func LoadLabTopologyWithWarnings(clabPath, policyPath string) (*Topology, []UnsupportedStatement, error) {
+	return loadLabTopology(clabPath, policyPath, true)
+}
+
+func loadLabTopology(clabPath, policyPath string, collectWarnings bool) (*Topology, []UnsupportedStatement, error) {
 	data, err := os.ReadFile(clabPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var raw clabFile
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	root := filepath.Dir(clabPath)
 	topo := &Topology{Name: raw.Name, ManagementSubnet: raw.Mgmt.IPv4Subnet}
+	var warnings []UnsupportedStatement
 	names := make([]string, 0, len(raw.Topology.Nodes))
 	for name := range raw.Topology.Nodes {
 		names = append(names, name)
@@ -59,19 +69,21 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		kind := normalizeKind(cnode.Kind)
 		configPath := resolveConfigPath(cnode)
 		if configPath == "" {
-			return nil, fmt.Errorf("node %s has no startup config or frr.conf bind", name)
+			return nil, nil, fmt.Errorf("node %s has no startup config or frr.conf bind", name)
 		}
 		fullConfigPath := configPath
 		if !filepath.IsAbs(fullConfigPath) {
 			fullConfigPath = filepath.Join(root, configPath)
 		}
-		parsed, err := ParseConfig(kind, fullConfigPath)
+		result, err := parseConfig(kind, fullConfigPath, collectWarnings)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
+		parsed := result.Config
+		warnings = append(warnings, result.Warnings...)
 		prefixes, err := parsePrefixes(parsed.Prefixes)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		node := Node{
 			Name:           name,
@@ -94,21 +106,21 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 	}
 	for i, link := range raw.Topology.Links {
 		if len(link.Endpoints) != 2 {
-			return nil, fmt.Errorf("link %d must have two endpoints", i)
+			return nil, nil, fmt.Errorf("link %d must have two endpoints", i)
 		}
 		aNode, aIntf, err := splitEndpoint(link.Endpoints[0])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bNode, bIntf, err := splitEndpoint(link.Endpoints[1])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		a, _ := topo.Node(aNode)
 		b, _ := topo.Node(bNode)
 		subnet, err := linkSubnet(a, aIntf, b, bIntf)
 		if err != nil {
-			return nil, fmt.Errorf("%s-%s: %w", link.Endpoints[0], link.Endpoints[1], err)
+			return nil, nil, fmt.Errorf("%s-%s: %w", link.Endpoints[0], link.Endpoints[1], err)
 		}
 		topo.Links = append(topo.Links, Link{
 			Name:   linkName(aNode, aIntf, bNode, bIntf),
@@ -124,14 +136,14 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 	if policyPath != "" {
 		policies, err := LoadPolicies(policyPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		topo.Policies = policies
 	}
 	if err := topo.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return topo, nil
+	return topo, warnings, nil
 }
 
 func containerlabContainerName(prefix *string, labName, nodeName string) string {
