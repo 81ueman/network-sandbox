@@ -376,6 +376,76 @@ func TestSymbolicPacketReachabilityForClassAppliesDstPrefixPolicy(t *testing.T) 
 	}
 }
 
+func TestSymbolicPacketReachabilityRecordsPolicyDeny(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
+			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
+		},
+		Policies: []model.Policy{{
+			Name:      "NFT-DENY-TCP",
+			Node:      "mid",
+			Plane:     "data",
+			Stage:     "egress",
+			Interface: "eth2",
+			Action:    "deny",
+			Protocol:  "tcp",
+			DstPrefix: pfx,
+			Source: model.PolicySource{
+				Vendor: "nftables",
+				File:   "configs/frr/mid/nftables.conf",
+				Line:   12,
+				Raw:    "tcp dport 80 drop",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+
+	result := e.SymbolicPacketReachability("src", "10.0.0.10", "tcp")
+	if result.Reachable.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("tcp reachable condition = %s, want false under no failures", result.Reachable)
+	}
+	if got := len(result.Blocked); got != 1 {
+		t.Fatalf("blocked paths = %d, want 1: %#v", got, result.Blocked)
+	}
+	blocked := result.Blocked[0]
+	if blocked.Policy != "NFT-DENY-TCP" || blocked.Node != "mid" || blocked.Interface != "eth2" || blocked.Stage != "egress" {
+		t.Fatalf("unexpected blocked policy metadata: %#v", blocked)
+	}
+	if blocked.Source.Vendor != "nftables" || blocked.Source.File == "" || blocked.Source.Raw == "" {
+		t.Fatalf("missing blocked policy source: %#v", blocked.Source)
+	}
+	if !blocked.Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("blocked condition = %s, want true under no failures", blocked.Cond)
+	}
+
+	result = e.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+	if !result.Reachable.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("icmp reachable condition = %s, want true under no failures", result.Reachable)
+	}
+	if len(result.Blocked) != 0 {
+		t.Fatalf("icmp blocked paths = %#v, want none", result.Blocked)
+	}
+	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "icmp", failure.None()); !ok {
+		t.Fatalf("icmp concrete PacketReachable() ok=false reason=%q, want symbolic/concrete match", reason)
+	}
+	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); ok || reason != "denied by policy NFT-DENY-TCP" {
+		t.Fatalf("tcp concrete PacketReachable() ok=%v reason=%q, want policy deny", ok, reason)
+	}
+}
+
 func TestSymbolicPacketReachabilityDoesNotExploreLoopsForever(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{

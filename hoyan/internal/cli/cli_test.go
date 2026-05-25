@@ -197,6 +197,18 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 	if result["reachable_condition"] == "" || result["unreachable_condition"] == "" {
 		t.Fatalf("missing reachability conditions: %#v", result)
 	}
+	blocked, ok := result["blocked_paths"].([]any)
+	if !ok || len(blocked) == 0 {
+		t.Fatalf("missing symbolic policy blocked paths: %#v", result)
+	}
+	first, ok := blocked[0].(map[string]any)
+	if !ok || first["policy"] != "BLOCK-HTTP-TO-HZ" || first["node"] != "core-hz" {
+		t.Fatalf("unexpected symbolic blocked path metadata: %#v", first)
+	}
+	source, ok := first["source"].(map[string]any)
+	if !ok || source["vendor"] != "nftables" || source["file"] == "" || source["raw"] == "" {
+		t.Fatalf("missing symbolic blocked path source: %#v", first)
+	}
 }
 
 func TestModelSymbolicRouteCommandOutputsJSON(t *testing.T) {
