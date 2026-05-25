@@ -120,14 +120,24 @@ type RoutePolicyRule struct {
 }
 
 type Policy struct {
-	Name      string `yaml:"name"`
-	Node      string `yaml:"node"`
-	Plane     string `yaml:"plane"`
-	Stage     string `yaml:"stage"`
-	Peer      string `yaml:"peer"`
-	Action    string `yaml:"action"`
-	Protocol  string `yaml:"protocol"`
-	DstPrefix Prefix `yaml:"dst_prefix"`
+	Name      string       `yaml:"name"`
+	Node      string       `yaml:"node"`
+	Plane     string       `yaml:"plane"`
+	Stage     string       `yaml:"stage"`
+	Interface string       `yaml:"interface,omitempty"`
+	Peer      string       `yaml:"peer"`
+	Action    string       `yaml:"action"`
+	Protocol  string       `yaml:"protocol"`
+	DstPrefix Prefix       `yaml:"dst_prefix"`
+	Seq       int          `yaml:"seq,omitempty"`
+	Source    PolicySource `yaml:"source,omitempty"`
+}
+
+type PolicySource struct {
+	Vendor string `yaml:"vendor,omitempty"`
+	File   string `yaml:"file,omitempty"`
+	Line   int    `yaml:"line,omitempty"`
+	Raw    string `yaml:"raw,omitempty"`
 }
 
 type Queries struct {
@@ -148,6 +158,8 @@ type PacketCheck struct {
 	From            string `yaml:"from"`
 	To              string `yaml:"to"`
 	Protocol        string `yaml:"protocol"`
+	DstPort         int    `yaml:"dst_port,omitempty"`
+	LiveProbe       *bool  `yaml:"live_probe,omitempty"`
 	ExpectReachable *bool  `yaml:"expect_reachable"`
 	MaxFailures     int    `yaml:"max_failures"`
 }

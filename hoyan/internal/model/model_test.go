@@ -88,6 +88,33 @@ func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
 	}
 }
 
+func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), "")
+	if err != nil {
+		t.Fatalf("LoadLabTopology() error = %v", err)
+	}
+	for _, tt := range []struct {
+		node  string
+		iface string
+	}{
+		{node: "core-hz", iface: "eth1"},
+		{node: "core-hz", iface: "eth2"},
+		{node: "core-sh", iface: "Ethernet5"},
+		{node: "core-gz", iface: "ethernet-1/4.0"},
+	} {
+		policy := policyByNodeInterface(topo.Policies, tt.node, tt.iface)
+		if policy == nil {
+			t.Fatalf("policy for %s %s not found in %#v", tt.node, tt.iface, topo.Policies)
+		}
+		if policy.Name != "BLOCK-HTTP-TO-HZ" || policy.Plane != "data" || policy.Stage != "egress" || policy.Action != "deny" || policy.Protocol != "tcp" || policy.DstPrefix.String() != "10.4.0.0/16" {
+			t.Fatalf("policy for %s %s = %#v", tt.node, tt.iface, policy)
+		}
+		if policy.Source.File == "" || policy.Source.Line == 0 || policy.Source.Raw == "" {
+			t.Fatalf("policy source not populated: %#v", policy.Source)
+		}
+	}
+}
+
 func TestOriginLookups(t *testing.T) {
 	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
 	if err != nil {
@@ -890,6 +917,15 @@ func communityListByName(lists []CommunityList, name string) *CommunityList {
 	for i := range lists {
 		if lists[i].Name == name {
 			return &lists[i]
+		}
+	}
+	return nil
+}
+
+func policyByNodeInterface(policies []Policy, node, iface string) *Policy {
+	for i := range policies {
+		if policies[i].Node == node && policies[i].Interface == iface {
+			return &policies[i]
 		}
 	}
 	return nil

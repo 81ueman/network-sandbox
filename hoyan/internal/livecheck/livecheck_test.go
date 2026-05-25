@@ -3,6 +3,8 @@ package livecheck
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -76,6 +78,7 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	opts := Options{
 		Topology:     "testdata/live.clab.yml",
 		Policies:     "",
+		Queries:      emptyQueriesFile(t),
 		Timeout:      time.Second,
 		PollInterval: time.Millisecond,
 	}
@@ -91,6 +94,69 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	if !destroyed {
 		t.Fatalf("destroy was not called: %v", runner.calls)
 	}
+}
+
+func TestRunDataplaneChecksProbesICMPAndTCP(t *testing.T) {
+	reachable := true
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", ContainerName: "clab-test-src", Kind: model.KindFRR},
+			{Name: "dst", ContainerName: "clab-test-dst", Kind: model.KindFRR, Prefixes: model.MustPrefixes("10.0.0.10/32")},
+		},
+		Links: []model.Link{{Name: "src-dst", A: "src", B: "dst", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/31"}},
+	}
+	queries := &model.Queries{PacketChecks: []model.PacketCheck{
+		{Name: "icmp-ok", From: "dst", To: "10.0.0.10", Protocol: "icmp", ExpectReachable: &reachable},
+		{Name: "tcp-ok", From: "dst", To: "10.0.0.10", Protocol: "tcp", DstPort: 80, ExpectReachable: &reachable},
+	}}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'clab-test-dst' 'ping'"):
+			return []byte("1 packets transmitted, 1 packets received, 0% packet loss"), nil
+		case strings.HasPrefix(cmd, "docker exec -d clab-test-dst sh -lc"):
+			return []byte(""), nil
+		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'clab-test-dst' 'nc'"):
+			return []byte("10.0.0.10 (10.0.0.10:80) open"), nil
+		default:
+			return nil, errors.New("unexpected command: " + cmd)
+		}
+	}}
+	if err := RunDataplaneChecks(context.Background(), runner, topo, queries, ioDiscard{}); err != nil {
+		t.Fatalf("RunDataplaneChecks() error = %v", err)
+	}
+}
+
+func TestRunDataplaneChecksFailsOnMismatch(t *testing.T) {
+	unreachable := false
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", ContainerName: "clab-test-src", Kind: model.KindFRR},
+			{Name: "dst", ContainerName: "clab-test-dst", Kind: model.KindFRR, Prefixes: model.MustPrefixes("10.0.0.10/32")},
+		},
+		Links: []model.Link{{Name: "src-dst", A: "src", B: "dst", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/31"}},
+	}
+	queries := &model.Queries{PacketChecks: []model.PacketCheck{{Name: "icmp-denied", From: "dst", To: "10.0.0.10", Protocol: "icmp", ExpectReachable: &unreachable}}}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		return []byte("ok"), nil
+	}}
+	err := RunDataplaneChecks(context.Background(), runner, topo, queries, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "live dataplane reachable=false modeled=true") {
+		t.Fatalf("RunDataplaneChecks() error = %v", err)
+	}
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+func emptyQueriesFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "queries.yml")
+	if err := os.WriteFile(path, []byte("packet_checks: []\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
 }
 
 func TestWaitForExpectedRoutesStopsAfterMaxPolls(t *testing.T) {

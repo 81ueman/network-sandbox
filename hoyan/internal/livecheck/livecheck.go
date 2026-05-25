@@ -15,6 +15,7 @@ import (
 type Options struct {
 	Topology       string
 	Policies       string
+	Queries        string
 	Timeout        time.Duration
 	PollInterval   time.Duration
 	MaxPolls       int
@@ -45,6 +46,14 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
 	}
 	topo, err := model.LoadLabTopology(opts.Topology, opts.Policies)
+	if err != nil {
+		return err
+	}
+	queriesPath := opts.Queries
+	if queriesPath == "" {
+		queriesPath = "intent/queries.yml"
+	}
+	queries, err := model.LoadQueries(queriesPath)
 	if err != nil {
 		return err
 	}
@@ -87,6 +96,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		return fmt.Errorf("live BGP RIB comparison found diff(s)")
 	}
 	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
+	if err := RunDataplaneChecks(deadlineCtx, runner, topo, queries, opts.Out); err != nil {
+		return err
+	}
 	return nil
 }
 

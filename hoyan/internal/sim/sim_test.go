@@ -100,7 +100,7 @@ func TestPacketPolicyDeny(t *testing.T) {
 	if ok {
 		t.Fatalf("tcp packet unexpectedly reachable")
 	}
-	if reason != "denied by policy block-http-to-hz" {
+	if reason != "denied by policy BLOCK-HTTP-TO-HZ" {
 		t.Fatalf("reason = %q", reason)
 	}
 	_, ok, reason = g.PacketReachable("cust-bj", "10.4.1.10", "icmp", NoFailures())
