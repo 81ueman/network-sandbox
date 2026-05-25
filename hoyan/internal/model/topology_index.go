@@ -110,34 +110,55 @@ func (idx *TopologyIndex) LinkBetween(a, b string) (Link, bool) {
 }
 
 func (idx *TopologyIndex) AddressOnLink(node, peer string) (netip.Addr, bool) {
-	link, ok := idx.LinkBetween(node, peer)
-	if !ok {
-		return netip.Addr{}, false
-	}
-	switch {
-	case link.A == node && link.B == peer:
-		return idx.interfaceAddress(node, link.AIntf)
-	case link.B == node && link.A == peer:
-		return idx.interfaceAddress(node, link.BIntf)
-	default:
-		return netip.Addr{}, false
-	}
+	ref, ok := idx.InterfaceToPeer(node, peer)
+	return ref.Address.Addr(), ok
 }
 
 func (idx *TopologyIndex) PeerAddressOnLink(node, peer string) (netip.Addr, bool) {
-	return idx.AddressOnLink(peer, node)
+	return idx.PeerAddress(node, peer)
 }
 
-func (idx *TopologyIndex) interfaceAddress(node, name string) (netip.Addr, bool) {
-	n, ok := idx.Node(node)
-	if !ok {
-		return netip.Addr{}, false
+func (idx *TopologyIndex) InterfaceOnLink(node string, linkName string) (InterfaceRef, bool) {
+	if idx == nil {
+		return InterfaceRef{}, false
 	}
-	pfx, ok := interfaceAddr(n.Interfaces, name)
+	link, ok := idx.Link(linkName)
 	if !ok {
-		return netip.Addr{}, false
+		return InterfaceRef{}, false
 	}
-	return pfx.Addr(), true
+	switch {
+	case link.A == node:
+		n, ok := idx.Node(node)
+		if !ok {
+			return InterfaceRef{}, false
+		}
+		return (InterfaceResolver{Index: idx}).ResolveInterface(n, LinkID(link.Name), link.AIntf)
+	case link.B == node:
+		n, ok := idx.Node(node)
+		if !ok {
+			return InterfaceRef{}, false
+		}
+		return (InterfaceResolver{Index: idx}).ResolveInterface(n, LinkID(link.Name), link.BIntf)
+	default:
+		return InterfaceRef{}, false
+	}
+}
+
+func (idx *TopologyIndex) InterfaceToPeer(node string, peer string) (InterfaceRef, bool) {
+	link, ok := idx.LinkBetween(node, peer)
+	if !ok {
+		return InterfaceRef{}, false
+	}
+	return idx.InterfaceOnLink(node, link.Name)
+}
+
+func (idx *TopologyIndex) PeerInterfaceToNode(node string, peer string) (InterfaceRef, bool) {
+	return idx.InterfaceToPeer(peer, node)
+}
+
+func (idx *TopologyIndex) PeerAddress(node string, peer string) (netip.Addr, bool) {
+	ref, ok := idx.PeerInterfaceToNode(node, peer)
+	return ref.Address.Addr(), ok
 }
 
 func (idx *TopologyIndex) PathCost(links []string) int {

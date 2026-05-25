@@ -106,28 +106,9 @@ func deniedPolicyName(node, peer, iface string, dst netip.Prefix, protocol, plan
 }
 
 func interfaceMatches(policyInterface, packetInterface string) bool {
-	if policyInterface == packetInterface {
-		return true
-	}
-	if base, _, ok := strings.Cut(policyInterface, "."); ok && interfaceMatches(base, packetInterface) {
-		return true
-	}
-	if base, _, ok := strings.Cut(packetInterface, "."); ok && interfaceMatches(policyInterface, base) {
-		return true
-	}
-	if strings.HasPrefix(policyInterface, "eth") && "Ethernet"+strings.TrimPrefix(policyInterface, "eth") == packetInterface {
-		return true
-	}
-	if strings.HasPrefix(packetInterface, "eth") && "Ethernet"+strings.TrimPrefix(packetInterface, "eth") == policyInterface {
-		return true
-	}
-	if strings.HasPrefix(policyInterface, "e1-") && "ethernet-1/"+strings.TrimPrefix(policyInterface, "e1-") == packetInterface {
-		return true
-	}
-	if strings.HasPrefix(packetInterface, "e1-") && "ethernet-1/"+strings.TrimPrefix(packetInterface, "e1-") == policyInterface {
-		return true
-	}
-	return false
+	return model.EquivalentInterfaceName(model.KindFRR, policyInterface, packetInterface) ||
+		model.EquivalentInterfaceName(model.KindCEOS, policyInterface, packetInterface) ||
+		model.EquivalentInterfaceName(model.KindSRLinux, policyInterface, packetInterface)
 }
 
 func mustPrefix(prefix string) netip.Prefix {

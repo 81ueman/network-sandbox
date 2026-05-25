@@ -90,8 +90,8 @@ func TestTopologyIndexEndpointAddressLookupUsesInterfaceAliases(t *testing.T) {
 	topo := &Topology{
 		Nodes: []Node{
 			{Name: "frr", Interfaces: []Interface{{Name: "eth1", Address: "192.0.2.11/24"}}},
-			{Name: "ceos", Interfaces: []Interface{{Name: "Ethernet1", Address: "192.0.2.22/24"}}},
-			{Name: "srl", Interfaces: []Interface{{Name: "ethernet-1/3", Address: "198.51.100.33/24"}}},
+			{Name: "ceos", Kind: KindCEOS, Interfaces: []Interface{{Name: "Ethernet1", Address: "192.0.2.22/24"}}},
+			{Name: "srl", Kind: KindSRLinux, Interfaces: []Interface{{Name: "ethernet-1/3.0", Address: "198.51.100.33/24"}}},
 			{Name: "peer", Interfaces: []Interface{{Name: "eth9", Address: "198.51.100.44/24"}}},
 		},
 		Links: []Link{
@@ -123,5 +123,17 @@ func TestTopologyIndexEndpointAddressLookupUsesInterfaceAliases(t *testing.T) {
 	got, ok := idx.PeerAddressOnLink("frr", "ceos")
 	if !ok || got.String() != "192.0.2.22" {
 		t.Fatalf("PeerAddressOnLink(frr,ceos) = %s, %v; want 192.0.2.22, true", got, ok)
+	}
+	ref, ok := idx.InterfaceToPeer("srl", "peer")
+	if !ok || ref.ClabName != "e1-3" || ref.ConfigName != "ethernet-1/3.0" || ref.Address.String() != "198.51.100.33/24" {
+		t.Fatalf("InterfaceToPeer(srl,peer) = %#v, %v; want e1-3 ethernet-1/3.0 198.51.100.33/24", ref, ok)
+	}
+	peerRef, ok := idx.PeerInterfaceToNode("srl", "peer")
+	if !ok || peerRef.ClabName != "eth9" || peerRef.ConfigName != "eth9" || peerRef.Address.String() != "198.51.100.44/24" {
+		t.Fatalf("PeerInterfaceToNode(srl,peer) = %#v, %v; want peer eth9 198.51.100.44/24", peerRef, ok)
+	}
+	peerAddr, ok := idx.PeerAddress("srl", "peer")
+	if !ok || peerAddr.String() != "198.51.100.44" {
+		t.Fatalf("PeerAddress(srl,peer) = %s, %v; want 198.51.100.44, true", peerAddr, ok)
 	}
 }

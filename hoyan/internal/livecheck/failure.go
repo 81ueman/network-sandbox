@@ -77,29 +77,45 @@ func LinkFailureScenario(topo *model.Topology, linkName string) (RIBFailureScena
 	if link.AIntf == "" || link.BIntf == "" {
 		return RIBFailureScenario{}, fmt.Errorf("link %s is missing endpoint interface names", linkName)
 	}
+	aIntf, bIntf := linkEndpointClabInterfaces(topo, link)
 	return RIBFailureScenario{
 		Name:     "link-" + link.Name,
 		Failures: sim.LinkFailures(model.LinkID(link.Name)),
 		Inject: func(ctx context.Context, runner ribcompare.Runner) error {
-			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.A, "-i", link.AIntf, "--loss", "100"); err != nil {
-				return fmt.Errorf("netem set %s:%s: %w", link.A, link.AIntf, err)
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.A, "-i", aIntf, "--loss", "100"); err != nil {
+				return fmt.Errorf("netem set %s:%s: %w", link.A, aIntf, err)
 			}
-			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.B, "-i", link.BIntf, "--loss", "100"); err != nil {
-				return fmt.Errorf("netem set %s:%s: %w", link.B, link.BIntf, err)
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "set", "--name", topo.Name, "-n", link.B, "-i", bIntf, "--loss", "100"); err != nil {
+				return fmt.Errorf("netem set %s:%s: %w", link.B, bIntf, err)
 			}
 			return nil
 		},
 		Cleanup: func(ctx context.Context, runner ribcompare.Runner) error {
 			var firstErr error
-			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.A, "-i", link.AIntf); err != nil {
-				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.A, link.AIntf, err)
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.A, "-i", aIntf); err != nil {
+				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.A, aIntf, err)
 			}
-			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.B, "-i", link.BIntf); firstErr == nil && err != nil {
-				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.B, link.BIntf, err)
+			if _, err := runner.Run(ctx, "containerlab", "tools", "netem", "reset", "--name", topo.Name, "-n", link.B, "-i", bIntf); firstErr == nil && err != nil {
+				firstErr = fmt.Errorf("netem reset %s:%s: %w", link.B, bIntf, err)
 			}
 			return firstErr
 		},
 	}, nil
+}
+
+func linkEndpointClabInterfaces(topo *model.Topology, link model.Link) (string, string) {
+	aIntf, bIntf := link.AIntf, link.BIntf
+	idx, err := model.BuildTopologyIndex(topo)
+	if err != nil {
+		return aIntf, bIntf
+	}
+	if ref, ok := idx.InterfaceOnLink(link.A, link.Name); ok {
+		aIntf = ref.ClabName
+	}
+	if ref, ok := idx.InterfaceOnLink(link.B, link.Name); ok {
+		bIntf = ref.ClabName
+	}
+	return aIntf, bIntf
 }
 
 func NodeFailureScenario(topo *model.Topology, nodeName string) (RIBFailureScenario, error) {
