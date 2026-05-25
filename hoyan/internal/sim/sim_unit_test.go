@@ -766,7 +766,7 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 	}
 	found := false
 	for _, entry := range g.fib["a"] {
-		if entry.Condition.String() == r1.SelectedCond.String() {
+		if entry.Condition.Key() == r1.SelectedCond.Key() {
 			found = true
 			break
 		}
@@ -1021,6 +1021,15 @@ func TestConditionHelpers(t *testing.T) {
 	}
 	if got := And(True()).String(); got != "true" {
 		t.Fatalf("And(True()).String() = %q, want true", got)
+	}
+	if got, want := And(LinkVar("a"), LinkVar("b")).Key(), And(LinkVar("b"), LinkVar("a")).Key(); got != want {
+		t.Fatalf("And() keys should be order independent: got %q, want %q", got, want)
+	}
+	if got, want := And(Var("x"), Var("x")).Key(), Var("x").Key(); got != want {
+		t.Fatalf("And() should deduplicate equivalent children: got %q, want %q", got, want)
+	}
+	if got, want := And(True(), Var("x")).Key(), Var("x").Key(); got != want {
+		t.Fatalf("And() should drop true identity: got %q, want %q", got, want)
 	}
 	if _, ok := Or(Or(Var("a"), Var("b")), Var("c")).(orCond); !ok {
 		t.Fatalf("Or() should flatten nested or")
