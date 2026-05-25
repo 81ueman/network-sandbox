@@ -14,7 +14,6 @@ import (
 
 type options struct {
 	topologyPath  string
-	policiesPath  string
 	queriesPath   string
 	timeout       time.Duration
 	pollInterval  time.Duration
@@ -32,7 +31,6 @@ func main() {
 
 	err = livecheck.Run(context.Background(), livecheck.Options{
 		Topology:      opts.topologyPath,
-		Policies:      opts.policiesPath,
 		Queries:       opts.queriesPath,
 		Timeout:       opts.timeout,
 		PollInterval:  opts.pollInterval,
@@ -51,7 +49,6 @@ func parseOptions(args []string) (options, error) {
 	fs := flag.NewFlagSet("hoyan-live-check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	topologyPath := fs.String("topology", "hoyan.clab.yml", "containerlab topology YAML")
-	policiesPath := fs.String("policies", "", "optional deprecated verifier-only policy YAML")
 	queriesPath := fs.String("queries", "intent/queries.yml", "query YAML for live dataplane checks")
 	timeout := fs.Duration("timeout", 5*time.Minute, "overall wait timeout")
 	pollInterval := fs.Duration("poll-interval", 25*time.Second, "poll interval")
@@ -63,7 +60,6 @@ func parseOptions(args []string) (options, error) {
 	}
 	return options{
 		topologyPath:  *topologyPath,
-		policiesPath:  *policiesPath,
 		queriesPath:   *queriesPath,
 		timeout:       *timeout,
 		pollInterval:  *pollInterval,

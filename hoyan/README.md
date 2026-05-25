@@ -27,8 +27,7 @@ Checks are defined in `intent/queries.yml`:
 - packet reachability to host prefixes
 - failure-budget checks that print concrete link-failure counterexamples
 
-Verifier-only policies that are not present in startup configs live in
-`intent/policies.yml`.
+Data-plane policies are parsed from the device startup configs.
 
 The normal build uses a small enumerating solver for failure sets. With Z3:
 

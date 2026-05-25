@@ -14,7 +14,6 @@ import (
 
 type Options struct {
 	Topology       string
-	Policies       string
 	Queries        string
 	Timeout        time.Duration
 	PollInterval   time.Duration
@@ -47,7 +46,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if isZeroCompareOptions(compareOptions) {
 		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
 	}
-	topo, err := model.LoadLabTopology(opts.Topology, opts.Policies)
+	topo, err := model.LoadLabTopology(opts.Topology)
 	if err != nil {
 		return err
 	}

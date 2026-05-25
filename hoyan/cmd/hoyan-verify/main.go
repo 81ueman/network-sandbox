@@ -13,11 +13,10 @@ import (
 
 func main() {
 	topologyPath := flag.String("topology", "hoyan.clab.yml", "containerlab topology YAML")
-	policiesPath := flag.String("policies", "", "optional deprecated verifier-only policy YAML")
 	queriesPath := flag.String("queries", "intent/queries.yml", "query YAML")
 	flag.Parse()
 
-	topo, warnings, err := model.LoadLabTopologyWithWarnings(*topologyPath, *policiesPath)
+	topo, warnings, err := model.LoadLabTopologyWithWarnings(*topologyPath)
 	if err != nil {
 		die(err)
 	}

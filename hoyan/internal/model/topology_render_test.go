@@ -73,7 +73,7 @@ topology:
 }
 
 func TestLoadLabTopologyContainerNames(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -94,7 +94,7 @@ func TestLoadLabTopologyContainerNames(t *testing.T) {
 		t.Fatalf("rendered topology did not absolute config paths")
 	}
 	path := writeTempTopology(t, data)
-	topo, err = LoadLabTopology(path, filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err = LoadLabTopology(path)
 	if err != nil {
 		t.Fatalf("LoadLabTopology(rendered) error = %v", err)
 	}

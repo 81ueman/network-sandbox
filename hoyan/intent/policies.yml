@@ -1,8 +1,0 @@
-policies:
-  - name: block-http-to-hz
-    node: core-hz
-    plane: data
-    stage: egress
-    action: deny
-    protocol: tcp
-    dst_prefix: 10.4.0.0/16

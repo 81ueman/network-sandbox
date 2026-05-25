@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoadLabTopology(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -32,7 +32,7 @@ func TestLoadLabTopology(t *testing.T) {
 }
 
 func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -89,7 +89,7 @@ func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
 }
 
 func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), "")
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
 }
 
 func TestOriginLookups(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -842,7 +842,7 @@ topology:
 	if err := os.WriteFile(topologyPath, []byte(topology), 0o644); err != nil {
 		t.Fatalf("WriteFile(topology) error = %v", err)
 	}
-	topo, err := LoadLabTopology(topologyPath, "")
+	topo, err := LoadLabTopology(topologyPath)
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
