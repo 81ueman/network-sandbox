@@ -7,17 +7,17 @@ func TestParseOptionsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "" {
+	if opts.topologyPath != "hoyan.clab.yml" {
 		t.Fatalf("opts = %#v", opts)
 	}
 }
 
 func TestParseOptionsAcceptsPaths(t *testing.T) {
-	opts, err := parseOptions([]string{"-topology", "custom.clab.yml", "-policies", "custom-policies.yml"})
+	opts, err := parseOptions([]string{"-topology", "custom.clab.yml"})
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "custom.clab.yml" || opts.policiesPath != "custom-policies.yml" {
+	if opts.topologyPath != "custom.clab.yml" {
 		t.Fatalf("opts = %#v", opts)
 	}
 }

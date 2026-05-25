@@ -13,7 +13,6 @@ import (
 
 type options struct {
 	topologyPath string
-	policiesPath string
 }
 
 func main() {
@@ -21,7 +20,7 @@ func main() {
 	if err != nil {
 		die(err)
 	}
-	topo, err := model.LoadLabTopology(opts.topologyPath, opts.policiesPath)
+	topo, err := model.LoadLabTopology(opts.topologyPath)
 	if err != nil {
 		die(err)
 	}
@@ -45,11 +44,10 @@ func parseOptions(args []string) (options, error) {
 	fs := flag.NewFlagSet("hoyan-rib-compare", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	topologyPath := fs.String("topology", "hoyan.clab.yml", "containerlab topology YAML")
-	policiesPath := fs.String("policies", "", "optional deprecated verifier-only policy YAML")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
-	return options{topologyPath: *topologyPath, policiesPath: *policiesPath}, nil
+	return options{topologyPath: *topologyPath}, nil
 }
 
 func die(err error) {

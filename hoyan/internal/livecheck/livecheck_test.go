@@ -77,7 +77,6 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	}}
 	opts := Options{
 		Topology:     "testdata/live.clab.yml",
-		Policies:     "",
 		Queries:      emptyQueriesFile(t),
 		Timeout:      time.Second,
 		PollInterval: time.Millisecond,

@@ -22,8 +22,7 @@ func TestContainerlabRIBsMatchSimulationUnderFailures(t *testing.T) {
 	}
 
 	topologyPath := filepath.Join("..", "..", "hoyan.clab.yml")
-	policiesPath := filepath.Join("..", "..", "intent", "policies.yml")
-	topo, err := model.LoadLabTopology(topologyPath, policiesPath)
+	topo, err := model.LoadLabTopology(topologyPath)
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 func TestRunBundledQueries(t *testing.T) {
-	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"), filepath.Join("..", "..", "intent", "policies.yml"))
+	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}

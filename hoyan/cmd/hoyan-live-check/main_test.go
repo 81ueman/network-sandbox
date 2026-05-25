@@ -11,7 +11,7 @@ func TestParseOptionsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "hoyan.clab.yml" || opts.policiesPath != "" || opts.queriesPath != "intent/queries.yml" || opts.maxPolls != livecheck.DefaultMaxPolls {
+	if opts.topologyPath != "hoyan.clab.yml" || opts.queriesPath != "intent/queries.yml" || opts.maxPolls != livecheck.DefaultMaxPolls {
 		t.Fatalf("opts = %#v", opts)
 	}
 }
@@ -19,7 +19,6 @@ func TestParseOptionsDefaults(t *testing.T) {
 func TestParseOptionsAcceptsLiveCheckFlags(t *testing.T) {
 	opts, err := parseOptions([]string{
 		"-topology", "custom.clab.yml",
-		"-policies", "custom-policies.yml",
 		"-queries", "custom-queries.yml",
 		"-max-polls", "7",
 		"-keep-on-failure",
@@ -28,7 +27,7 @@ func TestParseOptionsAcceptsLiveCheckFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseOptions() error = %v", err)
 	}
-	if opts.topologyPath != "custom.clab.yml" || opts.policiesPath != "custom-policies.yml" || opts.queriesPath != "custom-queries.yml" || opts.maxPolls != 7 || !opts.keepOnFailure || !opts.skipDestroy {
+	if opts.topologyPath != "custom.clab.yml" || opts.queriesPath != "custom-queries.yml" || opts.maxPolls != 7 || !opts.keepOnFailure || !opts.skipDestroy {
 		t.Fatalf("opts = %#v", opts)
 	}
 }

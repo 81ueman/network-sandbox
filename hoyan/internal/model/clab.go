@@ -11,10 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type policyFile struct {
-	Policies []Policy `yaml:"policies"`
-}
-
 type clabFile struct {
 	Name   string  `yaml:"name"`
 	Prefix *string `yaml:"prefix"`
@@ -38,16 +34,16 @@ type clabNode struct {
 	StartupConfig string   `yaml:"startup-config"`
 }
 
-func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
-	topo, _, err := loadLabTopology(clabPath, policyPath, false)
+func LoadLabTopology(clabPath string) (*Topology, error) {
+	topo, _, err := loadLabTopology(clabPath, false)
 	return topo, err
 }
 
-func LoadLabTopologyWithWarnings(clabPath, policyPath string) (*Topology, []UnsupportedStatement, error) {
-	return loadLabTopology(clabPath, policyPath, true)
+func LoadLabTopologyWithWarnings(clabPath string) (*Topology, []UnsupportedStatement, error) {
+	return loadLabTopology(clabPath, true)
 }
 
-func loadLabTopology(clabPath, policyPath string, collectWarnings bool) (*Topology, []UnsupportedStatement, error) {
+func loadLabTopology(clabPath string, collectWarnings bool) (*Topology, []UnsupportedStatement, error) {
 	data, err := os.ReadFile(clabPath)
 	if err != nil {
 		return nil, nil, err
@@ -137,13 +133,6 @@ func loadLabTopology(clabPath, policyPath string, collectWarnings bool) (*Topolo
 		})
 	}
 	resolveNeighborNodes(topo)
-	if policyPath != "" {
-		policies, err := LoadPolicies(policyPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		topo.Policies = append(topo.Policies, policies...)
-	}
 	if err := topo.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -171,14 +160,6 @@ func parsePrefixes(raw []string) ([]Prefix, error) {
 		out = append(out, parsed)
 	}
 	return out, nil
-}
-
-func LoadPolicies(path string) ([]Policy, error) {
-	var pf policyFile
-	if err := loadYAML(path, &pf); err != nil {
-		return nil, err
-	}
-	return pf.Policies, nil
 }
 
 func normalizeKind(kind string) DeviceKind {

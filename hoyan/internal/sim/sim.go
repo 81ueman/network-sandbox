@@ -14,6 +14,10 @@ import (
 type RIBEntry = controlplane.RIBEntry
 type FIBEntry = dataplane.FIBEntry
 type Path = dataplane.Path
+type SymbolicFIBCandidate = dataplane.SymbolicFIBCandidate
+type SymbolicPacketPath = dataplane.SymbolicPacketPath
+type SymbolicPacketState = dataplane.SymbolicPacketState
+type SymbolicReachabilityResult = dataplane.SymbolicReachabilityResult
 type FailureSet = failure.Set
 type FailureContext = failure.Context
 type FailureSearchOptions = failure.SearchOptions
@@ -135,6 +139,10 @@ func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, 
 
 func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) (Path, bool, string) {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).PacketReachable(from, to, protocol, failures)
+}
+
+func (g *Graph) SymbolicPacketReachability(from, to, protocol string) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachability(from, to, protocol)
 }
 
 func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int) ([]string, bool) {
