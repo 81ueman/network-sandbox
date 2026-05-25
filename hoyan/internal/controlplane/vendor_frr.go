@@ -1,4 +1,4 @@
-package sim
+package controlplane
 
 import (
 	"strings"
@@ -46,5 +46,5 @@ func (b frrBehavior) RouteInstallableInFIB(device model.Node, installed []RIBEnt
 	if !b.baseDeviceBehavior.RouteInstallableInFIB(device, installed, route) {
 		return false
 	}
-	return !equivalentInstalledRoute(b.DecisionProcess(), device, installed, route)
+	return !EquivalentInstalledRoute(b.DecisionProcess(), device, installed, route)
 }

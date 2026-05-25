@@ -84,6 +84,14 @@ Base new work on the latest `main` by default. Fetch and fast-forward `main` bef
 
 8. Continue the requested implementation, troubleshooting, packet capture, or network verification inside the worktree. Keep edits scoped to that worktree and its task branch.
 
+9. If the task changes behavior that hoyan models, verifies, or compares against live devices, run the live integration check at the end from the `hoyan` directory:
+
+   ```bash
+   go run ./cmd/hoyan-live-check
+   ```
+
+   Treat changes to verifier/model/simulator/RIB comparison code, intent files, topology, device configs, render logic, or live-check collection/normalization as behavior-changing. If the live check fails, report the failing output and whether the command left a lab running. Use the command's debugging flags, such as `-keep-on-failure`, only when needed to investigate a failure.
+
 ## Operating Notes
 
 - Announce the worktree path, branch, and generated topology file before starting substantive lab work.
