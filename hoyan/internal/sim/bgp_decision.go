@@ -30,8 +30,8 @@ func (defaultBGPDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 	if a.MED != b.MED {
 		return a.MED < b.MED
 	}
-	aExternal := firstHopExternal(receiver.ASN, a.ASPath)
-	bExternal := firstHopExternal(receiver.ASN, b.ASPath)
+	aExternal := !a.LearnedIBGP
+	bExternal := !b.LearnedIBGP
 	if aExternal != bExternal {
 		return aExternal
 	}
@@ -54,7 +54,7 @@ func (defaultBGPDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) 
 	if a.MED != b.MED {
 		return false
 	}
-	return firstHopExternal(receiver.ASN, a.ASPath) == firstHopExternal(receiver.ASN, b.ASPath)
+	return a.LearnedIBGP == b.LearnedIBGP
 }
 
 func firstHopExternal(localASN uint32, path []uint32) bool {

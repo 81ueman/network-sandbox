@@ -132,7 +132,7 @@ func TestDefaultBGPDecisionProcessOrdering(t *testing.T) {
 	assertLess("local-origin", RIBEntry{Origin: "rx", LocalPref: 100}, RIBEntry{Origin: "remote", LocalPref: 100})
 	assertLess("as-path-length", RIBEntry{ASPath: []uint32{65100}}, RIBEntry{ASPath: []uint32{65100, 65200}})
 	assertLess("med", RIBEntry{ASPath: []uint32{65100}, MED: 10}, RIBEntry{ASPath: []uint32{65100}, MED: 20})
-	assertLess("ebgp-over-ibgp", RIBEntry{ASPath: []uint32{65100}}, RIBEntry{ASPath: []uint32{65000}})
+	assertLess("ebgp-over-ibgp", RIBEntry{ASPath: []uint32{65100}}, RIBEntry{ASPath: []uint32{65100}, LearnedIBGP: true})
 	assertLess("shorter-link-path", RIBEntry{ASPath: []uint32{65100}, Links: []string{"a"}}, RIBEntry{ASPath: []uint32{65100}, Links: []string{"a", "b"}})
 	assertLess("vendor-tie-break", RIBEntry{ASPath: []uint32{65100}, Nodes: []string{"a"}}, RIBEntry{ASPath: []uint32{65100}, Nodes: []string{"b"}})
 }
@@ -141,13 +141,17 @@ func TestDefaultBGPDecisionProcessEquivalent(t *testing.T) {
 	receiver := model.Node{Name: "rx", ASN: 65000}
 	decision := DefaultBGPDecisionProcess()
 	a := RIBEntry{LocalPref: 100, ASPath: []uint32{65100}, MED: 10, Links: []string{"a"}, Nodes: []string{"a"}}
-	b := RIBEntry{LocalPref: 100, ASPath: []uint32{65200}, MED: 10, Links: []string{"b", "c"}, Nodes: []string{"b"}}
+	b := RIBEntry{LocalPref: 100, ASPath: []uint32{65200}, MED: 10, Links: []string{"b"}, Nodes: []string{"b"}}
 	if !decision.Equivalent(receiver, a, b) {
 		t.Fatalf("routes should be equivalent before tie-break")
 	}
-	c := RIBEntry{LocalPref: 100, ASPath: []uint32{65000}, MED: 10}
+	c := RIBEntry{LocalPref: 100, ASPath: []uint32{65100}, MED: 10, LearnedIBGP: true}
 	if decision.Equivalent(receiver, a, c) {
 		t.Fatalf("eBGP and iBGP routes should not be equivalent")
+	}
+	d := RIBEntry{LocalPref: 100, ASPath: []uint32{65300}, MED: 10, Links: []string{"d", "e"}}
+	if !decision.Equivalent(receiver, a, d) {
+		t.Fatalf("routes with equal BGP attributes before tie-break should be equivalent")
 	}
 }
 

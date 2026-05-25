@@ -27,8 +27,8 @@ func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 	if a.MED != b.MED {
 		return a.MED < b.MED
 	}
-	aExternal := firstHopExternal(receiver.ASN, a.ASPath)
-	bExternal := firstHopExternal(receiver.ASN, b.ASPath)
+	aExternal := !a.LearnedIBGP
+	bExternal := !b.LearnedIBGP
 	if aExternal != bExternal {
 		return aExternal
 	}

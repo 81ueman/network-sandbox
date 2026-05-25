@@ -35,24 +35,28 @@ The normal build uses a small enumerating solver for failure sets. With Z3:
 go run -tags z3 ./cmd/hoyan-verify
 ```
 
-## Compare Modeled RIBs With FRR
+## Compare Modeled BGP RIBs With Live Nodes
 
 To run the full live integration check, including deploy, convergence wait,
-modeled-vs-live FRR RIB comparison, and cleanup:
+modeled-vs-live BGP RIB comparison, and cleanup:
 
 ```bash
 go run ./cmd/hoyan-live-check
 ```
 
-By default, the command collects FRR BGP JSON up to three times with a 25s
-interval. This keeps polling bounded while leaving enough room for the SR Linux
-BGP sessions to come up after a fresh deploy. If expected routes are still
-missing, it prints modeled-vs-live diffs instead of waiting for the full
-timeout:
+By default, the command polls live BGP RIB state up to three times with a 25s
+interval. This keeps polling bounded while leaving enough room for all BGP
+sessions to come up after a fresh deploy. If expected routes are still missing
+or attributes do not match, it prints modeled-vs-live diffs instead of waiting
+for the full timeout:
 
 ```bash
 go run ./cmd/hoyan-live-check -max-polls 3 -poll-interval 25s
 ```
+
+Live BGP RIB comparison is exact. It requires modeled and live RIBs to match on
+prefixes, paths, best flag, valid flag, next-hop, AS path, origin, local-pref,
+and MED. Unexpected live prefixes or paths are reported as diffs.
 
 For debugging, keep the lab running if the comparison fails:
 
@@ -66,24 +70,34 @@ To keep the lab running even on success:
 go run ./cmd/hoyan-live-check -skip-destroy
 ```
 
-If the lab is already deployed, compare the modeled best paths with live FRR
-BGP RIBs directly:
+If the lab is already deployed, compare the modeled BGP RIB with live nodes
+directly:
 
 ```bash
 go run ./cmd/hoyan-rib-compare
 ```
 
-The command currently collects FRR nodes with:
+The live comparison reads BGP table state from FRR, cEOS, and SR Linux nodes,
+not kernel routes, installed route tables, or dataplane forwarding state. It
+collects:
 
 ```bash
-docker exec <node> vtysh -c "show ip bgp json"
+docker exec -i <frr-node> vtysh -c "show ip bgp json"
+docker exec -i <ceos-node> Cli -p 15 -c "show ip bgp | json"
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default protocols bgp routes ipv4 summary
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default protocols bgp routes ipv4 prefix <prefix> detail
 ```
 
-and reports prefix/next-hop mismatches. FRR ECMP candidates are treated as an
-allowed next-hop set because FRR's displayed best path can depend on which
-equivalent path was received first. cEOS and SR Linux collection are left as
-future collectors; they are still included in the modeled control plane and
-lab.
+Routes are normalized by node, network-instance, AFI, prefix, and BGP path.
+Vendor-specific formatting differences such as local next-hop representation,
+origin spelling, and omitted default local-pref are normalized before exact
+comparison.
+
+Vendor-specific BGP RIB behavior is modeled where it affects live comparison.
+cEOS can keep paths with unresolved next-hops in the BGP table as invalid
+paths, and SR Linux can retain AS-loop paths as invalid BGP RIB entries. Those
+paths are not used for forwarding, but they are represented in the modeled BGP
+RIB so live table comparison stays aligned with the devices.
 
 ## Deploy
 

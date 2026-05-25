@@ -100,13 +100,6 @@ func DefaultBgpRibCompareOptions() BgpRibCompareOptions {
 	}
 }
 
-func LiveBgpRibCompareOptions() BgpRibCompareOptions {
-	opts := DefaultBgpRibCompareOptions()
-	opts.CompareBest = false
-	opts.AllowExtraPaths = true
-	return opts
-}
-
 func Expected(topo *model.Topology) []NormalizedBgpRoute {
 	return ExpectedWithFailureSet(topo, sim.NoFailures())
 }
@@ -128,6 +121,7 @@ func ExpectedWithFailureSet(topo *model.Topology, failures sim.FailureSet) []Nor
 }
 
 func expected(topo *model.Topology, allowed map[string]bool, failures sim.FailureSet) []NormalizedBgpRoute {
+	topo = topologyWithoutLiveIgnoredPolicies(topo)
 	g := sim.NewGraph(topo)
 	ctx := g.FailureContext(failures)
 	var out []NormalizedBgpRoute
@@ -144,15 +138,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 				if route.Condition == nil || !route.Condition.Eval(ctx) {
 					continue
 				}
-				paths = append(paths, NormalizedBgpPath{
-					Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
-					Valid:     expectedRouteValid(n, route),
-					NextHop:   routeNextHopAddress(topo, n.Name, route),
-					ASPath:    append([]uint32(nil), route.ASPath...),
-					Origin:    "igp",
-					LocalPref: 100,
-					MED:       route.MED,
-				})
+				paths = append(paths, expectedPath(topo, n, route, ctx))
 			}
 			if len(paths) == 0 {
 				continue
@@ -169,6 +155,41 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 	}
 	sortRoutes(out)
 	return out
+}
+
+func topologyWithoutLiveIgnoredPolicies(topo *model.Topology) *model.Topology {
+	if topo == nil {
+		return topo
+	}
+	cp := *topo
+	cp.Nodes = append([]model.Node(nil), topo.Nodes...)
+	cp.Links = append([]model.Link(nil), topo.Links...)
+	cp.Policies = nil
+	for _, policy := range topo.Policies {
+		if strings.EqualFold(policy.Action, "prefer") {
+			continue
+		}
+		cp.Policies = append(cp.Policies, policy)
+	}
+	return &cp
+}
+
+func expectedPath(topo *model.Topology, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {
+	return NormalizedBgpPath{
+		Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
+		Valid:     expectedRouteValid(node, route),
+		NextHop:   routeNextHopAddress(topo, node.Name, route),
+		ASPath:    append([]uint32(nil), route.ASPath...),
+		Origin:    expectedRouteOrigin(route),
+		LocalPref: defaultLocalPref(route.LocalPref),
+		MED:       route.MED,
+	}
+}
+
+func expectedRouteOrigin(route sim.RIBEntry) string {
+	// TODO: carry a modeled BGP origin-code field if config parsing starts
+	// deriving one. RIBEntry.Origin is currently the origin node name.
+	return "igp"
 }
 
 func CompareBgpRib(expected []NormalizedBgpRoute, actual []NormalizedBgpRoute, opts BgpRibCompareOptions) BgpRibCompareResult {
@@ -454,14 +475,22 @@ func ParseCEOS(node string, data []byte) ([]NormalizedBgpRoute, error) {
 				route.Paths = append(route.Paths, NormalizedBgpPath{
 					Best:      boolValue(routeType["active"]),
 					Valid:     boolValue(routeType["valid"]),
-					NextHop:   stringValue(p["nextHop"]),
+					NextHop:   normalizeLocalNextHop(stringValue(p["nextHop"])),
 					ASPath:    parseASPath(stringValue(asPathEntry["asPath"])),
 					Origin:    normalizeOrigin(firstString(p, "routeOrigin", "origin")),
 					LocalPref: defaultLocalPref(intValue(p["localPreference"])),
 					MED:       intValue(p["med"]),
 					Weight:    intValue(p["weight"]),
-					Peer:      stringValue(peer["peerAddr"]),
-					PeerAS:    uint32(intValue(peer["peerAS"])),
+					Communities: sortedStrings(appendCommunities(nil,
+						firstPresent(p, "community", "communities", "communityList"),
+						firstPresent(asPathEntry, "community", "communities", "communityList"),
+					)),
+					LargeCommunities: sortedStrings(appendCommunities(nil,
+						firstPresent(p, "largeCommunity", "largeCommunities", "largeCommunityList"),
+						firstPresent(asPathEntry, "largeCommunity", "largeCommunities", "largeCommunityList"),
+					)),
+					Peer:   stringValue(peer["peerAddr"]),
+					PeerAS: uint32(intValue(peer["peerAS"])),
 				})
 			}
 			if len(route.Paths) > 0 {
@@ -504,15 +533,7 @@ func ParseSRLinuxDetail(node, prefix string, data []byte) ([]NormalizedBgpRoute,
 		return nil, err
 	}
 	var routeMaps []map[string]any
-	walkJSON(root, func(key string, value any) {
-		if strings.EqualFold(key, "routes") {
-			for _, item := range asSlice(value) {
-				if m := asMap(item); len(m) > 0 {
-					routeMaps = append(routeMaps, m)
-				}
-			}
-		}
-	})
+	walkSRLinuxRouteSections(root, false, &routeMaps)
 	if len(routeMaps) == 0 {
 		if m := asMap(root); len(m) > 0 {
 			routeMaps = append(routeMaps, m)
@@ -522,9 +543,9 @@ func ParseSRLinuxDetail(node, prefix string, data []byte) ([]NormalizedBgpRoute,
 	for _, m := range routeMaps {
 		status := firstString(m, "status", "route status", "route-status")
 		asPath := parseASPath(firstString(m, "as path", "as-path", "asPath"))
-		nextHop := firstString(m, "next-hop", "nextHop", "next hop")
+		nextHop := normalizeLocalNextHop(firstString(m, "next-hop", "nextHop", "next hop"))
 		peer := firstString(m, "neighbor", "peer")
-		if nextHop == "0.0.0.0" && peer == "0.0.0.0" && len(asPath) == 0 {
+		if nextHop == "" && peer == "0.0.0.0" && len(asPath) == 0 {
 			continue
 		}
 		route.Paths = append(route.Paths, NormalizedBgpPath{
@@ -535,7 +556,7 @@ func ParseSRLinuxDetail(node, prefix string, data []byte) ([]NormalizedBgpRoute,
 			Origin:      normalizeOrigin(firstString(m, "origin")),
 			LocalPref:   defaultLocalPref(intValue(firstPresent(m, "local pref", "local-pref", "localPreference"))),
 			MED:         intValue(firstPresent(m, "med")),
-			Communities: splitCommunities(firstString(m, "community", "communities")),
+			Communities: appendCommunities(nil, firstPresent(m, "community", "communities")),
 			Peer:        peer,
 			PeerAS:      uint32(intValue(firstPresent(m, "peer-as", "peer as", "peerAS"))),
 		})
@@ -561,10 +582,12 @@ func comparePaths(routeKey string, expected, actual []NormalizedBgpPath, opts Bg
 	exp := map[string]NormalizedBgpPath{}
 	act := map[string]NormalizedBgpPath{}
 	for _, p := range expected {
-		exp[pathKey(p, opts)] = normalizePath(p)
+		key := pathKey(p, opts)
+		exp[key] = mergeDuplicatePath(exp[key], normalizePath(p))
 	}
 	for _, p := range actual {
-		act[pathKey(p, opts)] = normalizePath(p)
+		key := pathKey(p, opts)
+		act[key] = mergeDuplicatePath(act[key], normalizePath(p))
 	}
 	keys := sortedUnionKeys(exp, act)
 	for _, key := range keys {
@@ -581,6 +604,15 @@ func comparePaths(routeKey string, expected, actual []NormalizedBgpPath, opts Bg
 			appendMismatches(routeKey, key, e, a, opts, result)
 		}
 	}
+}
+
+func mergeDuplicatePath(existing, next NormalizedBgpPath) NormalizedBgpPath {
+	if reflect.DeepEqual(existing, NormalizedBgpPath{}) {
+		return next
+	}
+	existing.Best = existing.Best || next.Best
+	existing.Valid = existing.Valid || next.Valid
+	return existing
 }
 
 func appendMismatches(routeKey, pathKey string, e, a NormalizedBgpPath, opts BgpRibCompareOptions, result *BgpRibCompareResult) {
@@ -881,6 +913,36 @@ func splitCommunities(raw string) []string {
 	return sortedStrings(strings.Fields(raw))
 }
 
+func appendCommunities(out []string, values ...any) []string {
+	for _, value := range values {
+		switch x := value.(type) {
+		case nil:
+			continue
+		case []any:
+			for _, item := range x {
+				out = appendCommunities(out, item)
+			}
+		case []string:
+			for _, item := range x {
+				out = appendCommunities(out, item)
+			}
+		default:
+			out = append(out, splitCommunities(stringValue(x))...)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return sortedStrings(out)
+}
+
+func normalizeLocalNextHop(nextHop string) string {
+	if nextHop == "0.0.0.0" {
+		return ""
+	}
+	return nextHop
+}
+
 func walkJSON(v any, visit func(key string, value any)) {
 	switch x := v.(type) {
 	case map[string]any:
@@ -893,6 +955,32 @@ func walkJSON(v any, visit func(key string, value any)) {
 			walkJSON(v, visit)
 		}
 	}
+}
+
+func walkSRLinuxRouteSections(v any, ignored bool, out *[]map[string]any) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, v := range x {
+			nextIgnored := ignored || isIgnoredSRLinuxRouteSection(k)
+			if !nextIgnored && strings.EqualFold(k, "routes") {
+				for _, item := range asSlice(v) {
+					if m := asMap(item); len(m) > 0 {
+						*out = append(*out, m)
+					}
+				}
+			}
+			walkSRLinuxRouteSections(v, nextIgnored, out)
+		}
+	case []any:
+		for _, v := range x {
+			walkSRLinuxRouteSections(v, ignored, out)
+		}
+	}
+}
+
+func isIgnoredSRLinuxRouteSection(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(key, "advertised") || strings.Contains(key, "non-route")
 }
 
 func isPrefix(s string) bool {

@@ -356,6 +356,29 @@ func TestSelectRoutesBuildsMutuallyExclusiveSelectedConditions(t *testing.T) {
 	}
 }
 
+func TestSelectRoutesMarksEquivalentFRRRoutesSelected(t *testing.T) {
+	g := testGraph(&model.Topology{Nodes: []model.Node{{Name: "r1", Kind: "frr", ASN: 65000}}})
+	g.rib["r1"] = map[string][]RIBEntry{
+		"10.0.0.0/24": {
+			{Prefix: "10.0.0.0/24", Origin: "a", LocalPref: 100, ASPath: []uint32{65100}, Condition: Var("path-a")},
+			{Prefix: "10.0.0.0/24", Origin: "b", LocalPref: 100, ASPath: []uint32{65200}, Condition: Var("path-b")},
+			{Prefix: "10.0.0.0/24", Origin: "c", LocalPref: 100, ASPath: []uint32{65300, 65400}, Condition: Var("backup")},
+		},
+	}
+
+	g.selectRoutes()
+	routes := g.rib["r1"]["10.0.0.0/24"]
+	if !routes[0].SelectedCond.Eval(FailureContext{}) || !routes[1].SelectedCond.Eval(FailureContext{}) {
+		t.Fatalf("equivalent routes should both be selected: %#v", routes)
+	}
+	if routes[2].SelectedCond.Eval(FailureContext{}) {
+		t.Fatalf("non-equivalent backup should not be selected while equivalent best routes are available")
+	}
+	if !routes[2].SelectedCond.Eval(FailureContext{Failures: LinkFailures("path-a", "path-b")}) {
+		t.Fatalf("backup should be selected when all better equivalent paths are unavailable")
+	}
+}
+
 func TestLookupFIBLongestPrefixAndConditionalFallback(t *testing.T) {
 	g := testGraph(&model.Topology{})
 	g.fib["r1"] = []FIBEntry{

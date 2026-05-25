@@ -459,7 +459,7 @@ func (g *Graph) simulateControlPlane() {
 				Origin:    origin.Name,
 				Nodes:     []string{origin.Name},
 				ASPath:    nil,
-				LocalPref: 200,
+				LocalPref: 100,
 				BaseCond:  originCond,
 				Condition: originCond,
 			})
@@ -484,18 +484,26 @@ func (g *Graph) selectRoutes() {
 			n, _ := g.topo.Node(node)
 			behavior := behaviorFor(n.Kind)
 			routes = behavior.SelectRoutes(n, routes)
-			var higher []Cond
 			for i := range routes {
 				if routeInvalidForDevice(n, routes[i]) {
 					routes[i].SelectedCond = False()
 					continue
 				}
 				selected := routes[i].Condition
-				if len(higher) > 0 {
-					selected = And(selected, Not(Or(higher...)))
+				var higherDistinct []Cond
+				for j := 0; j < i; j++ {
+					if routeInvalidForDevice(n, routes[j]) {
+						continue
+					}
+					if behavior.DecisionProcess().Equivalent(n, routes[j], routes[i]) {
+						continue
+					}
+					higherDistinct = append(higherDistinct, routes[j].Condition)
+				}
+				if len(higherDistinct) > 0 {
+					selected = And(selected, Not(Or(higherDistinct...)))
 				}
 				routes[i].SelectedCond = selected
-				higher = append(higher, routes[i].Condition)
 			}
 			g.rib[node][prefix] = routes
 		}
@@ -643,12 +651,15 @@ func (g *Graph) bgpSession(a, b string) (model.BGPNeighbor, bool) {
 func (g *Graph) deriveFIB() {
 	for node, byPrefix := range g.rib {
 		var entries []FIBEntry
+		n, _ := g.topo.Node(node)
+		behavior := behaviorFor(n.Kind)
 		for prefix, routes := range byPrefix {
 			pfx, err := netip.ParsePrefix(prefix)
 			if err != nil {
 				continue
 			}
 			seenSelected := map[string]bool{}
+			var installed []RIBEntry
 			for _, route := range routes {
 				selectedKey := ""
 				if route.SelectedCond != nil {
@@ -657,7 +668,11 @@ func (g *Graph) deriveFIB() {
 				if seenSelected[selectedKey] {
 					continue
 				}
+				if n.Kind == "frr" && equivalentInstalledRoute(behavior.DecisionProcess(), n, installed, route) {
+					continue
+				}
 				seenSelected[selectedKey] = true
+				installed = append(installed, route)
 				entries = append(entries, FIBEntry{
 					Prefix:    pfx,
 					NextHop:   route.NextHop,
@@ -674,6 +689,15 @@ func (g *Graph) deriveFIB() {
 		})
 		g.fib[node] = entries
 	}
+}
+
+func equivalentInstalledRoute(decision BGPDecisionProcess, node model.Node, installed []RIBEntry, route RIBEntry) bool {
+	for _, existing := range installed {
+		if decision.Equivalent(node, existing, route) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Graph) addRIB(node, prefix string, entry RIBEntry) {

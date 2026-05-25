@@ -20,9 +20,10 @@ type RIBFailureScenario struct {
 }
 
 type RIBFailureCheckOptions struct {
-	Interval time.Duration
-	MaxPolls int
-	Out      io.Writer
+	Interval       time.Duration
+	MaxPolls       int
+	CompareOptions ribcompare.BgpRibCompareOptions
+	Out            io.Writer
 }
 
 func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo *model.Topology, scenario RIBFailureScenario, opts RIBFailureCheckOptions) error {
@@ -34,6 +35,10 @@ func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo
 	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
+	}
+	compareOptions := opts.CompareOptions
+	if isZeroCompareOptions(compareOptions) {
+		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
 	}
 	activeNodes := scenario.ActiveNodes
 	if activeNodes == nil {
@@ -51,9 +56,9 @@ func CompareRIBsWithFailures(ctx context.Context, runner ribcompare.Runner, topo
 			_ = scenario.Cleanup(context.Background(), runner)
 		}()
 	}
-	actual, diffs, err := WaitForMatchingRIBs(ctx, runner, activeNodes, expected, opts.Interval, opts.MaxPolls)
+	actual, diffs, err := WaitForMatchingRIBs(ctx, runner, activeNodes, expected, opts.Interval, opts.MaxPolls, compareOptions)
 	if err != nil {
-		printRIBDiffs(opts.Out, expected, actual)
+		printRIBDiffs(opts.Out, expected, actual, compareOptions)
 		return err
 	}
 	printDiffs(opts.Out, diffs)
@@ -133,11 +138,11 @@ func findLink(topo *model.Topology, name string) (model.Link, bool) {
 	return model.Link{}, false
 }
 
-func printRIBDiffs(out io.Writer, expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) {
+func printRIBDiffs(out io.Writer, expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute, compareOptions ribcompare.BgpRibCompareOptions) {
 	if out == nil {
 		return
 	}
-	printDiffs(out, ribcompare.CompareBgpRib(expected, actual, ribcompare.LiveBgpRibCompareOptions()))
+	printDiffs(out, ribcompare.CompareBgpRib(expected, actual, compareOptions))
 }
 
 func printDiffs(out io.Writer, diffs ribcompare.BgpRibCompareResult) {

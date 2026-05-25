@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"time"
 
@@ -12,14 +13,15 @@ import (
 )
 
 type Options struct {
-	Topology      string
-	Policies      string
-	Timeout       time.Duration
-	PollInterval  time.Duration
-	MaxPolls      int
-	KeepOnFailure bool
-	SkipDestroy   bool
-	Out           io.Writer
+	Topology       string
+	Policies       string
+	Timeout        time.Duration
+	PollInterval   time.Duration
+	MaxPolls       int
+	CompareOptions ribcompare.BgpRibCompareOptions
+	KeepOnFailure  bool
+	SkipDestroy    bool
+	Out            io.Writer
 }
 
 func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error) {
@@ -37,6 +39,10 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
+	}
+	compareOptions := opts.CompareOptions
+	if isZeroCompareOptions(compareOptions) {
+		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
 	}
 	topo, err := model.LoadLabTopology(opts.Topology, opts.Policies)
 	if err != nil {
@@ -65,7 +71,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		return err
 	}
 	fmt.Fprintln(opts.Out, "waiting for BGP RIB routes")
-	actual, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expected, opts.PollInterval, opts.MaxPolls)
+	actual, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expected, opts.PollInterval, opts.MaxPolls, compareOptions)
 	if err != nil {
 		if len(actual) > 0 {
 			for _, line := range ribcompare.FormatDiffs(result) {
@@ -82,6 +88,10 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	}
 	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
 	return nil
+}
+
+func isZeroCompareOptions(opts ribcompare.BgpRibCompareOptions) bool {
+	return reflect.DeepEqual(opts, ribcompare.BgpRibCompareOptions{})
 }
 
 func WaitForFRRContainers(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, interval time.Duration) error {
@@ -146,7 +156,10 @@ func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes 
 	return last, nil
 }
 
-func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.NormalizedBgpRoute, interval time.Duration, maxPolls int) ([]ribcompare.NormalizedBgpRoute, ribcompare.BgpRibCompareResult, error) {
+func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.NormalizedBgpRoute, interval time.Duration, maxPolls int, compareOptions ribcompare.BgpRibCompareOptions) ([]ribcompare.NormalizedBgpRoute, ribcompare.BgpRibCompareResult, error) {
+	if isZeroCompareOptions(compareOptions) {
+		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
+	}
 	var last []ribcompare.NormalizedBgpRoute
 	var lastResult ribcompare.BgpRibCompareResult
 	var lastErr error
@@ -167,7 +180,7 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 		if seen := CountExpectedRoutes(expected, actual); seen > bestSeen {
 			bestSeen = seen
 		}
-		lastResult = ribcompare.CompareBgpRib(expected, actual, ribcompare.LiveBgpRibCompareOptions())
+		lastResult = ribcompare.CompareBgpRib(expected, actual, compareOptions)
 		diffCount := countDiffs(lastResult)
 		if bestDiffCount == -1 || diffCount < bestDiffCount {
 			bestDiffCount = diffCount
