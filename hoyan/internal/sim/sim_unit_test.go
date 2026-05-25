@@ -2,6 +2,8 @@ package sim
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -431,6 +433,38 @@ func TestExportRouteMapSetsMEDInRIB(t *testing.T) {
 	routes := g.RIB("rx", "10.0.0.0/24")
 	if len(routes) != 1 || routes[0].MED != 77 {
 		t.Fatalf("rx RIB = %#v, want MED 77", routes)
+	}
+}
+
+func TestParsedSRLinuxImportPolicySetsLocalPrefInRIB(t *testing.T) {
+	config := `
+set / routing-policy prefix-set LOCAL prefix 10.0.0.0/24 mask-length-range exact
+set / routing-policy policy IMPORT statement 10 match prefix prefix-set LOCAL
+set / routing-policy policy IMPORT statement 10 action bgp local-preference set 240
+set / routing-policy policy IMPORT statement 10 action policy-result accept
+set / network-instance default protocols bgp group edge import-policy [ IMPORT ]
+set / network-instance default protocols bgp group edge peer-as 65001
+set / network-instance default protocols bgp neighbor 192.0.2.0 peer-group edge
+`
+	path := filepath.Join(t.TempDir(), "core.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg, err := model.ParseConfig(model.KindSRLinux, path)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+
+	topo := routePolicyTestTopology()
+	topo.Nodes[1].Kind = model.KindSRLinux
+	topo.Nodes[1].PrefixLists = cfg.PrefixLists
+	topo.Nodes[1].RoutePolicies = cfg.RoutePolicies
+	topo.Nodes[1].Neighbors[0].ImportPolicy = cfg.Neighbors[0].ImportPolicy
+
+	g := NewGraph(topo)
+	routes := g.RIB("rx", "10.0.0.0/24")
+	if len(routes) != 1 || routes[0].LocalPref != 240 {
+		t.Fatalf("rx RIB = %#v, want SR Linux parsed import policy local-pref 240", routes)
 	}
 }
 
