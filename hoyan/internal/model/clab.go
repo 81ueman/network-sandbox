@@ -222,8 +222,8 @@ func splitEndpoint(endpoint string) (string, string, error) {
 }
 
 func linkSubnet(a Node, aIntf string, b Node, bIntf string) (netip.Prefix, error) {
-	ap, aok := interfaceAddr(a.Interfaces, aIntf)
-	bp, bok := interfaceAddr(b.Interfaces, bIntf)
+	ap, aok := InterfaceAddress(a.Kind, a.Interfaces, aIntf)
+	bp, bok := InterfaceAddress(b.Kind, b.Interfaces, bIntf)
 	switch {
 	case aok && bok && ap.Masked() == bp.Masked():
 		return ap.Masked(), nil

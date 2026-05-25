@@ -1303,32 +1303,3 @@ func fieldAfter(fields []string, marker string) string {
 	}
 	return ""
 }
-
-func interfaceAddr(interfaces []Interface, name string) (netip.Prefix, bool) {
-	names := map[string]bool{}
-	for _, alias := range interfaceAliases(name) {
-		names[alias] = true
-	}
-	for _, iface := range interfaces {
-		if !names[iface.Name] {
-			continue
-		}
-		pfx, err := netip.ParsePrefix(iface.Address)
-		return pfx, err == nil
-	}
-	return netip.Prefix{}, false
-}
-
-func interfaceAliases(name string) []string {
-	names := []string{name}
-	if base, _, ok := strings.Cut(name, "."); ok {
-		names = append(names, base)
-	}
-	if strings.HasPrefix(name, "e1-") {
-		names = append(names, "ethernet-1/"+strings.TrimPrefix(name, "e1-"))
-	}
-	if strings.HasPrefix(name, "eth") {
-		names = append(names, "Ethernet"+strings.TrimPrefix(name, "eth"))
-	}
-	return names
-}

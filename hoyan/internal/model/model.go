@@ -385,11 +385,9 @@ func validatePolicy(p Policy) error {
 }
 
 func hasInterface(n Node, name string) bool {
-	for _, alias := range interfaceAliases(name) {
-		for _, iface := range n.Interfaces {
-			if iface.Name == alias {
-				return true
-			}
+	for _, iface := range n.Interfaces {
+		if EquivalentInterfaceName(n.Kind, iface.Name, name) {
+			return true
 		}
 	}
 	return false

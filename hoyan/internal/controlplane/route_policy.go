@@ -221,41 +221,10 @@ func peerAddress(idx *model.TopologyIndex, node, peer string) string {
 	if peer == "" {
 		return ""
 	}
-	link, ok := idx.LinkBetween(node, peer)
-	if !ok {
-		return peer
+	if addr, ok := idx.PeerAddress(node, peer); ok {
+		return addr.String()
 	}
-	a, b := linkAddresses(link.Subnet)
-	switch {
-	case link.A == node && link.B == peer:
-		return trimMask(b)
-	case link.B == node && link.A == peer:
-		return trimMask(a)
-	default:
-		return peer
-	}
-}
-
-func linkAddresses(raw string) (string, string) {
-	parts := strings.Split(raw, "/")
-	prefixLen := ""
-	if len(parts) == 2 {
-		prefixLen = "/" + parts[1]
-	}
-	octets := strings.Split(parts[0], ".")
-	if len(octets) != 4 {
-		return raw, raw
-	}
-	last := 0
-	fmt.Sscanf(octets[3], "%d", &last)
-	a := parts[0] + prefixLen
-	octets[3] = fmt.Sprint(last + 1)
-	b := strings.Join(octets, ".") + prefixLen
-	return a, b
-}
-
-func trimMask(addr string) string {
-	return strings.Split(addr, "/")[0]
+	return peer
 }
 
 func formatASPath(path []uint32) string {

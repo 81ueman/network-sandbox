@@ -320,6 +320,10 @@ func TestWaitForMatchingRIBsClearsTransientCollectionError(t *testing.T) {
 func TestLinkFailureScenarioInjectsAndCleansBothEndpoints(t *testing.T) {
 	topo := &model.Topology{
 		Name: "test-lab",
+		Nodes: []model.Node{
+			{Name: "a", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/24"}}},
+			{Name: "b", Kind: model.KindCEOS, Interfaces: []model.Interface{{Name: "Ethernet2", Address: "192.0.2.2/24"}}},
+		},
 		Links: []model.Link{
 			{Name: "a-b", A: "a", B: "b", AIntf: "eth1", BIntf: "eth2"},
 		},
