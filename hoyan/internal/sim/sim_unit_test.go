@@ -783,6 +783,29 @@ func TestRIBAndFIBHelpers(t *testing.T) {
 	}
 }
 
+func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	equivalentRoutes := []RIBEntry{
+		{Prefix: prefix, Origin: "a", LocalPref: 100, ASPath: []uint32{65100}, Nodes: []string{"a", "rx"}, SelectedCond: Var("path-a")},
+		{Prefix: prefix, Origin: "b", LocalPref: 100, ASPath: []uint32{65200}, Nodes: []string{"b", "rx"}, SelectedCond: Var("path-b")},
+	}
+
+	frr := testGraph(&model.Topology{Nodes: []model.Node{{Name: "rx", Kind: model.KindFRR, ASN: 65000}}})
+	frr.rib["rx"] = map[string][]RIBEntry{prefix.String(): append([]RIBEntry(nil), equivalentRoutes...)}
+	frr.deriveFIB()
+	if got := len(frr.fib["rx"]); got != 1 {
+		t.Fatalf("FRR FIB entries = %d, want equivalent route collapsed to 1", got)
+	}
+
+	genericKind := model.DeviceKind("generic")
+	generic := testGraph(&model.Topology{Nodes: []model.Node{{Name: "rx", Kind: genericKind, ASN: 65000}}})
+	generic.rib["rx"] = map[string][]RIBEntry{prefix.String(): append([]RIBEntry(nil), equivalentRoutes...)}
+	generic.deriveFIB()
+	if got := len(generic.fib["rx"]); got != 2 {
+		t.Fatalf("generic FIB entries = %d, want equivalent routes kept", got)
+	}
+}
+
 func TestFailureEligibleLinksExcludesCustomerLinks(t *testing.T) {
 	links := []model.Link{
 		{Name: "core-a-b", A: "a", B: "b"},

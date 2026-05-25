@@ -471,14 +471,14 @@ func (g *Graph) selectRoutes() {
 			behavior := behaviorFor(n.Kind)
 			routes = behavior.SelectRoutes(n, routes)
 			for i := range routes {
-				if routeInvalidForDevice(n, routes[i]) {
+				if !behavior.RouteValidForRIB(n, routes[i]) {
 					routes[i].SelectedCond = False()
 					continue
 				}
 				selected := routes[i].Condition
 				var higherDistinct []Cond
 				for j := 0; j < i; j++ {
-					if routeInvalidForDevice(n, routes[j]) {
+					if !behavior.RouteValidForRIB(n, routes[j]) {
 						continue
 					}
 					if behavior.DecisionProcess().Equivalent(n, routes[j], routes[i]) {
@@ -625,7 +625,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		entry.LocalPref = defaultLocalPref(entry.LocalPref)
 
 		g.addRIB(next, entry.Prefix, entry)
-		if routeInvalidForDevice(nextNode, entry) {
+		if !nextBehavior.RouteEligibleForAdvertisement(nextNode, entry) {
 			continue
 		}
 		g.walkBGP(entry)
@@ -661,7 +661,7 @@ func (g *Graph) deriveFIB() {
 				if seenSelected[selectedKey] {
 					continue
 				}
-				if n.Kind == model.KindFRR && equivalentInstalledRoute(behavior.DecisionProcess(), n, installed, route) {
+				if !behavior.RouteInstallableInFIB(n, installed, route) {
 					continue
 				}
 				seenSelected[selectedKey] = true
@@ -738,16 +738,6 @@ func routeKey(r RIBEntry) string {
 		valid = "invalid"
 	}
 	return r.Prefix.String() + "|" + r.Origin + "|" + strings.Join(r.Nodes, ">") + "|" + valid
-}
-
-func routeInvalidForDevice(device model.Node, route RIBEntry) bool {
-	if route.Invalid {
-		return true
-	}
-	if device.Kind == model.KindCEOS && route.NextHop != "" && route.NextHop != route.From {
-		return true
-	}
-	return false
 }
 
 func failureEligibleLinks(links []model.Link) []model.Link {

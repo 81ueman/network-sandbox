@@ -29,3 +29,10 @@ func (b ceosBehavior) SelectRoutes(device model.Node, routes []RIBEntry) []RIBEn
 	})
 	return out
 }
+
+func (b ceosBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
+	if !b.baseDeviceBehavior.RouteValidForRIB(device, route) {
+		return false
+	}
+	return route.NextHop == "" || route.NextHop == route.From
+}
