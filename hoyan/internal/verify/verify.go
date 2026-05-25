@@ -39,7 +39,7 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	for _, q := range queries.FailureChecks {
 		var target sim.Target
 		if !q.Prefix.IsZero() {
-			target = sim.PrefixTarget(q.Prefix.String())
+			target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol}
 		} else {
 			target = sim.PacketTarget{To: q.To, Protocol: q.Protocol}
 		}

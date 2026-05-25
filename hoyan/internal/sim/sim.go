@@ -147,6 +147,14 @@ func (g *Graph) SymbolicPacketReachability(from, to, protocol string) SymbolicRe
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachability(from, to, protocol)
 }
 
+func (g *Graph) SymbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, protocol string) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForPrefixSet(from, dst, protocol)
+}
+
+func (g *Graph) SymbolicPacketReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID, protocol string) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForClass(from, universe, classID, protocol)
+}
+
 func (g *Graph) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachability(from, prefix)
 }
@@ -230,6 +238,9 @@ func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureS
 	case PacketTarget:
 		result := g.SymbolicPacketReachability(from, t.To, t.Protocol)
 		goal = result.Unreachable
+	case PacketPrefixTarget:
+		result := g.SymbolicPacketReachabilityForPrefixSet(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Protocol)
+		goal = result.Unreachable
 	case PrefixTarget:
 		result := g.SymbolicRouteReachability(from, string(t))
 		goal = result.Unreachable
@@ -273,6 +284,19 @@ type PacketTarget struct {
 
 func (t PacketTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
 	_, ok, _ := g.PacketReachable(from, t.To, t.Protocol, failures)
+	return ok
+}
+
+type PacketPrefixTarget struct {
+	Prefix   model.Prefix
+	Protocol string
+}
+
+func (t PacketPrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	if t.Prefix.IsZero() {
+		return false
+	}
+	_, ok, _ := g.PacketReachable(from, t.Prefix.Addr().String(), t.Protocol, failures)
 	return ok
 }
 

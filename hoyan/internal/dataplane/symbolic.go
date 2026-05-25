@@ -53,6 +53,15 @@ func (e *Engine) SymbolicLookupFIB(node, dst string) []SymbolicFIBCandidate {
 		return nil
 	}
 	entries := matchingFIBEntries(e.fib[node], ip)
+	return e.symbolicLookupFIBEntries(entries)
+}
+
+func (e *Engine) SymbolicLookupFIBForPrefixSet(node string, dst model.PrefixSet) []SymbolicFIBCandidate {
+	entries := matchingFIBEntriesForPrefixSet(e.fib[node], dst)
+	return e.symbolicLookupFIBEntries(entries)
+}
+
+func (e *Engine) symbolicLookupFIBEntries(entries []FIBEntry) []SymbolicFIBCandidate {
 	var out []SymbolicFIBCandidate
 	var higher []failure.Cond
 	for _, entry := range entries {
@@ -120,24 +129,68 @@ func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicR
 		result.Reason = "source node not found"
 		return result
 	}
+	dstSet := model.ExactPrefixSet{Prefix: dstPrefix}
+	return e.symbolicPacketReachabilityForPrefixSet(from, dstSet, dstPrefix.NetIP(), protocol, failure.And(failure.NodeVar(from), failure.NodeVar(dstNode)))
+}
+
+func (e *Engine) SymbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, protocol string) SymbolicReachabilityResult {
+	result := SymbolicReachabilityResult{Reachable: failure.False(), Unreachable: failure.True()}
+	if e == nil || e.idx == nil {
+		result.Reason = "topology index is unavailable"
+		return result
+	}
+	if dst == nil {
+		result.Reason = "destination prefix set is empty"
+		return result
+	}
+	if _, ok := e.idx.Node(from); !ok {
+		result.Reason = "source node not found"
+		return result
+	}
+	rep, ok := representativePrefixForSet(dst)
+	if !ok {
+		result.Reason = "destination prefix set is unsupported"
+		return result
+	}
+	if !e.hasOriginForPrefixSet(dst) {
+		result.Reason = "destination prefix not advertised"
+		return result
+	}
+	return e.symbolicPacketReachabilityForPrefixSet(from, dst, rep.NetIP(), protocol, failure.NodeVar(from))
+}
+
+func (e *Engine) SymbolicPacketReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID, protocol string) SymbolicReachabilityResult {
+	for _, class := range universe.Classes {
+		if class.ID == classID {
+			return e.SymbolicPacketReachabilityForPrefixSet(from, class.Space, protocol)
+		}
+	}
+	return SymbolicReachabilityResult{
+		Reachable:   failure.False(),
+		Unreachable: failure.True(),
+		Reason:      "prefix class not found",
+	}
+}
+
+func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, packetPrefix netip.Prefix, protocol string, initialCond failure.Cond) SymbolicReachabilityResult {
 	maxHops := len(e.idx.NodesByName)
 	if maxHops == 0 {
 		maxHops = len(e.fib) + 1
 	}
-	packet := controlplane.PacketMessage{Node: from, Prefix: dstPrefix.NetIP(), Protocol: protocol}
+	packet := controlplane.PacketMessage{Node: from, Prefix: packetPrefix, DstSet: dst, Protocol: protocol}
 	initial := SymbolicPacketState{
 		Node:   from,
 		Packet: packet,
-		Cond:   failure.And(failure.NodeVar(from), failure.NodeVar(dstNode)),
+		Cond:   initialCond,
 		Path:   Path{Nodes: []string{from}},
 	}
 	var paths []SymbolicPacketPath
-	e.symbolicForward(initial, to, dstPrefix.NetIP(), maxHops, map[string]bool{}, nil, &paths)
+	e.symbolicForward(initial, dst, packetPrefix, maxHops, map[string]bool{}, nil, &paths)
 	conds := make([]failure.Cond, 0, len(paths))
 	for _, path := range paths {
 		conds = append(conds, path.Cond)
 	}
-	reachable = failure.Or(conds...)
+	reachable := failure.Or(conds...)
 	return SymbolicReachabilityResult{
 		Reachable:   reachable,
 		Unreachable: failure.Not(reachable),
@@ -154,7 +207,7 @@ func routePath(idx *model.TopologyIndex, route controlplane.RIBEntry) Path {
 	return Path{Nodes: nodes, Links: links, Cost: idx.PathCost(route.Links)}
 }
 
-func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefix netip.Prefix, maxHops int, visited map[string]bool, states []SymbolicPacketState, paths *[]SymbolicPacketPath) {
+func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet, packetPrefix netip.Prefix, maxHops int, visited map[string]bool, states []SymbolicPacketState, paths *[]SymbolicPacketPath) {
 	if isFalseCond(state.Cond) {
 		return
 	}
@@ -162,8 +215,9 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 		return
 	}
 	states = append(states, state)
-	if e.originates(state.Node, dstPrefix) {
-		*paths = append(*paths, SymbolicPacketPath{Path: state.Path, Cond: condOrTrue(state.Cond), States: append([]SymbolicPacketState(nil), states...)})
+	if e.originatesPrefixSet(state.Node, dst) {
+		cond := failure.And(condOrTrue(state.Cond), failure.NodeVar(state.Node))
+		*paths = append(*paths, SymbolicPacketPath{Path: state.Path, Cond: cond, States: append([]SymbolicPacketState(nil), states...)})
 		return
 	}
 	if len(state.Path.Nodes) > maxHops {
@@ -181,7 +235,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 	}
 	nextVisited := copyVisited(visited)
 	nextVisited[state.Node] = true
-	candidates := e.SymbolicLookupFIB(state.Node, dst)
+	candidates := e.SymbolicLookupFIBForPrefixSet(state.Node, dst)
 	for _, candidate := range candidates {
 		entry := candidate.Entry
 		if entry.NextHop == "" {
@@ -212,7 +266,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst string, dstPrefi
 			Cond:             nextCond,
 			Path:             nextPath,
 		}
-		e.symbolicForward(nextState, dst, dstPrefix, maxHops, nextVisited, states, paths)
+		e.symbolicForward(nextState, dst, packetPrefix, maxHops, nextVisited, states, paths)
 	}
 }
 
@@ -230,6 +284,37 @@ func matchingFIBEntries(entries []FIBEntry, ip netip.Addr) []FIBEntry {
 		return out[i].Prefix.Bits() > out[j].Prefix.Bits()
 	})
 	return out
+}
+
+func matchingFIBEntriesForPrefixSet(entries []FIBEntry, dst model.PrefixSet) []FIBEntry {
+	if dst == nil {
+		return nil
+	}
+	var out []FIBEntry
+	for _, entry := range entries {
+		entrySet := model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(entry.Prefix)}
+		if entrySet.Overlaps(dst) {
+			out = append(out, entry)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Prefix.Bits() == out[j].Prefix.Bits() {
+			return false
+		}
+		return out[i].Prefix.Bits() > out[j].Prefix.Bits()
+	})
+	return out
+}
+
+func representativePrefixForSet(set model.PrefixSet) (model.Prefix, bool) {
+	switch s := set.(type) {
+	case model.ExactPrefixSet:
+		return s.Prefix, !s.Prefix.IsZero()
+	case model.PrefixRangeSet:
+		return s.Base, !s.Base.IsZero()
+	default:
+		return model.Prefix{}, false
+	}
 }
 
 func condOrTrue(cond failure.Cond) failure.Cond {

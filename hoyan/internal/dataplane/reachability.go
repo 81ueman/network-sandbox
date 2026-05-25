@@ -113,6 +113,33 @@ func (e *Engine) originates(node string, prefix netip.Prefix) bool {
 	return false
 }
 
+func (e *Engine) originatesPrefixSet(node string, dst model.PrefixSet) bool {
+	n, ok := e.idx.Node(node)
+	if !ok || dst == nil {
+		return false
+	}
+	for _, raw := range n.Prefixes {
+		if !raw.IsZero() && (model.ExactPrefixSet{Prefix: raw}).Overlaps(dst) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) hasOriginForPrefixSet(dst model.PrefixSet) bool {
+	if e == nil || e.idx == nil || dst == nil {
+		return false
+	}
+	for _, node := range e.idx.NodesByName {
+		for _, raw := range node.Prefixes {
+			if !raw.IsZero() && (model.ExactPrefixSet{Prefix: raw}).Overlaps(dst) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func reverse[T any](xs []T) {
 	for i, j := 0, len(xs)-1; i < j; i, j = i+1, j-1 {
 		xs[i], xs[j] = xs[j], xs[i]
