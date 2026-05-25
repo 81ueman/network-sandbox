@@ -74,6 +74,7 @@ func NewRootCommand() *cobra.Command {
 		NewLiveCheckCommand(),
 		NewRIBCompareCommand(),
 		NewRenderTopologyCommand(),
+		NewModelCommand(),
 	)
 	return cmd
 }
