@@ -74,9 +74,8 @@ func deniedPolicyName(node, peer string, dst netip.Prefix, protocol, plane, stag
 		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, protocol) {
 			continue
 		}
-		if pol.DstPrefix != "" {
-			pfx, err := netip.ParsePrefix(pol.DstPrefix)
-			if err != nil || !prefixesOverlap(pfx, dst) {
+		if !pol.DstPrefix.IsZero() {
+			if !pol.DstPrefix.Overlaps(model.PrefixFromNetIP(dst)) {
 				continue
 			}
 		}

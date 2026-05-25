@@ -24,7 +24,7 @@ type Node struct {
 	MgmtIPv4       string          `yaml:"mgmt_ipv4"`
 	Loopback       string          `yaml:"loopback"`
 	ConfigPath     string          `yaml:"config_path"`
-	Prefixes       []string        `yaml:"prefixes"`
+	Prefixes       []Prefix        `yaml:"prefixes"`
 	Interfaces     []Interface     `yaml:"interfaces"`
 	Neighbors      []BGPNeighbor   `yaml:"neighbors"`
 	PrefixLists    []PrefixList    `yaml:"prefix_lists"`
@@ -118,7 +118,7 @@ type Policy struct {
 	Peer      string `yaml:"peer"`
 	Action    string `yaml:"action"`
 	Protocol  string `yaml:"protocol"`
-	DstPrefix string `yaml:"dst_prefix"`
+	DstPrefix Prefix `yaml:"dst_prefix"`
 }
 
 type Queries struct {
@@ -130,7 +130,7 @@ type Queries struct {
 type RouteCheck struct {
 	Name        string `yaml:"name"`
 	From        string `yaml:"from"`
-	Prefix      string `yaml:"prefix"`
+	Prefix      Prefix `yaml:"prefix"`
 	MaxFailures int    `yaml:"max_failures"`
 }
 
@@ -147,7 +147,7 @@ type FailureCheck struct {
 	Name            string `yaml:"name"`
 	From            string `yaml:"from"`
 	To              string `yaml:"to"`
-	Prefix          string `yaml:"prefix"`
+	Prefix          Prefix `yaml:"prefix"`
 	Protocol        string `yaml:"protocol"`
 	ExpectReachable *bool  `yaml:"expect_reachable"`
 	MaxFailures     int    `yaml:"max_failures"`
@@ -182,9 +182,9 @@ func (t *Topology) Validate() error {
 			return fmt.Errorf("duplicate node %q", n.Name)
 		}
 		seen[n.Name] = true
-		for _, p := range append([]string{}, n.Prefixes...) {
-			if _, err := netip.ParsePrefix(p); err != nil {
-				return fmt.Errorf("node %s prefix %s: %w", n.Name, p, err)
+		for _, p := range n.Prefixes {
+			if p.IsZero() {
+				return fmt.Errorf("node %s has invalid empty prefix", n.Name)
 			}
 		}
 		if n.Loopback != "" {
@@ -213,11 +213,6 @@ func (t *Topology) Validate() error {
 	for _, p := range t.Policies {
 		if !seen[p.Node] {
 			return fmt.Errorf("policy %s references unknown node %s", p.Name, p.Node)
-		}
-		if p.DstPrefix != "" {
-			if _, err := netip.ParsePrefix(p.DstPrefix); err != nil {
-				return fmt.Errorf("policy %s dst prefix %s: %w", p.Name, p.DstPrefix, err)
-			}
 		}
 	}
 	return nil
@@ -275,14 +270,13 @@ func (t *Topology) Node(name string) (Node, bool) {
 }
 
 func (t *Topology) OriginForPrefix(prefix string) (string, bool) {
-	want, err := netip.ParsePrefix(prefix)
+	want, err := ParsePrefix(prefix)
 	if err != nil {
 		return "", false
 	}
 	for _, n := range t.Nodes {
-		for _, raw := range n.Prefixes {
-			got, err := netip.ParsePrefix(raw)
-			if err == nil && got == want {
+		for _, got := range n.Prefixes {
+			if got.Equal(want) {
 				return n.Name, true
 			}
 		}
@@ -290,17 +284,16 @@ func (t *Topology) OriginForPrefix(prefix string) (string, bool) {
 	return "", false
 }
 
-func (t *Topology) OriginForIP(addr string) (string, netip.Prefix, bool) {
+func (t *Topology) OriginForIP(addr string) (string, Prefix, bool) {
 	ip, err := netip.ParseAddr(addr)
 	if err != nil {
-		return "", netip.Prefix{}, false
+		return "", Prefix{}, false
 	}
 	var bestNode string
-	var bestPrefix netip.Prefix
+	var bestPrefix Prefix
 	for _, n := range t.Nodes {
-		for _, raw := range n.Prefixes {
-			pfx, err := netip.ParsePrefix(raw)
-			if err != nil || !pfx.Contains(ip) {
+		for _, pfx := range n.Prefixes {
+			if !pfx.Contains(ip) {
 				continue
 			}
 			if bestNode == "" || pfx.Bits() > bestPrefix.Bits() {

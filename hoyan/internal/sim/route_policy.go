@@ -58,7 +58,7 @@ func applyRoutePolicy(topo *model.Topology, node model.Node, peerName string, po
 }
 
 func routePolicyRuleMatches(topo *model.Topology, node model.Node, peerName string, rule model.RoutePolicyRule, route RIBEntry) bool {
-	if rule.MatchPrefixList != "" && !prefixListPermits(node, rule.MatchPrefixList, route.Prefix) {
+	if rule.MatchPrefixList != "" && !prefixListPermitsPrefix(node, rule.MatchPrefixList, route.Prefix.NetIP()) {
 		return false
 	}
 	if rule.MatchNextHopPrefixList != "" && !prefixListPermitsAddress(node, rule.MatchNextHopPrefixList, routeNextHopForPolicy(topo, node.Name, peerName, route)) {

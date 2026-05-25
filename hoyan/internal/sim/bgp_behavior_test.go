@@ -28,7 +28,7 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			name:    "ebgp prepends local ASN and rewrites next-hop",
 			from:    ebgpFrom,
 			to:      ebgpTo,
-			route:   RIBEntry{Prefix: "10.0.0.0/24", NextHop: "original", ASPath: []uint32{65100}},
+			route:   RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "original", ASPath: []uint32{65100}},
 			accept:  true,
 			nextHop: "r1",
 			asPath:  []uint32{65001, 65100},
@@ -37,7 +37,7 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			name:       "ibgp preserves next-hop",
 			from:       ebgpFrom,
 			to:         ibgpTo,
-			route:      RIBEntry{Prefix: "10.0.0.0/24", NextHop: "edge", ASPath: []uint32{65100}},
+			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "edge", ASPath: []uint32{65100}},
 			accept:     true,
 			nextHop:    "edge",
 			asPath:     []uint32{65100},
@@ -48,7 +48,7 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			from:       ebgpFrom,
 			to:         ibgpTo,
 			session:    model.BGPNeighbor{NextHopSelf: true},
-			route:      RIBEntry{Prefix: "10.0.0.0/24", NextHop: "edge", ASPath: []uint32{65100}},
+			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "edge", ASPath: []uint32{65100}},
 			accept:     true,
 			nextHop:    "r1",
 			asPath:     []uint32{65100},
@@ -58,7 +58,7 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			name:       "ibgp empty next-hop is set to exporter",
 			from:       ebgpFrom,
 			to:         ibgpTo,
-			route:      RIBEntry{Prefix: "10.0.0.0/24", ASPath: []uint32{65100}},
+			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), ASPath: []uint32{65100}},
 			accept:     true,
 			nextHop:    "r1",
 			asPath:     []uint32{65100},
@@ -68,7 +68,7 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			name:   "ibgp learned route is not readvertised to ibgp",
 			from:   ebgpFrom,
 			to:     ibgpTo,
-			route:  RIBEntry{Prefix: "10.0.0.0/24", LearnedIBGP: true, NextHop: "edge", ASPath: []uint32{65100}},
+			route:  RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), LearnedIBGP: true, NextHop: "edge", ASPath: []uint32{65100}},
 			accept: false,
 		},
 	}
@@ -166,9 +166,9 @@ func TestCEOSSelectRoutesKeepsUnreachableNextHopForBgpRIB(t *testing.T) {
 	behavior := NewCEOSBehavior()
 	device := model.Node{Name: "ceos", ASN: 65000}
 	routes := []RIBEntry{
-		{Prefix: "10.0.0.0/24", From: "peer1", NextHop: "remote", LocalPref: 300},
-		{Prefix: "10.0.0.0/24", From: "peer2", NextHop: "peer2", LocalPref: 200},
-		{Prefix: "10.0.0.0/24", From: "peer3", NextHop: "", LocalPref: 100},
+		{Prefix: model.MustPrefix("10.0.0.0/24"), From: "peer1", NextHop: "remote", LocalPref: 300},
+		{Prefix: model.MustPrefix("10.0.0.0/24"), From: "peer2", NextHop: "peer2", LocalPref: 200},
+		{Prefix: model.MustPrefix("10.0.0.0/24"), From: "peer3", NextHop: "", LocalPref: 100},
 	}
 	selected := behavior.SelectRoutes(device, routes)
 	if len(selected) != 3 {

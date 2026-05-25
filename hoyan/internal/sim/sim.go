@@ -39,7 +39,7 @@ type Result struct {
 }
 
 type RIBEntry struct {
-	Prefix       string
+	Prefix       model.Prefix
 	Origin       string
 	From         string
 	NextHop      string
@@ -272,12 +272,16 @@ func (g *Graph) FailureContext(failures FailureSet) FailureContext {
 }
 
 func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, bool) {
+	pfx, err := model.ParsePrefix(prefix)
+	if err != nil {
+		return Path{}, false
+	}
 	ctx := g.FailureContext(failures)
 	if ctx.NodeFailed(from) {
 		return Path{}, false
 	}
 	var best *RIBEntry
-	for _, r := range g.rib[from][prefix] {
+	for _, r := range g.rib[from][pfx.String()] {
 		if r.SelectedCond != nil && r.SelectedCond.Eval(ctx) {
 			cp := r
 			best = &cp
@@ -317,18 +321,18 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 			return full, false, "forwarding loop"
 		}
 		visited[current] = true
-		if g.originates(current, dstPrefix) {
+		if g.originates(current, dstPrefix.NetIP()) {
 			return full, true, ""
 		}
 		currentNode, _ := g.topo.Node(current)
-		if pol, ok := behaviorFor(currentNode.Kind).CheckDataIngress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix, Protocol: protocol}, g.topo.Policies); ok {
+		if pol, ok := behaviorFor(currentNode.Kind).CheckDataIngress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol}, g.topo.Policies); ok {
 			return full, false, "denied by policy " + pol
 		}
 		rule, ok := g.lookupFIB(current, to, ctx)
 		if !ok {
 			return full, false, "no forwarding route"
 		}
-		if pol, ok := behaviorFor(currentNode.Kind).CheckDataEgress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix, Protocol: protocol}, g.topo.Policies); ok {
+		if pol, ok := behaviorFor(currentNode.Kind).CheckDataEgress(currentNode, PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol}, g.topo.Policies); ok {
 			return full, false, "denied by policy " + pol
 		}
 		if rule.NextHop == "" {
@@ -579,7 +583,7 @@ func (g *Graph) parentRoute(route RIBEntry) (RIBEntry, bool) {
 		return RIBEntry{}, false
 	}
 	parentNodes := strings.Join(route.Nodes[:len(route.Nodes)-1], ">")
-	for _, candidate := range g.rib[route.From][route.Prefix] {
+	for _, candidate := range g.rib[route.From][route.Prefix.String()] {
 		if strings.Join(candidate.Nodes, ">") == parentNodes {
 			return candidate, true
 		}
@@ -599,7 +603,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 		}
 		nextNode, _ := g.topo.Node(next)
 		nextBehavior := behaviorFor(nextNode.Kind)
-		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix, Route: route}
+		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix.String(), Route: route}
 		if !curBehavior.CheckControlEgress(curNode, exportMsg, g.topo.Policies) {
 			continue
 		}
@@ -612,7 +616,7 @@ func (g *Graph) walkBGP(route RIBEntry) {
 			continue
 		}
 		exported.Route = exportPolicy.Route
-		importMsg := ControlMessage{From: current, To: next, Prefix: exported.Route.Prefix, Route: exported.Route}
+		importMsg := ControlMessage{From: current, To: next, Prefix: exported.Route.Prefix.String(), Route: exported.Route}
 		if !nextBehavior.CheckControlIngress(nextNode, importMsg, g.topo.Policies) {
 			continue
 		}
@@ -668,11 +672,7 @@ func (g *Graph) deriveFIB() {
 		var entries []FIBEntry
 		n, _ := g.topo.Node(node)
 		behavior := behaviorFor(n.Kind)
-		for prefix, routes := range byPrefix {
-			pfx, err := netip.ParsePrefix(prefix)
-			if err != nil {
-				continue
-			}
+		for _, routes := range byPrefix {
 			seenSelected := map[string]bool{}
 			var installed []RIBEntry
 			for _, route := range routes {
@@ -689,7 +689,7 @@ func (g *Graph) deriveFIB() {
 				seenSelected[selectedKey] = true
 				installed = append(installed, route)
 				entries = append(entries, FIBEntry{
-					Prefix:    pfx,
+					Prefix:    route.Prefix.NetIP(),
 					NextHop:   route.NextHop,
 					Path:      Path{Nodes: route.Nodes, Links: route.Links, Cost: g.pathCost(route.Links)},
 					Condition: route.SelectedCond,
@@ -715,16 +715,17 @@ func equivalentInstalledRoute(decision BGPDecisionProcess, node model.Node, inst
 	return false
 }
 
-func (g *Graph) addRIB(node, prefix string, entry RIBEntry) {
+func (g *Graph) addRIB(node string, prefix model.Prefix, entry RIBEntry) {
 	if g.rib[node] == nil {
 		g.rib[node] = map[string][]RIBEntry{}
 	}
-	for _, existing := range g.rib[node][prefix] {
+	key := prefix.String()
+	for _, existing := range g.rib[node][key] {
 		if routeKey(existing) == routeKey(entry) {
 			return
 		}
 	}
-	g.rib[node][prefix] = append(g.rib[node][prefix], entry)
+	g.rib[node][key] = append(g.rib[node][key], entry)
 }
 
 func (g *Graph) lookupFIB(node, dst string, ctx FailureContext) (FIBEntry, bool) {
@@ -746,8 +747,7 @@ func (g *Graph) originates(node string, prefix netip.Prefix) bool {
 		return false
 	}
 	for _, raw := range n.Prefixes {
-		pfx, err := netip.ParsePrefix(raw)
-		if err == nil && pfx == prefix {
+		if raw.NetIP() == prefix {
 			return true
 		}
 	}
@@ -781,7 +781,7 @@ func routeKey(r RIBEntry) string {
 	if r.Invalid {
 		valid = "invalid"
 	}
-	return r.Prefix + "|" + r.Origin + "|" + strings.Join(r.Nodes, ">") + "|" + valid
+	return r.Prefix.String() + "|" + r.Origin + "|" + strings.Join(r.Nodes, ">") + "|" + valid
 }
 
 func routeInvalidForDevice(device model.Node, route RIBEntry) bool {

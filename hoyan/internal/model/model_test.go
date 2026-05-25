@@ -83,6 +83,23 @@ func TestOriginLookups(t *testing.T) {
 	}
 }
 
+func TestOriginLookupsUseTypedCanonicalPrefixes(t *testing.T) {
+	topo := &Topology{Nodes: []Node{
+		{Name: "origin", Prefixes: MustPrefixes("10.0.0.1/24")},
+	}}
+	if err := topo.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	node, ok := topo.OriginForPrefix("10.0.0.0/24")
+	if !ok || node != "origin" {
+		t.Fatalf("OriginForPrefix() = %q, %v", node, ok)
+	}
+	node, pfx, ok := topo.OriginForIP("10.0.0.99")
+	if !ok || node != "origin" || pfx.String() != "10.0.0.0/24" {
+		t.Fatalf("OriginForIP() = %q %s %v", node, pfx, ok)
+	}
+}
+
 func TestParseFRRConfig(t *testing.T) {
 	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "bj-edge1", "frr.conf"))
 	if err != nil {

@@ -64,6 +64,10 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
+		prefixes, err := parsePrefixes(parsed.Prefixes)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
 		node := Node{
 			Name:           name,
 			Kind:           kind,
@@ -72,7 +76,7 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 			MgmtIPv4:       cnode.MgmtIPv4,
 			Loopback:       parsed.Loopback,
 			ConfigPath:     configPath,
-			Prefixes:       parsed.Prefixes,
+			Prefixes:       prefixes,
 			Interfaces:     parsed.Interfaces,
 			Neighbors:      parsed.Neighbors,
 			PrefixLists:    parsed.PrefixLists,
@@ -122,6 +126,18 @@ func LoadLabTopology(clabPath, policyPath string) (*Topology, error) {
 		return nil, err
 	}
 	return topo, nil
+}
+
+func parsePrefixes(raw []string) ([]Prefix, error) {
+	out := make([]Prefix, 0, len(raw))
+	for _, p := range raw {
+		parsed, err := ParsePrefix(p)
+		if err != nil {
+			return nil, fmt.Errorf("prefix %s: %w", p, err)
+		}
+		out = append(out, parsed)
+	}
+	return out, nil
 }
 
 func LoadPolicies(path string) ([]Policy, error) {
