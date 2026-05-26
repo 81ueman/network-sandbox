@@ -21,6 +21,21 @@ cd hoyan
 go run ./cmd/hoyan verify
 ```
 
+Use strict config mode when the containerlab topology and startup configs are
+the verification source of truth and unsupported parser syntax should fail the
+run instead of being reported as warnings:
+
+```bash
+go run ./cmd/hoyan verify --strict-config
+go run ./cmd/hoyan live-check --strict-config
+go run ./cmd/hoyan rib-compare --strict-config
+go run ./cmd/hoyan model rib --strict-config
+```
+
+Strict config errors include the vendor, config file, line number, raw
+statement, and unsupported reason so CI logs point at the config syntax that
+needs parser support or an intentional non-strict run.
+
 Checks are defined in `intent/queries.yml`:
 
 - route reachability to advertised prefixes

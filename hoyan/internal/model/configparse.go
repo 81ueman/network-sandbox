@@ -38,6 +38,10 @@ type UnsupportedStatement struct {
 	Reason string
 }
 
+type UnsupportedConfigError struct {
+	Warnings []UnsupportedStatement
+}
+
 type aclBinding struct {
 	Name      string
 	Interface string
@@ -53,6 +57,18 @@ func (w UnsupportedStatement) String() string {
 		loc = w.Vendor
 	}
 	return fmt.Sprintf("%s: %s: %s", loc, w.Reason, w.Text)
+}
+
+func (e UnsupportedConfigError) Error() string {
+	if len(e.Warnings) == 0 {
+		return "unsupported config statements"
+	}
+	lines := make([]string, 0, len(e.Warnings)+1)
+	lines = append(lines, fmt.Sprintf("unsupported config statements: %d", len(e.Warnings)))
+	for _, warning := range e.Warnings {
+		lines = append(lines, fmt.Sprintf("vendor=%s file=%s line=%d raw=%q reason=%s", warning.Vendor, warning.File, warning.Line, warning.Text, warning.Reason))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func ParseConfig(kind DeviceKind, path string) (ParsedConfig, error) {

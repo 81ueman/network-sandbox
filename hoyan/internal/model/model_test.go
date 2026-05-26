@@ -392,6 +392,52 @@ route-map RM permit 10
 	}
 }
 
+func TestLoadLabTopologyStrictConfigRejectsUnsupportedStatements(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "frr.conf")
+	if err := os.WriteFile(configPath, []byte(`
+hostname r1
+route-map RM permit 10
+ match source-protocol bgp
+ set local-preference 200
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	topologyPath := filepath.Join(dir, "lab.clab.yml")
+	if err := os.WriteFile(topologyPath, []byte(`name: strict-test
+topology:
+  nodes:
+    r1:
+      kind: linux
+      binds:
+        - frr.conf:/etc/frr/frr.conf
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(topology) error = %v", err)
+	}
+
+	topo, warnings, err := LoadLabTopologyWithOptions(topologyPath, LoadLabTopologyOptions{CollectWarnings: true})
+	if err != nil {
+		t.Fatalf("LoadLabTopologyWithOptions(non-strict) error = %v", err)
+	}
+	if topo == nil || len(warnings) != 1 {
+		t.Fatalf("non-strict topology=%#v warnings=%#v, want topology and one warning", topo, warnings)
+	}
+
+	_, warnings, err = LoadLabTopologyWithOptions(topologyPath, LoadLabTopologyOptions{StrictConfig: true})
+	if err == nil {
+		t.Fatalf("LoadLabTopologyWithOptions(strict) error = nil")
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("strict warnings = %#v, want one", warnings)
+	}
+	msg := err.Error()
+	for _, want := range []string{"vendor=frr", "file=" + configPath, "line=4", `raw="match source-protocol bgp"`, "reason=unsupported FRR route-map match statement"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("strict error missing %q:\n%s", want, msg)
+		}
+	}
+}
+
 func TestParseSRLinuxRoutingPolicies(t *testing.T) {
 	config := `
 set / system name host-name core1

@@ -98,16 +98,21 @@ func NewVerifyCommand() *cobra.Command {
 	}
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	return cmd
 }
 
 type verifyOptions struct {
 	topologyPath string
 	queriesPath  string
+	strictConfig bool
 }
 
 func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) error {
-	topo, warnings, err := model.LoadLabTopologyWithWarnings(opts.topologyPath)
+	topo, warnings, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{
+		CollectWarnings: true,
+		StrictConfig:    opts.strictConfig,
+	})
 	if err != nil {
 		return err
 	}
@@ -158,6 +163,7 @@ func NewLiveCheckCommand() *cobra.Command {
 			err := livecheck.Run(cmd.Context(), livecheck.Options{
 				Topology:      opts.topologyPath,
 				Queries:       opts.queriesPath,
+				StrictConfig:  opts.strictConfig,
 				Timeout:       opts.timeout,
 				PollInterval:  opts.pollInterval,
 				MaxPolls:      opts.maxPolls,
@@ -178,12 +184,14 @@ func NewLiveCheckCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.maxPolls, "max-polls", livecheck.DefaultMaxPolls, "maximum BGP collection polls before reporting diffs")
 	cmd.Flags().BoolVar(&opts.keepOnFailure, "keep-on-failure", false, "leave lab running when the check fails")
 	cmd.Flags().BoolVar(&opts.skipDestroy, "skip-destroy", false, "leave lab running after the check")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	return cmd
 }
 
 type liveCheckOptions struct {
 	topologyPath  string
 	queriesPath   string
+	strictConfig  bool
 	timeout       time.Duration
 	pollInterval  time.Duration
 	maxPolls      int
@@ -222,15 +230,17 @@ func NewRIBCompareCommand() *cobra.Command {
 		},
 	}
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	return cmd
 }
 
 type ribCompareOptions struct {
 	topologyPath string
+	strictConfig bool
 }
 
 func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) error {
-	topo, err := model.LoadLabTopology(opts.topologyPath)
+	topo, _, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{StrictConfig: opts.strictConfig})
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}

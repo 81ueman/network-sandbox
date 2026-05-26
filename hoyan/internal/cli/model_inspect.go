@@ -30,6 +30,7 @@ type modelInspectOptions struct {
 	to           string
 	protocol     string
 	dstPort      int
+	strictConfig bool
 }
 
 type ribInspectRow struct {
@@ -201,6 +202,7 @@ func NewModelSymbolicPacketCommand() *cobra.Command {
 		},
 	}
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.to, "to", "", "destination IP address")
@@ -224,6 +226,7 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 		},
 	}
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "destination prefix")
@@ -232,13 +235,14 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 
 func addModelCommonFlags(cmd *cobra.Command, opts *modelInspectOptions) {
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.node, "node", "", "node name filter")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 }
 
 func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) error {
-	topo, graph, err := loadModelGraph(opts.topologyPath)
+	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -262,7 +266,7 @@ func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) err
 }
 
 func runModelFIB(_ context.Context, opts modelInspectOptions, out io.Writer) error {
-	topo, graph, err := loadModelGraph(opts.topologyPath)
+	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -292,7 +296,7 @@ func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.
 	if opts.to == "" {
 		return ExitError{Code: 2, Err: fmt.Errorf("--to is required")}
 	}
-	topo, graph, err := loadModelGraph(opts.topologyPath)
+	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -321,7 +325,7 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 	if opts.prefix == "" {
 		return ExitError{Code: 2, Err: fmt.Errorf("--prefix is required")}
 	}
-	topo, graph, err := loadModelGraph(opts.topologyPath)
+	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -343,8 +347,8 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 	}
 }
 
-func loadModelGraph(topologyPath string) (*model.Topology, *sim.Graph, error) {
-	topo, err := model.LoadLabTopology(topologyPath)
+func loadModelGraph(topologyPath string, strictConfig bool) (*model.Topology, *sim.Graph, error) {
+	topo, _, err := model.LoadLabTopologyWithOptions(topologyPath, model.LoadLabTopologyOptions{StrictConfig: strictConfig})
 	if err != nil {
 		return nil, nil, err
 	}

@@ -23,6 +23,7 @@ jobs:
         with:
           go-version-file: hoyan/go.mod
       - run: go test ./...
+      - run: go run ./cmd/hoyan verify --strict-config
 
   test-z3:
     runs-on: ubuntu-latest

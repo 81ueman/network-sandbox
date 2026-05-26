@@ -20,6 +20,7 @@ type Options struct {
 	Timeout        time.Duration
 	PollInterval   time.Duration
 	MaxPolls       int
+	StrictConfig   bool
 	CompareOptions ribcompare.BgpRibCompareOptions
 	KeepOnFailure  bool
 	SkipDestroy    bool
@@ -48,7 +49,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if isZeroCompareOptions(compareOptions) {
 		compareOptions = ribcompare.DefaultBgpRibCompareOptions()
 	}
-	topo, err := model.LoadLabTopology(opts.Topology)
+	topo, _, err := model.LoadLabTopologyWithOptions(opts.Topology, model.LoadLabTopologyOptions{StrictConfig: opts.StrictConfig})
 	if err != nil {
 		return err
 	}
