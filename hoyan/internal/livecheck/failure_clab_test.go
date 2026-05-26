@@ -21,7 +21,7 @@ func TestContainerlabRIBsMatchSimulationUnderFailures(t *testing.T) {
 		t.Skipf("docker not found: %v", err)
 	}
 
-	topologyPath := filepath.Join("..", "..", "hoyan.clab.yml")
+	topologyPath := filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml")
 	topo, err := model.LoadLabTopology(topologyPath)
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)

@@ -73,7 +73,7 @@ topology:
 }
 
 func TestLoadLabTopologyContainerNames(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -81,12 +81,12 @@ func TestLoadLabTopologyContainerNames(t *testing.T) {
 	if !ok {
 		t.Fatalf("bj-edge1 not found")
 	}
-	if node.ContainerName != "clab-hoyan-wan-bj-edge1" {
+	if node.ContainerName != "clab-hoyan-base-wan-bj-edge1" {
 		t.Fatalf("original topology container name = %q, want containerlab default name", node.ContainerName)
 	}
 
-	sourceDir := absPath(t, filepath.Join("..", ".."))
-	data, err := RenderIsolatedTopology(mustReadFile(t, filepath.Join("..", "..", "hoyan.clab.yml")), TopologyRenderOptions{Suffix: "issue-21", SourceDir: sourceDir})
+	sourceDir := absPath(t, filepath.Join("..", "..", "labs", "base-wan"))
+	data, err := RenderIsolatedTopology(mustReadFile(t, filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml")), TopologyRenderOptions{Suffix: "issue-21", SourceDir: sourceDir})
 	if err != nil {
 		t.Fatalf("RenderIsolatedTopology() error = %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLoadLabTopologyContainerNames(t *testing.T) {
 	if !ok {
 		t.Fatalf("bj-edge1 not found in rendered topology")
 	}
-	if node.ContainerName != "clab-hoyan-wan-issue-21-bj-edge1" {
+	if node.ContainerName != "clab-hoyan-base-wan-issue-21-bj-edge1" {
 		t.Fatalf("rendered topology container name = %q", node.ContainerName)
 	}
 	if node.MgmtIPv4 != "172.86.21.11" {

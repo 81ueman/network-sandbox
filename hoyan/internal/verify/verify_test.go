@@ -9,11 +9,11 @@ import (
 )
 
 func TestRunBundledQueries(t *testing.T) {
-	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
-	queries, err := model.LoadQueries(filepath.Join("..", "..", "intent", "queries.yml"))
+	queries, err := model.LoadQueries(filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"))
 	if err != nil {
 		t.Fatalf("LoadQueries() error = %v", err)
 	}
@@ -36,11 +36,11 @@ func TestRunBundledQueries(t *testing.T) {
 }
 
 func TestRunWithOptionsExpandsPrefixClasses(t *testing.T) {
-	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
-	queries, err := model.LoadQueries(filepath.Join("..", "..", "intent", "queries.yml"))
+	queries, err := model.LoadQueries(filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"))
 	if err != nil {
 		t.Fatalf("LoadQueries() error = %v", err)
 	}
@@ -71,11 +71,11 @@ func TestRunWithOptionsExpandsPrefixClasses(t *testing.T) {
 }
 
 func TestRunWithOptionsCollapsesEquivalentPrefixClassResults(t *testing.T) {
-	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
-	queries, err := model.LoadQueries(filepath.Join("..", "..", "intent", "queries.yml"))
+	queries, err := model.LoadQueries(filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"))
 	if err != nil {
 		t.Fatalf("LoadQueries() error = %v", err)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoadLabTopology(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -79,7 +79,7 @@ packet_checks:
 }
 
 func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestLoadLabTopologyIncludesRouteMaps(t *testing.T) {
 }
 
 func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -169,7 +169,7 @@ func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
 }
 
 func TestOriginLookups(t *testing.T) {
-	topo, err := LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
+	topo, err := LoadLabTopology(filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"))
 	if err != nil {
 		t.Fatalf("LoadLabTopology() error = %v", err)
 	}
@@ -201,7 +201,7 @@ func TestOriginLookupsUseTypedCanonicalPrefixes(t *testing.T) {
 }
 
 func TestParseFRRConfig(t *testing.T) {
-	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "bj-edge1", "frr.conf"))
+	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "labs", "base-wan", "configs", "frr", "bj-edge1", "frr.conf"))
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
@@ -299,7 +299,7 @@ func TestParseNftablesRejectsUnsupportedStatement(t *testing.T) {
 }
 
 func TestParseCoreBJRouteMapConfig(t *testing.T) {
-	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "core-bj", "frr.conf"))
+	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "labs", "base-wan", "configs", "frr", "core-bj", "frr.conf"))
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
@@ -565,9 +565,9 @@ func TestParseConfigWithWarningsCurrentLabConfigs(t *testing.T) {
 		kind DeviceKind
 		glob string
 	}{
-		{kind: KindFRR, glob: filepath.Join("..", "..", "configs", "frr", "*", "frr.conf")},
-		{kind: KindCEOS, glob: filepath.Join("..", "..", "configs", "ceos", "*.cfg")},
-		{kind: KindSRLinux, glob: filepath.Join("..", "..", "configs", "srlinux", "*.cfg")},
+		{kind: KindFRR, glob: filepath.Join("..", "..", "labs", "base-wan", "configs", "frr", "*", "frr.conf")},
+		{kind: KindCEOS, glob: filepath.Join("..", "..", "labs", "base-wan", "configs", "ceos", "*.cfg")},
+		{kind: KindSRLinux, glob: filepath.Join("..", "..", "labs", "base-wan", "configs", "srlinux", "*.cfg")},
 	}
 	for _, tt := range tests {
 		paths, err := filepath.Glob(tt.glob)
@@ -892,7 +892,7 @@ func TestValidateRejectsUnknownLinkInterface(t *testing.T) {
 }
 
 func TestParseCoreHZEgressRouteMapConfig(t *testing.T) {
-	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "configs", "frr", "core-hz", "frr.conf"))
+	cfg, err := ParseConfig("frr", filepath.Join("..", "..", "labs", "base-wan", "configs", "frr", "core-hz", "frr.conf"))
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
@@ -910,7 +910,7 @@ func TestParseCoreHZEgressRouteMapConfig(t *testing.T) {
 }
 
 func TestParseCEOSConfig(t *testing.T) {
-	cfg, err := ParseConfig("ceos", filepath.Join("..", "..", "configs", "ceos", "core-sh.cfg"))
+	cfg, err := ParseConfig("ceos", filepath.Join("..", "..", "labs", "base-wan", "configs", "ceos", "core-sh.cfg"))
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
@@ -1176,7 +1176,7 @@ route-map RM permit 10
 }
 
 func TestParseSRLinuxConfig(t *testing.T) {
-	cfg, err := ParseConfig("srlinux", filepath.Join("..", "..", "configs", "srlinux", "core-gz.cfg"))
+	cfg, err := ParseConfig("srlinux", filepath.Join("..", "..", "labs", "base-wan", "configs", "srlinux", "core-gz.cfg"))
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}

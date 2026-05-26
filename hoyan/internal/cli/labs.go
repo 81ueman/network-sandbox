@@ -18,9 +18,12 @@ import (
 )
 
 const (
-	defaultTopologyPath = "hoyan.clab.yml"
-	defaultQueriesPath  = "intent/queries.yml"
+	labTopologyFile     = "hoyan.clab.yml"
+	labQueriesPath      = "intent/queries.yml"
 	defaultLabsDir      = "labs"
+	defaultLabDir       = "labs/base-wan"
+	defaultTopologyPath = defaultLabDir + "/" + labTopologyFile
+	defaultQueriesPath  = defaultLabDir + "/" + labQueriesPath
 )
 
 type labDescriptor struct {
@@ -137,8 +140,8 @@ func runLabsLiveCheck(ctx context.Context, args []string, opts labsLiveCheckOpti
 	}
 	var failures []string
 	for _, lab := range labs {
-		topologyPath := filepath.Join(lab.Path, defaultTopologyPath)
-		queriesPath := filepath.Join(lab.Path, defaultQueriesPath)
+		topologyPath := filepath.Join(lab.Path, labTopologyFile)
+		queriesPath := filepath.Join(lab.Path, labQueriesPath)
 		fmt.Fprintf(out, "==> live-check %s (%s)\n", lab.Name, lab.Path)
 		err := livecheck.Run(ctx, livecheck.Options{
 			Topology:      topologyPath,
@@ -220,9 +223,9 @@ func runLabsDescribe(raw string, out io.Writer) error {
 	writeStringList(out, "nos", desc.NOS)
 	writeStringList(out, "checks", desc.Checks)
 	writeStringList(out, "features", desc.Features)
-	fmt.Fprintf(out, "topology: %s\n", filepath.Join(desc.Path, defaultTopologyPath))
-	if _, err := os.Stat(filepath.Join(desc.Path, defaultQueriesPath)); err == nil {
-		fmt.Fprintf(out, "queries: %s\n", filepath.Join(desc.Path, defaultQueriesPath))
+	fmt.Fprintf(out, "topology: %s\n", filepath.Join(desc.Path, labTopologyFile))
+	if _, err := os.Stat(filepath.Join(desc.Path, labQueriesPath)); err == nil {
+		fmt.Fprintf(out, "queries: %s\n", filepath.Join(desc.Path, labQueriesPath))
 	}
 	return nil
 }
@@ -297,10 +300,10 @@ func resolveLabInputs(cmd *cobra.Command, labPath string, topologyPath *string, 
 		return err
 	}
 	if topologyPath != nil && !cmd.Flags().Changed("topology") {
-		*topologyPath = filepath.Join(labDir, defaultTopologyPath)
+		*topologyPath = filepath.Join(labDir, labTopologyFile)
 	}
 	if queriesPath != nil && !cmd.Flags().Changed("queries") {
-		*queriesPath = filepath.Join(labDir, defaultQueriesPath)
+		*queriesPath = filepath.Join(labDir, labQueriesPath)
 	}
 	return nil
 }
