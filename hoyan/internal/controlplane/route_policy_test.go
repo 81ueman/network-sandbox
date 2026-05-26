@@ -67,6 +67,32 @@ func TestRoutePolicyNextHopPrefixListUsesResolvedAddress(t *testing.T) {
 	}
 }
 
+func TestRoutePolicySetNextHopSelf(t *testing.T) {
+	node := model.Node{
+		Name: "core-gz",
+		RoutePolicies: []model.RoutePolicy{{
+			Name: "NH-SELF",
+			Rules: []model.RoutePolicyRule{{
+				Seq:            10,
+				Action:         "permit",
+				SetNextHopSelf: true,
+			}},
+		}},
+	}
+	route := RIBEntry{
+		Prefix:            model.MustPrefix("10.3.0.0/16"),
+		NextHop:           "gz-edge1",
+		ForwardingNextHop: RouteNextHop{Node: "gz-edge1", Addr: "198.18.10.8"},
+	}
+	decision := applyRoutePolicy(nil, node, "core-bj", "NH-SELF", route)
+	if !decision.Accept {
+		t.Fatalf("decision rejected route: %#v", decision)
+	}
+	if decision.Route.NextHop != "core-gz" || decision.Route.ForwardingNextHop.Node != "core-gz" || decision.Route.ForwardingNextHop.Addr != "" {
+		t.Fatalf("route next-hop = %#v, want core-gz self", decision.Route)
+	}
+}
+
 func TestPrefixListRuleMatchesUsesNLRILengthSemantics(t *testing.T) {
 	rule := model.PrefixListRule{Seq: 10, Action: "permit", Prefix: "10.0.0.0/8", Ge: 16, Le: 24}
 	if !prefixListRuleMatches(rule, model.MustPrefix("10.4.0.0/16")) {

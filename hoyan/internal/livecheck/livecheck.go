@@ -131,13 +131,16 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		if opts.FIBOptions.AllowUnsupported {
 			fibNodes = fibcompare.SupportedNodes(fibNodes)
 		}
-		expectedFIB := fibcompare.ComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, fibNodes), opts.FIBOptions)
+		expectedFIB := fibcompare.AnalyzeComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, fibNodes), opts.FIBOptions)
 		actualFIB, err := fibcompare.Collect(deadlineCtx, runner, fibNodes, opts.FIBOptions)
 		if err != nil {
 			return err
 		}
-		actualFIB = fibcompare.ComparableRoutes(topo, actualFIB, opts.FIBOptions)
-		fibResult := fibcompare.Compare(expectedFIB, actualFIB)
+		actualFIBResult := fibcompare.AnalyzeComparableRoutes(topo, actualFIB, opts.FIBOptions)
+		for _, line := range fibcompare.FormatWarnings(fibcompare.WarningDiagnostics(actualFIBResult, opts.FIBOptions)) {
+			fmt.Fprintln(opts.Out, line)
+		}
+		fibResult := fibcompare.CompareFilterResults(expectedFIB, actualFIBResult, opts.FIBOptions)
 		for _, line := range fibcompare.FormatDiffs(fibResult) {
 			fmt.Fprintln(opts.Out, line)
 		}

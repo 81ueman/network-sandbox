@@ -28,3 +28,13 @@ func routeKey(r NormalizedFIBRoute) string {
 func nextHopKey(h NormalizedFIBNextHop) string {
 	return h.Address + "|" + h.Interface
 }
+
+func sortUnresolvedRoutes(routes []UnresolvedRoute) {
+	sort.SliceStable(routes, func(i, j int) bool {
+		return unresolvedRouteSortKey(routes[i]) < unresolvedRouteSortKey(routes[j])
+	})
+}
+
+func unresolvedRouteSortKey(route UnresolvedRoute) string {
+	return route.RouteKey + "|" + route.Reason
+}

@@ -79,6 +79,18 @@ func TestLiveCheckFIBCompareDefaultsOn(t *testing.T) {
 	if cmd.Flags().Lookup("no-check-fib") == nil {
 		t.Fatalf("--no-check-fib flag missing")
 	}
+	unresolved := cmd.Flags().Lookup("fib-unresolved-policy")
+	if unresolved == nil || unresolved.DefValue != "warn" {
+		t.Fatalf("--fib-unresolved-policy default = %v, want warn", unresolved)
+	}
+}
+
+func TestFIBCompareUnresolvedPolicyFlagDefault(t *testing.T) {
+	cmd := NewFIBCompareCommand()
+	flag := cmd.Flags().Lookup("unresolved-policy")
+	if flag == nil || flag.DefValue != "warn" {
+		t.Fatalf("--unresolved-policy default = %v, want warn", flag)
+	}
 }
 
 func TestVerifyStrictConfigRejectsUnsupportedStatements(t *testing.T) {

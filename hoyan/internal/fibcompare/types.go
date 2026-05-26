@@ -37,6 +37,60 @@ type Runner interface {
 
 type Options struct {
 	AllowUnsupported bool
+	UnresolvedPolicy UnresolvedPolicy
+}
+
+type UnresolvedPolicy string
+
+const (
+	UnresolvedPolicyWarn   UnresolvedPolicy = "warn"
+	UnresolvedPolicyFail   UnresolvedPolicy = "fail"
+	UnresolvedPolicyIgnore UnresolvedPolicy = "ignore"
+)
+
+func (p UnresolvedPolicy) normalized() UnresolvedPolicy {
+	switch p {
+	case "", UnresolvedPolicyWarn:
+		return UnresolvedPolicyWarn
+	case UnresolvedPolicyFail:
+		return UnresolvedPolicyFail
+	case UnresolvedPolicyIgnore:
+		return UnresolvedPolicyIgnore
+	default:
+		return p
+	}
+}
+
+func ParseUnresolvedPolicy(policy string) (UnresolvedPolicy, bool) {
+	p := UnresolvedPolicy(policy).normalized()
+	switch p {
+	case UnresolvedPolicyWarn, UnresolvedPolicyFail, UnresolvedPolicyIgnore:
+		return p, true
+	default:
+		return p, false
+	}
+}
+
+type FilterResult struct {
+	Routes     []NormalizedFIBRoute
+	Unresolved []UnresolvedRoute
+}
+
+type UnresolvedRoute struct {
+	RouteKey string
+	Node     string
+	VRF      string
+	AFI      string
+	Prefix   string
+	Protocol string
+	NextHops []UnresolvedNextHop
+	Reason   string
+}
+
+type UnresolvedNextHop struct {
+	Address   string
+	Interface string
+	Reason    string
 }
 
 type RouteDiff struct {
@@ -58,6 +112,7 @@ type AttributeMismatch struct {
 type Result struct {
 	OK                 bool
 	UnsupportedNodes   []string
+	UnresolvedRoutes   []UnresolvedRoute
 	MissingRoutes      []string
 	UnexpectedRoutes   []string
 	MissingNextHops    []NextHopDiff
