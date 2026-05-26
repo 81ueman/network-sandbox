@@ -239,6 +239,51 @@ func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
 	}
 }
 
+func TestVerifyCommandPrefixClassThresholdFails(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewVerifyCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--max-prefix-classes", "1",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	got := out.String() + err.Error()
+	for _, want := range []string{"prefix universe class count", "exceeds --max-prefix-classes 1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("threshold output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestVerifyCommandShowsPrefixUniverseStats(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewVerifyCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--show-prefix-universe-stats",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"predicates=", "unique=", "classes=", "build=", "sources:", "  route:", "  prefix-list:", "  rib:", "  fib:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stats output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
 	var collapsed, raw bytes.Buffer
 	collapsedCmd := NewVerifyCommand()
@@ -478,6 +523,44 @@ func TestModelPrefixClassesCommandShowsPredicatesWhenRequested(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestModelPrefixClassesCommandSummary(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--prefix", "10.4.0.0/16",
+		"--summary",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"predicates=", "unique=", "classes=", "sources:", "CLASS", "SPACE"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestModelPrefixClassesCommandThresholdFails(t *testing.T) {
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--max-prefix-classes", "1",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	if !strings.Contains(err.Error(), "prefix universe class count") || !strings.Contains(err.Error(), "exceeds --max-prefix-classes 1") {
+		t.Fatalf("error = %v, want threshold error", err)
 	}
 }
 

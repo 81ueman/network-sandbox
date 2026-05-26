@@ -177,6 +177,49 @@ func TestBuildPrefixUniverseRejectsIPv6Explicitly(t *testing.T) {
 	}
 }
 
+func TestPrefixUniverseStats(t *testing.T) {
+	universe, err := BuildPrefixUniverseFromPredicates([]PrefixPredicate{
+		{Source: "route:r1", Set: ExactPrefixSet{Prefix: MustPrefix("10.0.0.0/24")}},
+		{Source: "route:r2", Set: ExactPrefixSet{Prefix: MustPrefix("10.0.0.0/24")}},
+		{Source: "prefix-list:r1:PL:10", Set: ExactPrefixSet{Prefix: MustPrefix("10.0.1.0/24")}},
+		{Source: "query-route:q1", Set: ExactPrefixSet{Prefix: MustPrefix("10.0.2.0/24")}},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverseFromPredicates() error = %v", err)
+	}
+	if got, want := universe.Stats.PredicateCount, 4; got != want {
+		t.Fatalf("PredicateCount = %d, want %d", got, want)
+	}
+	if got, want := universe.Stats.UniquePredicateCount, 3; got != want {
+		t.Fatalf("UniquePredicateCount = %d, want %d", got, want)
+	}
+	if got, want := universe.Stats.ClassCount, len(universe.Classes); got != want {
+		t.Fatalf("ClassCount = %d, want %d", got, want)
+	}
+	if got, want := universe.Stats.MaxClassCIDRs, 1; got != want {
+		t.Fatalf("MaxClassCIDRs = %d, want %d", got, want)
+	}
+	wantSources := map[string]int{"route": 2, "prefix-list": 1, "query-route": 1}
+	if !reflect.DeepEqual(universe.Stats.PredicateSources, wantSources) {
+		t.Fatalf("PredicateSources = %#v, want %#v", universe.Stats.PredicateSources, wantSources)
+	}
+}
+
+func TestPrefixPredicateSourceCategory(t *testing.T) {
+	tests := map[string]string{
+		"route:r1":           "route",
+		"prefix-list:r1:PL":  "prefix-list",
+		"query-packet:allow": "query-packet",
+		"fib":                "fib",
+		"":                   "unknown",
+	}
+	for source, want := range tests {
+		if got := PrefixPredicateSourceCategory(source); got != want {
+			t.Fatalf("PrefixPredicateSourceCategory(%q) = %q, want %q", source, got, want)
+		}
+	}
+}
+
 func containsPrefixPredicateID(ids []PrefixPredicateID, want PrefixPredicateID) bool {
 	for _, id := range ids {
 		if id == want {

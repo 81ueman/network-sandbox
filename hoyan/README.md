@@ -47,6 +47,8 @@ To verify by prefix equivalence class, enable PrefixUniverse expansion:
 ```bash
 go run ./cmd/hoyan verify --prefix-classes
 go run ./cmd/hoyan verify --prefix-classes --no-collapse
+go run ./cmd/hoyan verify --prefix-classes --show-prefix-universe-stats
+go run ./cmd/hoyan verify --prefix-classes --max-prefix-classes 10000
 go run ./cmd/hoyan verify --prefix-classes --format json
 ```
 
@@ -106,6 +108,12 @@ modeled RIB/FIB prefixes, and an optional `--prefix` request predicate.
 Matched predicates are hidden in table output by default; add
 `--show-predicates` to `model prefix-classes` or `model symbolic-route` when
 you need to see which predicates matched each class.
+Add `--summary` to `model prefix-classes` to print PrefixUniverse build
+statistics, including predicate count, unique predicate count, class count,
+build duration, max CIDRs per class, and predicate source categories. Use
+`--max-prefix-classes` with either `verify --prefix-classes` or
+`model prefix-classes` to fail early when class expansion exceeds the requested
+guard.
 `model symbolic-route --prefix` uses the same request-aware PrefixUniverse and
 emits one symbolic route result per matching class, including `class_id`,
 `space`, and reachable/unreachable conditions. JSON output still includes
