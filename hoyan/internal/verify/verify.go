@@ -13,11 +13,13 @@ import (
 
 type Report struct {
 	Results []sim.Result
+	Stats   *model.PrefixUniverseStats
 }
 
 type VerifyOptions struct {
 	UsePrefixUniverse         bool
 	CollapseEquivalentResults bool
+	MaxPrefixClasses          int
 }
 
 func Run(topo *model.Topology, queries *model.Queries) Report {
@@ -94,7 +96,17 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 			Reason:    err.Error(),
 		}}}
 	}
-	report := Report{}
+	if err := checkPrefixClassLimit(universe, opts.MaxPrefixClasses); err != nil {
+		stats := universe.Stats
+		return Report{Stats: &stats, Results: []sim.Result{{
+			Name:      "prefix-universe",
+			QueryType: "setup",
+			Expected:  true,
+			Reason:    err.Error(),
+		}}}
+	}
+	stats := universe.Stats
+	report := Report{Stats: &stats}
 	for _, q := range queries.RouteChecks {
 		classes := universe.ClassesMatching(model.ExactPrefixSet{Prefix: q.Prefix})
 		for _, classID := range classes {
@@ -198,6 +210,13 @@ func prefixUniverseForGraph(topo *model.Topology, queries *model.Queries, g *sim
 	predicates = append(predicates, sim.CollectFIBPrefixPredicates(g)...)
 	predicates = append(predicates, extra...)
 	return model.BuildPrefixUniverseFromPredicates(predicates)
+}
+
+func checkPrefixClassLimit(universe model.PrefixUniverse, maxClasses int) error {
+	if maxClasses <= 0 || universe.Stats.ClassCount <= maxClasses {
+		return nil
+	}
+	return fmt.Errorf("prefix universe class count %d exceeds --max-prefix-classes %d", universe.Stats.ClassCount, maxClasses)
 }
 
 func packetClasses(topo *model.Topology, universe model.PrefixUniverse, to string) []model.PrefixClassID {

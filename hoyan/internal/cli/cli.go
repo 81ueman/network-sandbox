@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,18 +104,22 @@ func NewVerifyCommand() *cobra.Command {
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.prefixClasses, "prefix-classes", false, "expand verification by PrefixUniverse prefix classes")
+	cmd.Flags().IntVar(&opts.maxPrefixClasses, "max-prefix-classes", 10000, "maximum PrefixUniverse classes before failing; 0 disables the guard")
+	cmd.Flags().BoolVar(&opts.showPrefixUniverseStats, "show-prefix-universe-stats", false, "show PrefixUniverse build statistics with --prefix-classes")
 	cmd.Flags().BoolVar(&opts.noCollapse, "no-collapse", false, "show raw prefix-class results instead of collapsed equivalent groups")
 	cmd.Flags().StringVar(&opts.format, "format", "table", "output format: table or json")
 	return cmd
 }
 
 type verifyOptions struct {
-	topologyPath  string
-	queriesPath   string
-	strictConfig  bool
-	prefixClasses bool
-	noCollapse    bool
-	format        string
+	topologyPath            string
+	queriesPath             string
+	strictConfig            bool
+	prefixClasses           bool
+	maxPrefixClasses        int
+	showPrefixUniverseStats bool
+	noCollapse              bool
+	format                  string
 }
 
 func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) error {
@@ -135,13 +140,24 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	verifyOpts := verify.VerifyOptions{
 		UsePrefixUniverse:         opts.prefixClasses,
 		CollapseEquivalentResults: opts.prefixClasses && !opts.noCollapse,
+		MaxPrefixClasses:          opts.maxPrefixClasses,
 	}
 	report := verify.RunWithOptions(topo, queries, verifyOpts)
 	if opts.format == "json" {
 		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(report.Results); err != nil {
+		value := any(report.Results)
+		if opts.showPrefixUniverseStats && opts.prefixClasses && report.Stats != nil {
+			value = struct {
+				Stats   *model.PrefixUniverseStats `json:"prefix_universe_stats"`
+				Results []sim.Result               `json:"results"`
+			}{
+				Stats:   report.Stats,
+				Results: report.Results,
+			}
+		}
+		if err := enc.Encode(value); err != nil {
 			return err
 		}
 		if !report.OK() {
@@ -151,6 +167,9 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	}
 	if opts.format != "" && opts.format != "table" {
 		return fmt.Errorf("unsupported --format %q", opts.format)
+	}
+	if opts.showPrefixUniverseStats && opts.prefixClasses && report.Stats != nil {
+		writePrefixUniverseStats(out, *report.Stats)
 	}
 	for _, result := range report.Results {
 		status := "PASS"
@@ -183,6 +202,28 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 		return ExitError{Code: 1, Err: fmt.Errorf("verification failed")}
 	}
 	return nil
+}
+
+func writePrefixUniverseStats(out io.Writer, stats model.PrefixUniverseStats) {
+	fmt.Fprintf(out, "predicates=%d unique=%d classes=%d build=%s max_class_cidrs=%d\n",
+		stats.PredicateCount,
+		stats.UniquePredicateCount,
+		stats.ClassCount,
+		stats.BuildDuration,
+		stats.MaxClassCIDRs,
+	)
+	if len(stats.PredicateSources) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "sources:")
+	categories := make([]string, 0, len(stats.PredicateSources))
+	for category := range stats.PredicateSources {
+		categories = append(categories, category)
+	}
+	sort.Strings(categories)
+	for _, category := range categories {
+		fmt.Fprintf(out, "  %s: %d\n", category, stats.PredicateSources[category])
+	}
 }
 
 func formatClassIDs(ids []model.PrefixClassID) string {

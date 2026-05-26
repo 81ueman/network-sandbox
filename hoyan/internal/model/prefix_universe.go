@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 )
 
 type PrefixClassID int
@@ -34,6 +35,16 @@ type PrefixClass struct {
 type PrefixUniverse struct {
 	Classes    []PrefixClass
 	Predicates []PrefixPredicate
+	Stats      PrefixUniverseStats
+}
+
+type PrefixUniverseStats struct {
+	PredicateCount       int            `json:"predicate_count"`
+	UniquePredicateCount int            `json:"unique_predicate_count"`
+	ClassCount           int            `json:"class_count"`
+	BuildDuration        time.Duration  `json:"build_duration"`
+	PredicateSources     map[string]int `json:"predicate_sources,omitempty"`
+	MaxClassCIDRs        int            `json:"max_class_cidrs"`
 }
 
 type OverlappingPrefixPredicateError struct {
@@ -134,6 +145,7 @@ func BuildPrefixUniverse(predicates []PrefixSet) (PrefixUniverse, error) {
 }
 
 func BuildPrefixUniverseFromPredicates(predicates []PrefixPredicate) (PrefixUniverse, error) {
+	start := time.Now()
 	universe := PrefixUniverse{}
 	seen := map[string]bool{}
 	var boundaries []uint64
@@ -157,7 +169,11 @@ func BuildPrefixUniverseFromPredicates(predicates []PrefixPredicate) (PrefixUniv
 			boundaries = append(boundaries, uint64(interval.lo), uint64(interval.hi)+1)
 		}
 	}
+	universe.Stats.PredicateCount = len(universe.Predicates)
+	universe.Stats.UniquePredicateCount = len(seen)
+	universe.Stats.PredicateSources = predicateSourceCounts(universe.Predicates)
 	if len(boundaries) == 0 {
+		universe.Stats.BuildDuration = time.Since(start)
 		return universe, nil
 	}
 	sort.Slice(boundaries, func(i, j int) bool { return boundaries[i] < boundaries[j] })
@@ -178,6 +194,9 @@ func BuildPrefixUniverseFromPredicates(predicates []PrefixPredicate) (PrefixUniv
 			MatchingPredicates: matches,
 		})
 	}
+	universe.Stats.ClassCount = len(universe.Classes)
+	universe.Stats.MaxClassCIDRs = maxClassCIDRs(universe.Classes)
+	universe.Stats.BuildDuration = time.Since(start)
 	return universe, nil
 }
 
@@ -242,6 +261,54 @@ func normalizedPrefixPredicateKind(kind PrefixPredicateKind) PrefixPredicateKind
 
 func prefixSetKey(predicate PrefixPredicate) string {
 	return string(normalizedPrefixPredicateKind(predicate.Kind)) + ":" + strings.TrimSpace(predicate.Set.String())
+}
+
+func PrefixPredicateSourceCategory(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "unknown"
+	}
+	category, _, found := strings.Cut(source, ":")
+	if !found || category == "" {
+		return source
+	}
+	return category
+}
+
+func predicateSourceCounts(predicates []PrefixPredicate) map[string]int {
+	counts := map[string]int{}
+	for _, predicate := range predicates {
+		counts[PrefixPredicateSourceCategory(predicate.Source)]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+func maxClassCIDRs(classes []PrefixClass) int {
+	maxCIDRs := 0
+	for _, class := range classes {
+		if count := prefixSetCIDRCount(class.Space); count > maxCIDRs {
+			maxCIDRs = count
+		}
+	}
+	return maxCIDRs
+}
+
+func prefixSetCIDRCount(set PrefixSet) int {
+	switch s := set.(type) {
+	case nil:
+		return 0
+	case UnionPrefixSet:
+		count := 0
+		for _, child := range s.Sets {
+			count += prefixSetCIDRCount(child)
+		}
+		return count
+	default:
+		return 1
+	}
 }
 
 type prefixInterval struct {
