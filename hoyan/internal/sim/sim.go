@@ -66,6 +66,9 @@ func FailureSetFromMap(raw map[string]bool) FailureSet {
 func FailureSetFromElements(elements []solver.FailureElement) FailureSet {
 	return failure.SetFromElements(elements)
 }
+func DefaultWANFailureDomain() model.FailureDomain {
+	return failure.DefaultWANFailureDomain()
+}
 
 func True() Cond           { return failure.True() }
 func False() Cond          { return failure.False() }

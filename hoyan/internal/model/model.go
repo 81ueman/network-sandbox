@@ -45,6 +45,7 @@ type Link struct {
 	Name   string `yaml:"name"`
 	A      string `yaml:"a"`
 	B      string `yaml:"b"`
+	Role   string `yaml:"role,omitempty"`
 	Cost   int    `yaml:"cost"`
 	Subnet string `yaml:"subnet"`
 	AIntf  string `yaml:"a_intf"`
@@ -146,32 +147,57 @@ type Queries struct {
 	FailureChecks []FailureCheck `yaml:"failure_checks"`
 }
 
+type FailureDomain struct {
+	IncludeNodeRoles []string `yaml:"include_node_roles"`
+	ExcludeNodeRoles []string `yaml:"exclude_node_roles"`
+	IncludeLinkRoles []string `yaml:"include_link_roles"`
+	ExcludeLinkRoles []string `yaml:"exclude_link_roles"`
+	IncludeNodes     []string `yaml:"include_nodes"`
+	ExcludeNodes     []string `yaml:"exclude_nodes"`
+	IncludeLinks     []string `yaml:"include_links"`
+	ExcludeLinks     []string `yaml:"exclude_links"`
+}
+
+func (d FailureDomain) IsZero() bool {
+	return len(d.IncludeNodeRoles) == 0 &&
+		len(d.ExcludeNodeRoles) == 0 &&
+		len(d.IncludeLinkRoles) == 0 &&
+		len(d.ExcludeLinkRoles) == 0 &&
+		len(d.IncludeNodes) == 0 &&
+		len(d.ExcludeNodes) == 0 &&
+		len(d.IncludeLinks) == 0 &&
+		len(d.ExcludeLinks) == 0
+}
+
 type RouteCheck struct {
-	Name        string `yaml:"name"`
-	From        string `yaml:"from"`
-	Prefix      Prefix `yaml:"prefix"`
-	MaxFailures int    `yaml:"max_failures"`
+	Name          string        `yaml:"name"`
+	From          string        `yaml:"from"`
+	Prefix        Prefix        `yaml:"prefix"`
+	MaxFailures   int           `yaml:"max_failures"`
+	FailureDomain FailureDomain `yaml:"failure_domain"`
 }
 
 type PacketCheck struct {
-	Name            string `yaml:"name"`
-	From            string `yaml:"from"`
-	To              string `yaml:"to"`
-	Protocol        string `yaml:"protocol"`
-	DstPort         int    `yaml:"dst_port,omitempty"`
-	LiveProbe       *bool  `yaml:"live_probe,omitempty"`
-	ExpectReachable *bool  `yaml:"expect_reachable"`
-	MaxFailures     int    `yaml:"max_failures"`
+	Name            string        `yaml:"name"`
+	From            string        `yaml:"from"`
+	To              string        `yaml:"to"`
+	Protocol        string        `yaml:"protocol"`
+	DstPort         int           `yaml:"dst_port,omitempty"`
+	LiveProbe       *bool         `yaml:"live_probe,omitempty"`
+	ExpectReachable *bool         `yaml:"expect_reachable"`
+	MaxFailures     int           `yaml:"max_failures"`
+	FailureDomain   FailureDomain `yaml:"failure_domain"`
 }
 
 type FailureCheck struct {
-	Name            string `yaml:"name"`
-	From            string `yaml:"from"`
-	To              string `yaml:"to"`
-	Prefix          Prefix `yaml:"prefix"`
-	Protocol        string `yaml:"protocol"`
-	ExpectReachable *bool  `yaml:"expect_reachable"`
-	MaxFailures     int    `yaml:"max_failures"`
+	Name            string        `yaml:"name"`
+	From            string        `yaml:"from"`
+	To              string        `yaml:"to"`
+	Prefix          Prefix        `yaml:"prefix"`
+	Protocol        string        `yaml:"protocol"`
+	ExpectReachable *bool         `yaml:"expect_reachable"`
+	MaxFailures     int           `yaml:"max_failures"`
+	FailureDomain   FailureDomain `yaml:"failure_domain"`
 }
 
 func LoadQueries(path string) (*Queries, error) {

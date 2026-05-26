@@ -22,6 +22,7 @@ type SearchOptions struct {
 	IncludeLinks bool
 	IncludeNodes bool
 	MaxFailures  int
+	Domain       model.FailureDomain
 }
 
 func None() Set {
@@ -95,21 +96,39 @@ func (ctx Context) LinkFailed(linkName model.LinkID) bool {
 
 func SearchElements(topo *model.Topology, opts SearchOptions) []solver.FailureElement {
 	var elements []solver.FailureElement
+	domain := opts.Domain
+	if domain.IsZero() {
+		domain = DefaultWANFailureDomain()
+	}
+	rolesByNode := nodeRoles(topo.Nodes)
 	if opts.IncludeLinks {
 		links := append([]model.Link(nil), topo.Links...)
 		sort.Slice(links, func(i, j int) bool { return links[i].Name < links[j].Name })
-		for _, link := range eligibleLinks(links) {
+		for _, link := range links {
+			if !linkEligible(link, rolesByNode, domain) {
+				continue
+			}
 			elements = append(elements, solver.FailureElement{Kind: solver.FailureLink, Name: link.Name})
 		}
 	}
 	if opts.IncludeNodes {
 		nodes := append([]model.Node(nil), topo.Nodes...)
 		sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
-		for _, node := range eligibleNodes(nodes) {
+		for _, node := range nodes {
+			if !nodeEligible(node, domain) {
+				continue
+			}
 			elements = append(elements, solver.FailureElement{Kind: solver.FailureNode, Name: node.Name})
 		}
 	}
 	return elements
+}
+
+func DefaultWANFailureDomain() model.FailureDomain {
+	return model.FailureDomain{
+		ExcludeNodeRoles: []string{"customer"},
+		ExcludeLinkRoles: []string{"customer"},
+	}
 }
 
 func FindElementCombo(elements []solver.FailureElement, want, start int, cur []solver.FailureElement, fn func([]solver.FailureElement) bool) bool {
@@ -126,24 +145,77 @@ func FindElementCombo(elements []solver.FailureElement, want, start int, cur []s
 	return false
 }
 
-func eligibleLinks(links []model.Link) []model.Link {
-	var out []model.Link
-	for _, l := range links {
-		if strings.Contains(l.Name, "cust") {
-			continue
+func nodeEligible(node model.Node, domain model.FailureDomain) bool {
+	if stringSet(domain.ExcludeNodes)[node.Name] {
+		return false
+	}
+	if node.Role != "" && stringSet(domain.ExcludeNodeRoles)[node.Role] {
+		return false
+	}
+	hasInclude := len(domain.IncludeNodes) > 0 || len(domain.IncludeNodeRoles) > 0
+	if !hasInclude {
+		return true
+	}
+	if stringSet(domain.IncludeNodes)[node.Name] {
+		return true
+	}
+	return node.Role != "" && stringSet(domain.IncludeNodeRoles)[node.Role]
+}
+
+func linkEligible(link model.Link, rolesByNode map[string]string, domain model.FailureDomain) bool {
+	if stringSet(domain.ExcludeLinks)[link.Name] {
+		return false
+	}
+	linkRoles := effectiveLinkRoles(link, rolesByNode)
+	if intersects(linkRoles, stringSet(domain.ExcludeLinkRoles)) {
+		return false
+	}
+	hasInclude := len(domain.IncludeLinks) > 0 || len(domain.IncludeLinkRoles) > 0
+	if !hasInclude {
+		return true
+	}
+	if stringSet(domain.IncludeLinks)[link.Name] {
+		return true
+	}
+	return intersects(linkRoles, stringSet(domain.IncludeLinkRoles))
+}
+
+func nodeRoles(nodes []model.Node) map[string]string {
+	out := map[string]string{}
+	for _, node := range nodes {
+		if node.Role != "" {
+			out[node.Name] = node.Role
 		}
-		out = append(out, l)
 	}
 	return out
 }
 
-func eligibleNodes(nodes []model.Node) []model.Node {
-	var out []model.Node
-	for _, n := range nodes {
-		if strings.Contains(n.Name, "cust") {
+func effectiveLinkRoles(link model.Link, rolesByNode map[string]string) []string {
+	seen := map[string]bool{}
+	var roles []string
+	for _, role := range []string{link.Role, rolesByNode[link.A], rolesByNode[link.B]} {
+		if role == "" || seen[role] {
 			continue
 		}
-		out = append(out, n)
+		seen[role] = true
+		roles = append(roles, role)
+	}
+	return roles
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[value] = true
 	}
 	return out
+}
+
+func intersects(values []string, set map[string]bool) bool {
+	for _, value := range values {
+		if set[value] {
+			return true
+		}
+	}
+	return false
 }
