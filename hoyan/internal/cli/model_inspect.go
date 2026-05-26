@@ -53,13 +53,16 @@ type ribInspectRow struct {
 }
 
 type fibInspectRow struct {
-	Node      string   `json:"node"`
-	Prefix    string   `json:"prefix"`
-	NextHop   string   `json:"next_hop_node,omitempty"`
-	PathNodes []string `json:"path_nodes,omitempty"`
-	PathLinks []string `json:"path_links,omitempty"`
-	Cost      int      `json:"cost"`
-	Condition string   `json:"condition,omitempty"`
+	Node       string   `json:"node"`
+	Prefix     string   `json:"prefix"`
+	NextHop    string   `json:"next_hop_node,omitempty"`
+	Rank       int      `json:"rank"`
+	GroupID    string   `json:"group_id,omitempty"`
+	Equivalent bool     `json:"equivalent"`
+	PathNodes  []string `json:"path_nodes,omitempty"`
+	PathLinks  []string `json:"path_links,omitempty"`
+	Cost       int      `json:"cost"`
+	Condition  string   `json:"condition,omitempty"`
 }
 
 type symbolicPacketInspect struct {
@@ -426,13 +429,16 @@ func collectFIBRows(graph *sim.Graph, nodes []string, prefix string) []fibInspec
 				continue
 			}
 			rows = append(rows, fibInspectRow{
-				Node:      node,
-				Prefix:    entry.Prefix.String(),
-				NextHop:   entry.NextHop,
-				PathNodes: append([]string(nil), entry.Path.Nodes...),
-				PathLinks: append([]string(nil), entry.Path.Links...),
-				Cost:      entry.Path.Cost,
-				Condition: condString(entry.Condition),
+				Node:       node,
+				Prefix:     entry.Prefix.String(),
+				NextHop:    entry.NextHop,
+				Rank:       entry.Rank,
+				GroupID:    entry.GroupID,
+				Equivalent: entry.Equivalent,
+				PathNodes:  append([]string(nil), entry.Path.Nodes...),
+				PathLinks:  append([]string(nil), entry.Path.Links...),
+				Cost:       entry.Path.Cost,
+				Condition:  condString(entry.Condition),
 			})
 		}
 	}
@@ -544,12 +550,15 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow) error {
 
 func writeFIBTable(out io.Writer, rows []fibInspectRow) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tCOST\tPATH\tLINKS\tCONDITION")
+	fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s\t%s\n",
 			row.Node,
 			row.Prefix,
 			row.NextHop,
+			row.Rank,
+			row.GroupID,
+			row.Equivalent,
 			row.Cost,
 			strings.Join(row.PathNodes, "->"),
 			strings.Join(row.PathLinks, "->"),

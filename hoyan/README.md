@@ -58,8 +58,21 @@ go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protoco
 ```
 
 The RIB view includes route attributes, provenance, condition, and selected
-condition. The FIB view includes next-hop, path, cost, and install condition.
-Use `--format json` when feeding the output to `jq` or Codex.
+condition. The FIB view includes next-hop, rank, equivalent-route group, path,
+cost, and install condition. Use `--format json` when feeding the output to
+`jq` or Codex.
+
+Modeled FIB semantics use reachability OR for explicitly grouped ECMP /
+equivalent candidates: entries with the same prefix, rank, and `group_id` do
+not suppress each other, and packet reachability may use any live member in the
+group. Lower-rank or shorter-prefix candidates remain suppressed while a
+higher-priority group is selected. This is a safety-oriented abstraction; it
+does not model per-flow hashing or sticky hash buckets. The default BGP
+decision process treats routes as equivalent when local-pref, local-origin,
+AS-path length, MED, and eBGP/iBGP status tie. FRR currently installs only one
+such equivalent route in the modeled FIB, while the generic behavior can keep
+multiple equivalent routes. cEOS and SR Linux do not currently expose
+equivalent FIB install groups in this model.
 
 When running Hoyan from multiple git worktrees, render an isolated topology per
 worktree first. The suffix is appended to the lab name and Docker management

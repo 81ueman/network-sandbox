@@ -3,6 +3,7 @@ package dataplane
 import (
 	"net/netip"
 	"sort"
+	"strconv"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/controlplane"
 	"github.com/81ueman/network-sandbox/hoyan/internal/failure"
@@ -102,16 +103,38 @@ func (e *Engine) SymbolicLookupFIBForPrefixSet(node string, dst model.PrefixSet)
 func (e *Engine) symbolicLookupFIBEntries(entries []FIBEntry) []SymbolicFIBCandidate {
 	var out []SymbolicFIBCandidate
 	var higher []failure.Cond
+	groupConds := map[string]failure.Cond{}
+	groupIndexes := map[string]int{}
 	for _, entry := range entries {
 		entryCond := e.expandLinkVars(condOrTrue(entry.Condition))
+		groupKey := fibCandidateGroupKey(entry, len(out))
 		cond := entryCond
-		if len(higher) > 0 {
-			cond = failure.And(cond, failure.Not(failure.Or(higher...)))
+		higherForEntry := higher
+		if ownIndex, ok := groupIndexes[groupKey]; ok {
+			higherForEntry = append(append([]failure.Cond(nil), higher[:ownIndex]...), higher[ownIndex+1:]...)
+		}
+		if len(higherForEntry) > 0 {
+			cond = failure.And(cond, failure.Not(failure.Or(higherForEntry...)))
 		}
 		out = append(out, SymbolicFIBCandidate{Entry: entry, Cond: cond})
+		if existing, ok := groupConds[groupKey]; ok {
+			merged := failure.Or(existing, entryCond)
+			groupConds[groupKey] = merged
+			higher[groupIndexes[groupKey]] = merged
+			continue
+		}
+		groupConds[groupKey] = entryCond
+		groupIndexes[groupKey] = len(higher)
 		higher = append(higher, entryCond)
 	}
 	return out
+}
+
+func fibCandidateGroupKey(entry FIBEntry, ordinal int) string {
+	if entry.GroupID == "" {
+		return "entry#" + strconv.Itoa(ordinal)
+	}
+	return entry.Prefix.String() + "#" + strconv.Itoa(entry.Rank) + "#" + entry.GroupID
 }
 
 func (e *Engine) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
@@ -474,7 +497,10 @@ func matchingFIBEntries(entries []FIBEntry, ip netip.Addr) []FIBEntry {
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Prefix.Bits() == out[j].Prefix.Bits() {
-			return false
+			if out[i].Rank == out[j].Rank {
+				return false
+			}
+			return out[i].Rank < out[j].Rank
 		}
 		return out[i].Prefix.Bits() > out[j].Prefix.Bits()
 	})
@@ -494,7 +520,10 @@ func matchingFIBEntriesForPrefixSet(entries []FIBEntry, dst model.PrefixSet) []F
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Prefix.Bits() == out[j].Prefix.Bits() {
-			return false
+			if out[i].Rank == out[j].Rank {
+				return false
+			}
+			return out[i].Rank < out[j].Rank
 		}
 		return out[i].Prefix.Bits() > out[j].Prefix.Bits()
 	})

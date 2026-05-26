@@ -240,6 +240,100 @@ func TestSymbolicLookupFIBForPrefixSetAddsNotHigherMatchingConditions(t *testing
 	}
 }
 
+func TestSymbolicLookupFIBKeepsEquivalentGroupCandidates(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	defaultPfx := model.MustPrefix("0.0.0.0/0")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "a", Kind: model.KindFRR},
+			{Name: "b", Kind: model.KindFRR},
+			{Name: "fallback", Kind: model.KindFRR},
+		},
+		Links: []model.Link{
+			{Name: "src-a", A: "src", B: "a", Cost: 1},
+			{Name: "src-b", A: "src", B: "b", Cost: 1},
+			{Name: "src-fallback", A: "src", B: "fallback", Cost: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {
+			{Prefix: pfx.NetIP(), NextHop: "a", Condition: failure.LinkVar("src-a"), Rank: 0, GroupID: "ecmp-10.0.0.0/24", Equivalent: true},
+			{Prefix: pfx.NetIP(), NextHop: "b", Condition: failure.LinkVar("src-b"), Rank: 0, GroupID: "ecmp-10.0.0.0/24", Equivalent: true},
+			{Prefix: defaultPfx.NetIP(), NextHop: "fallback", Condition: failure.True(), Rank: 1, GroupID: "default"},
+		},
+	})
+	candidates := e.SymbolicLookupFIB("src", "10.0.0.10")
+	if len(candidates) != 3 {
+		t.Fatalf("SymbolicLookupFIB candidates = %d, want 3", len(candidates))
+	}
+	if !candidates[1].Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("second ECMP member should not be suppressed by first member: %s", candidates[1].Cond)
+	}
+	if candidates[2].Cond.Eval(e.FailureContext(failure.None())) {
+		t.Fatalf("fallback should be suppressed while either ECMP member is active: %s", candidates[2].Cond)
+	}
+	if !candidates[2].Cond.Eval(e.FailureContext(failure.Links("src-a", "src-b"))) {
+		t.Fatalf("fallback should be usable only after all ECMP members are inactive: %s", candidates[2].Cond)
+	}
+}
+
+func TestPacketReachableUsesAnyLiveEquivalentFIBMember(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "a", Kind: model.KindFRR},
+			{Name: "b", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-a", A: "src", B: "a", Cost: 1},
+			{Name: "a-dst", A: "a", B: "dst", Cost: 1},
+			{Name: "src-b", A: "src", B: "b", Cost: 1},
+			{Name: "b-dst", A: "b", B: "dst", Cost: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {
+			{Prefix: pfx.NetIP(), NextHop: "a", Condition: failure.True(), Rank: 0, GroupID: "ecmp", Equivalent: true},
+			{Prefix: pfx.NetIP(), NextHop: "b", Condition: failure.True(), Rank: 0, GroupID: "ecmp", Equivalent: true},
+		},
+		"a": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+		"b": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	cases := []failure.Set{
+		failure.None(),
+		failure.Links("src-a"),
+		failure.Links("a-dst"),
+		failure.Nodes("a"),
+	}
+	for _, failures := range cases {
+		if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "icmp", failures); !ok {
+			t.Fatalf("PacketReachable(%v) ok=false reason=%q, want ECMP alternate reachable", failures, reason)
+		}
+	}
+	if _, ok, _ := e.PacketReachable("src", "10.0.0.10", "icmp", failure.Links("src-a", "src-b")); ok {
+		t.Fatalf("PacketReachable should fail when all ECMP member links fail")
+	}
+	AssertSymbolicConcreteParity(t, e, "src", "10.0.0.10", "icmp", []failure.Set{
+		failure.None(),
+		failure.Links("src-a"),
+		failure.Links("src-b"),
+		failure.Links("src-a", "src-b"),
+		failure.Links("a-dst", "b-dst"),
+		failure.Nodes("a"),
+		failure.Nodes("b"),
+		failure.Nodes("a", "b"),
+	})
+}
+
 func TestSymbolicPacketReachabilityEvalMatchesConcretePacketReachable(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{
@@ -603,5 +697,11 @@ func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
 	NewEngine(genericIdx, genericRIB, genericFIB).DeriveFIB()
 	if got := len(genericFIB["rx"]); got != 2 {
 		t.Fatalf("generic FIB entries = %d, want equivalent routes kept", got)
+	}
+	if genericFIB["rx"][0].Rank != genericFIB["rx"][1].Rank || genericFIB["rx"][0].GroupID == "" || genericFIB["rx"][0].GroupID != genericFIB["rx"][1].GroupID {
+		t.Fatalf("generic equivalent routes should share rank/group: %#v", genericFIB["rx"])
+	}
+	if !genericFIB["rx"][0].Equivalent || !genericFIB["rx"][1].Equivalent {
+		t.Fatalf("generic equivalent routes should be marked equivalent: %#v", genericFIB["rx"])
 	}
 }
