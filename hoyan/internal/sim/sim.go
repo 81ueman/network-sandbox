@@ -43,12 +43,20 @@ type Graph struct {
 }
 
 type Result struct {
-	Name           string
-	Reachable      bool
-	Expected       bool
-	Path           Path
-	Counterexample []string
-	Reason         string
+	Name                 string                `json:"name"`
+	QueryType            string                `json:"query_type,omitempty"`
+	Reachable            bool                  `json:"reachable"`
+	Expected             bool                  `json:"expected"`
+	Path                 Path                  `json:"path,omitempty"`
+	Counterexample       []string              `json:"counterexample,omitempty"`
+	Reason               string                `json:"reason,omitempty"`
+	PrefixClassID        *model.PrefixClassID  `json:"class_id,omitempty"`
+	PrefixClassIDs       []model.PrefixClassID `json:"class_ids,omitempty"`
+	PrefixSpace          string                `json:"space,omitempty"`
+	PrefixSpaces         []string              `json:"spaces,omitempty"`
+	MatchedPredicates    []string              `json:"matched_predicates,omitempty"`
+	ReachableCondition   string                `json:"reachable_condition,omitempty"`
+	UnreachableCondition string                `json:"unreachable_condition,omitempty"`
 }
 
 func NoFailures() FailureSet { return failure.None() }
@@ -266,6 +274,9 @@ func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureS
 	case PacketPrefixTarget:
 		result := g.SymbolicPacketReachabilityForPrefixSetSpec(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Spec())
 		goal = result.Unreachable
+	case PacketClassTarget:
+		result := t.symbolicReachability(g, from)
+		goal = result.Unreachable
 	case PrefixTarget:
 		result := g.SymbolicRouteReachability(from, string(t))
 		goal = result.Unreachable
@@ -333,6 +344,35 @@ func (t PacketPrefixTarget) Reachable(g *Graph, from string, failures FailureSet
 
 func (t PacketPrefixTarget) Spec() model.PacketSpec {
 	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
+}
+
+type PacketClassTarget struct {
+	Universe model.PrefixUniverse
+	ClassID  model.PrefixClassID
+	Protocol string
+	DstPort  int
+}
+
+func (t PacketClassTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	result := t.symbolicReachability(g, from)
+	return result.Reachable.Eval(g.FailureContext(failures))
+}
+
+func (t PacketClassTarget) Spec() model.PacketSpec {
+	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
+}
+
+func (t PacketClassTarget) symbolicReachability(g *Graph, from string) SymbolicReachabilityResult {
+	for _, class := range t.Universe.Classes {
+		if class.ID == t.ClassID {
+			return g.SymbolicPacketReachabilityForPrefixSetSpec(from, class.Space, t.Spec())
+		}
+	}
+	return SymbolicReachabilityResult{
+		Reachable:   False(),
+		Unreachable: True(),
+		Reason:      "prefix class not found",
+	}
 }
 
 func FormatPath(p Path) string {
