@@ -38,7 +38,7 @@ func SourceSummary(routes []NormalizedBgpRoute) map[string]int {
 }
 
 func FormatSourceSummary(summary map[string]int) string {
-	order := []string{"bgp", "connected", "static"}
+	order := []string{"bgp", "connected", "static", "blackhole"}
 	var parts []string
 	seen := map[string]bool{}
 	for _, source := range order {

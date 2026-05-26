@@ -53,7 +53,7 @@ func AnalyzeComparableRoutes(topo *model.Topology, routes []NormalizedFIBRoute, 
 
 func comparableProtocol(route NormalizedFIBRoute) bool {
 	switch route.Protocol {
-	case "bgp", "connected", "static":
+	case "bgp", "connected", "static", "blackhole":
 		return true
 	default:
 		return false
@@ -93,7 +93,7 @@ func normalizeRouteNextHops(idx *model.TopologyIndex, route NormalizedFIBRoute) 
 			hop.Interface = alias
 			break
 		}
-		if node.Kind == model.KindSRLinux {
+		if canonicalProtocol(route.Protocol) == "connected" {
 			hop.Address = ""
 		}
 		out = append(out, hop)

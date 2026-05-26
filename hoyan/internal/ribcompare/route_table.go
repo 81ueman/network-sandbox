@@ -89,7 +89,12 @@ func ParseFRRRouteTable(node string, data []byte) ([]NormalizedBgpRoute, error) 
 			if protocol == "" {
 				continue
 			}
-			route := nonBGPRoute(node, "default", "ipv4", prefix, protocol, frrRouteTableNextHops(item))
+			hops := frrRouteTableNextHops(item)
+			if routeTableBlackholeItem(item) || discardRouteTableNextHops(hops) || normalizedRouteTableProtocol(firstString(item, "type")) == "blackhole" {
+				protocol = "blackhole"
+				hops = nil
+			}
+			route := nonBGPRoute(node, "default", "ipv4", prefix, protocol, hops)
 			if len(route.Paths) > 0 {
 				out = append(out, route)
 			}
@@ -114,7 +119,12 @@ func ParseCEOSRouteTable(node string, data []byte) ([]NormalizedBgpRoute, error)
 		if protocol == "" {
 			continue
 		}
-		out = append(out, nonBGPRoute(node, "default", "ipv4", prefix, protocol, ceosRouteTableNextHops(m["vias"])))
+		hops := ceosRouteTableNextHops(m["vias"])
+		if discardRouteTableNextHops(hops) {
+			protocol = "blackhole"
+			hops = nil
+		}
+		out = append(out, nonBGPRoute(node, "default", "ipv4", prefix, protocol, hops))
 	}
 	sortRoutes(out)
 	return out, nil
@@ -144,7 +154,12 @@ func ParseSRLinuxRouteTable(node string, data []byte) ([]NormalizedBgpRoute, err
 			if prefix == "" {
 				continue
 			}
-			out = append(out, nonBGPRoute(node, "default", "ipv4", prefix, protocol, srlinuxRouteTableNextHops(m)))
+			hops := srlinuxRouteTableNextHops(m)
+			if discardRouteTableNextHops(hops) {
+				protocol = "blackhole"
+				hops = nil
+			}
+			out = append(out, nonBGPRoute(node, "default", "ipv4", prefix, protocol, hops))
 		}
 	}
 	sortRoutes(out)
@@ -174,8 +189,10 @@ func normalizedRouteTableProtocol(protocol string) string {
 		return ""
 	case "kernel", "connected", "connect", "direct", "local", "host":
 		return "connected"
-	case "static", "blackhole":
+	case "static":
 		return "static"
+	case "blackhole", "discard", "drop", "null0", "null":
+		return "blackhole"
 	default:
 		return ""
 	}
@@ -200,13 +217,54 @@ func nonBGPRoute(node, ni, afi, prefix, protocol string, hops []routeTableNextHo
 
 func nonBGPPath(protocol string, hops []routeTableNextHop) NormalizedBgpPath {
 	path := NormalizedBgpPath{Best: true, Valid: true, Origin: "igp", LocalPref: 100}
-	if protocol == "connected" || len(hops) == 0 {
+	if protocol == "connected" || protocol == "blackhole" || len(hops) == 0 {
 		return path
 	}
 	if hops[0].Address != "" {
 		path.NextHop = hops[0].Address
 	}
 	return path
+}
+
+func discardRouteTableNextHops(hops []routeTableNextHop) bool {
+	if len(hops) == 0 {
+		return false
+	}
+	for _, hop := range hops {
+		if !discardRouteTableNextHop(hop) {
+			return false
+		}
+	}
+	return true
+}
+
+func routeTableBlackholeItem(m map[string]any) bool {
+	if boolValue(firstPresent(m, "blackhole", "discard")) {
+		return true
+	}
+	for _, raw := range asSlice(firstPresent(m, "nexthops", "nextHops")) {
+		hop := asMap(raw)
+		if boolValue(firstPresent(hop, "blackhole", "discard")) {
+			return true
+		}
+	}
+	return false
+}
+
+func discardRouteTableNextHop(hop routeTableNextHop) bool {
+	if hop.Address != "" && !discardRouteTableToken(hop.Address) {
+		return false
+	}
+	return discardRouteTableToken(hop.Interface)
+}
+
+func discardRouteTableToken(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "null0", "null", "discard", "drop", "blackhole":
+		return true
+	default:
+		return false
+	}
 }
 
 func frrRouteTableNextHops(m map[string]any) []routeTableNextHop {

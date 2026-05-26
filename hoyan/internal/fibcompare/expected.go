@@ -109,8 +109,10 @@ func expectedProtocol(source model.RouteSourceKind, nextHop string) string {
 	switch source {
 	case model.RouteSourceConnected:
 		return "connected"
-	case model.RouteSourceStatic, model.RouteSourceBlackhole:
+	case model.RouteSourceStatic:
 		return "static"
+	case model.RouteSourceBlackhole:
+		return "blackhole"
 	}
 	return "bgp"
 }

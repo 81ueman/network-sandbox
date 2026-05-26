@@ -76,7 +76,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 }
 
 func sortedProtocolKeys(m map[string][]NormalizedBgpPath) []string {
-	order := []string{"bgp", "connected", "static"}
+	order := []string{"bgp", "connected", "static", "blackhole"}
 	var out []string
 	seen := map[string]bool{}
 	for _, protocol := range order {
@@ -98,8 +98,10 @@ func expectedRouteProtocol(route sim.RIBEntry) string {
 	switch route.SourceKind {
 	case model.RouteSourceConnected:
 		return "connected"
-	case model.RouteSourceStatic, model.RouteSourceBlackhole:
+	case model.RouteSourceStatic:
 		return "static"
+	case model.RouteSourceBlackhole:
+		return "blackhole"
 	default:
 		return "bgp"
 	}
@@ -127,6 +129,8 @@ func routeComparableInLiveRIB(idx *model.TopologyIndex, node string, route sim.R
 		return comparableConnectedClass(route.RouteSource.ConnectedClass)
 	case model.RouteSourceStatic:
 		return route.RouteSource.NextHop != ""
+	case model.RouteSourceBlackhole:
+		return true
 	default:
 		return false
 	}

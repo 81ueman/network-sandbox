@@ -120,19 +120,79 @@ func (srlinuxCollector) Collect(ctx context.Context, runner Runner, nodes []mode
 	var out []NormalizedFIBRoute
 	for _, n := range nodes {
 		containerName := n.RuntimeName()
-		command := fmt.Sprintf("docker exec -it %s sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary", shellQuote(containerName))
-		data, err := runner.Run(ctx, "script", "-q", "/dev/null", "-c", command)
+		data, err := runSRLinuxFIBJSON(ctx, runner, containerName, "show", "network-instance", "default", "route-table", "ipv4-unicast", "summary")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -it %s sr_cli route-table ipv4-unicast summary: %w", containerName, err)
+			return nil, fmt.Errorf("%s sr_cli route-table ipv4-unicast summary: %w", containerName, err)
 		}
 		routes, err := ParseSRLinuxRoutes(n.Name, data)
 		if err != nil {
 			return nil, fmt.Errorf("%s SR Linux installed FIB: %w", n.Name, err)
 		}
+		for i := range routes {
+			if !srlinuxNeedsRouteDetail(routes[i]) {
+				continue
+			}
+			detail, err := runSRLinuxFIBJSON(ctx, runner, containerName, "show", "network-instance", "default", "route-table", "ipv4-unicast", "prefix", routes[i].Prefix, "detail")
+			if err != nil {
+				return nil, fmt.Errorf("%s sr_cli route-table ipv4-unicast prefix %s detail: %w", containerName, routes[i].Prefix, err)
+			}
+			detailRoutes, err := ParseSRLinuxRouteDetails(n.Name, detail)
+			if err != nil {
+				return nil, fmt.Errorf("%s SR Linux installed FIB prefix %s detail: %w", n.Name, routes[i].Prefix, err)
+			}
+			if detailRoute, ok := srlinuxRouteDetailFor(routes[i], detailRoutes); ok && len(detailRoute.NextHops) > 0 {
+				routes[i].NextHops = detailRoute.NextHops
+			}
+		}
 		out = append(out, routes...)
 	}
 	sortRoutes(out)
 	return out, nil
+}
+
+func runSRLinuxFIBJSON(ctx context.Context, runner Runner, containerName string, showArgs ...string) ([]byte, error) {
+	args := append([]string{"exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--"}, showArgs...)
+	data, err := runner.Run(ctx, "docker", args...)
+	if err == nil {
+		if _, payloadErr := jsonPayload(data); payloadErr == nil {
+			return data, nil
+		}
+	}
+	command := "docker exec -it " + shellQuote(containerName) + " sr_cli --output-format json --pagination off -- " + shellJoin(showArgs)
+	data, ttyErr := runner.Run(ctx, "script", "-q", "/dev/null", "-c", command)
+	if ttyErr != nil {
+		if err != nil {
+			return nil, fmt.Errorf("docker exec -i/it %s sr_cli %s: %w", containerName, strings.Join(showArgs, " "), ttyErr)
+		}
+		return nil, fmt.Errorf("docker exec -it %s sr_cli %s: %w", containerName, strings.Join(showArgs, " "), ttyErr)
+	}
+	return data, nil
+}
+
+func srlinuxNeedsRouteDetail(route NormalizedFIBRoute) bool {
+	switch canonicalProtocol(route.Protocol) {
+	case "bgp", "static":
+		return true
+	default:
+		return false
+	}
+}
+
+func srlinuxRouteDetailFor(summary NormalizedFIBRoute, details []NormalizedFIBRoute) (NormalizedFIBRoute, bool) {
+	for _, detail := range details {
+		if detail.Node == summary.Node && detail.VRF == summary.VRF && detail.AFI == summary.AFI && detail.Prefix == summary.Prefix && canonicalProtocol(detail.Protocol) == canonicalProtocol(summary.Protocol) {
+			return detail, true
+		}
+	}
+	return NormalizedFIBRoute{}, false
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func shellQuote(s string) string {

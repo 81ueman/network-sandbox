@@ -8,8 +8,10 @@ func canonicalProtocol(protocol string) string {
 		return "bgp"
 	case "kernel", "connected", "direct", "local", "host":
 		return "connected"
-	case "static", "blackhole":
+	case "static":
 		return "static"
+	case "blackhole", "discard", "drop", "null0", "null":
+		return "blackhole"
 	default:
 		return strings.ToLower(strings.TrimSpace(protocol))
 	}

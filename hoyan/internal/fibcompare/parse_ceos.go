@@ -16,13 +16,19 @@ func ParseCEOSRoutes(node string, data []byte) ([]NormalizedFIBRoute, error) {
 		if !boolValue(m["kernelProgrammed"]) && !boolValue(m["hardwareProgrammed"]) {
 			continue
 		}
+		nextHops := ceosNextHops(m["vias"])
+		protocol := ceosProtocol(stringValue(m["routeType"]))
+		if discardNextHops(nextHops) {
+			protocol = "blackhole"
+			nextHops = nil
+		}
 		route := NormalizedFIBRoute{
 			Node:       node,
 			VRF:        "default",
 			AFI:        "ipv4",
 			Prefix:     prefix,
-			NextHops:   ceosNextHops(m["vias"]),
-			Protocol:   ceosProtocol(stringValue(m["routeType"])),
+			NextHops:   nextHops,
+			Protocol:   protocol,
 			Preference: intValue(m["preference"]),
 			Metric:     intValue(m["metric"]),
 			Installed:  true,

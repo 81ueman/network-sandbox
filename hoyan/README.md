@@ -92,7 +92,9 @@ topology and device configs without collecting live device state:
 
 ```bash
 go run ./cmd/hoyan model rib --node bj-edge1
+go run ./cmd/hoyan model rib --node bj-edge1 bgp
 go run ./cmd/hoyan model rib --node bj-edge1 --prefix 10.4.0.0/16 --format json
+go run ./cmd/hoyan model rib --node bj-edge1 connected
 go run ./cmd/hoyan model fib --node bj-edge1
 go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
@@ -237,13 +239,20 @@ run:
 go run ./cmd/hoyan fib-compare
 ```
 
-`fib-compare` normalizes modeled BGP, next-hop static, and comparable connected
-FIB entries with live installed FIB entries by node, VRF, AFI, protocol,
-prefix, and next-hop set. Null0/blackhole static routes without a comparable
-next-hop are outside the strict FIB set. A comparable live BGP route must have
-a next-hop that resolves to a topology data-plane interface; if the kernel route
-falls back to a management/default interface such as `eth0`, or the recursive
-next-hop cannot be mapped to a topology link, the route is reported as
+`fib-compare` normalizes modeled BGP, next-hop static, Null0/blackhole, and
+comparable connected FIB entries with live installed FIB entries by node, VRF,
+AFI, source protocol, prefix, and next-hop set. FRR `Null0`, cEOS
+`Null0`/discard, and SR Linux blackhole/discard routes are canonicalized as
+source protocol `blackhole` with no next-hop. When a local blackhole static and
+a BGP `network` route use the same prefix, RIB compare keeps both sources as
+separate entries, while FIB compare expects the local blackhole install and does
+not require a same-prefix local BGP forwarding entry. BGP aggregate routes are
+modeled as BGP control-plane advertisements; they are not treated as local
+blackhole/discard FIB entries unless the device also has an explicit discard
+route. A comparable live BGP route must have a next-hop that resolves to a
+topology data-plane interface; if the kernel route falls back to a
+management/default interface such as `eth0`, or the recursive next-hop cannot be
+mapped to a topology link, the route is reported as
 `unresolved_or_mgmt_fallback`, `unresolved_recursive_next_hop`, or
 `topology_interface_missing`. By default these unresolved live routes are
 warnings and are excluded from the strict set comparison, because they are live
@@ -256,7 +265,8 @@ including ECMP group differences. Live collectors currently use:
 ```bash
 docker exec -i <frr-node> ip -j route show table main
 docker exec -i <ceos-node> Cli -p 15 -c "show ip route vrf default | json"
-docker exec -it <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast prefix <prefix> detail
 ```
 
 `live-check` runs the same comparison after BGP RIB convergence by default:
@@ -272,15 +282,13 @@ policy with `--fib-unresolved-policy warn|fail|ignore`; the default is `warn`.
 Limitations: the modeled side uses the no-failure installed FIB only, Linux
 kernel BGP routes are the FRR source of truth, cEOS compares programmed routes
 from EOS route JSON, SR Linux compares active route-table entries from
-`ipv4-unicast summary`, protocol/metric/preference fields are normalized for
-inspection but the first comparison target is protocol plus prefix plus
-next-hop address/interface set, default routes and unclassified host connected
-routes are out of scope, and hardware ASIC FIB or per-flow ECMP hashing is not
-verified. BGP routes whose live next-hop cannot be mapped to a topology
-data-plane interface are diagnostics rather than silent skips. SR Linux
-next-hop addresses are compared by interface only for now
-because route-table summary output does not expose the peer gateway address
-consistently; #99 tracks strict SR Linux next-hop address normalization.
+`ipv4-unicast summary` and uses per-prefix `detail` output for SR Linux BGP and
+static next-hop peer gateway addresses. Protocol/metric/preference fields are
+normalized for inspection but the first comparison target is protocol plus
+prefix plus next-hop address/interface set, default routes and unclassified
+host connected routes are out of scope, and hardware ASIC FIB or per-flow ECMP
+hashing is not verified. BGP routes whose live next-hop cannot be mapped to a
+topology data-plane interface are diagnostics rather than silent skips.
 
 The live comparison reads BGP table state from FRR, cEOS, and SR Linux nodes,
 not kernel routes, installed route tables, or dataplane forwarding state. It
