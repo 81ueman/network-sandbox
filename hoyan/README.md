@@ -156,6 +156,45 @@ paths, and SR Linux can retain AS-loop paths as invalid BGP RIB entries. Those
 paths are not used for forwarding, but they are represented in the modeled BGP
 RIB so live table comparison stays aligned with the devices.
 
+### Modeled BGP Decision Process
+
+`DefaultBGPDecisionProcess` is a Hoyan model approximation, not a complete
+vendor implementation. It currently orders candidate BGP routes as follows:
+
+1. Higher local-pref.
+2. Locally originated route.
+3. Shorter AS path.
+4. Lower origin-code preference: IGP, then EGP, then incomplete.
+5. Lower MED. The default model preserves the historical approximation and
+   compares MED across neighboring ASNs; `BGPDecisionOptions.AlwaysCompareMED`
+   documents this knob and can be disabled for same-neighbor-AS-only MED tests.
+6. eBGP over iBGP.
+7. Shorter modeled path length.
+8. Stable lexical tie-break over modeled path nodes.
+
+The modeled path length and lexical tie-break are deterministic simulator
+tie-breaks, not vendor bestpath rules. FRR currently uses the same route
+attributes but keeps a vendor-specific reverse lexical tie-break so live RIB
+comparison remains stable for this lab.
+
+Known unsupported or approximated bestpath knobs:
+
+- Weight: unsupported.
+- IGP cost to next-hop: unsupported.
+- Router-id tie-break: documented in `BGPDecisionOptions`, unsupported until
+  modeled routes carry router-id attributes.
+- Originator-id and cluster-list length: unsupported.
+- Deterministic MED: documented in `BGPDecisionOptions`, unsupported.
+- Always-compare-MED: documented in `BGPDecisionOptions`; the default model
+  currently uses the always-compare approximation for backward compatibility.
+- Compare-routerid: documented in `BGPDecisionOptions`, unsupported.
+- Multipath / ECMP install policy: documented in `BGPDecisionOptions`; route
+  equivalence and FIB install semantics are tracked separately in #65.
+- Vendor-specific invalid route retention: partially modeled in device
+  behavior for cEOS unresolved next-hops and SR Linux AS-loop paths.
+- Vendor-specific route-map / policy side effects: only the parsed policy
+  actions represented in the model are applied.
+
 ## Deploy
 
 ```bash

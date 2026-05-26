@@ -9,12 +9,12 @@ import (
 type frrBehavior struct{ baseDeviceBehavior }
 
 func NewFRRBehavior() DeviceBehavior {
-	return frrBehavior{baseDeviceBehavior{kind: model.KindFRR, decision: frrDecisionProcess{}}}
+	return frrBehavior{baseDeviceBehavior{kind: model.KindFRR, decision: frrDecisionProcess{defaultBGPDecisionProcess{options: DefaultBGPDecisionOptions()}}}}
 }
 
-type frrDecisionProcess struct{}
+type frrDecisionProcess struct{ defaultBGPDecisionProcess }
 
-func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+func (d frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 	a = a.Normalize()
 	b = b.Normalize()
 	if a.LocalPref != b.LocalPref {
@@ -26,7 +26,10 @@ func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 	if len(a.ASPath) != len(b.ASPath) {
 		return len(a.ASPath) < len(b.ASPath)
 	}
-	if a.MED != b.MED {
+	if originCodeRank(a.Attrs.OriginCode) != originCodeRank(b.Attrs.OriginCode) {
+		return originCodeRank(a.Attrs.OriginCode) < originCodeRank(b.Attrs.OriginCode)
+	}
+	if d.shouldCompareMED(a, b) && a.MED != b.MED {
 		return a.MED < b.MED
 	}
 	aExternal := !a.LearnedIBGP
@@ -40,8 +43,8 @@ func (frrDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
 	return strings.Join(a.Nodes, ",") > strings.Join(b.Nodes, ",")
 }
 
-func (frrDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {
-	return defaultBGPDecisionProcess{}.Equivalent(receiver, a, b)
+func (d frrDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {
+	return d.defaultBGPDecisionProcess.Equivalent(receiver, a, b)
 }
 
 func (b frrBehavior) RouteInstallableInFIB(device model.Node, installed []RIBEntry, route RIBEntry) bool {

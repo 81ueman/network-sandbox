@@ -186,10 +186,43 @@ func TestDefaultBGPDecisionProcessOrdering(t *testing.T) {
 	assertLess("local-pref", RIBEntry{LocalPref: 200}, RIBEntry{LocalPref: 100})
 	assertLess("local-origin", RIBEntry{Origin: "rx", LocalPref: 100}, RIBEntry{Origin: "remote", LocalPref: 100})
 	assertLess("as-path-length", RIBEntry{ASPath: []uint32{65100}}, RIBEntry{ASPath: []uint32{65100, 65200}})
+	assertLess("origin-code", RIBEntry{ASPath: []uint32{65100}, OriginCode: string(BGPOriginIGP), MED: 20}, RIBEntry{ASPath: []uint32{65100}, OriginCode: string(BGPOriginIncomplete), MED: 10})
 	assertLess("med", RIBEntry{ASPath: []uint32{65100}, MED: 10}, RIBEntry{ASPath: []uint32{65100}, MED: 20})
 	assertLess("ebgp-over-ibgp", RIBEntry{ASPath: []uint32{65100}}, RIBEntry{ASPath: []uint32{65100}, LearnedIBGP: true})
 	assertLess("shorter-link-path", RIBEntry{ASPath: []uint32{65100}, Links: []string{"a"}}, RIBEntry{ASPath: []uint32{65100}, Links: []string{"a", "b"}})
 	assertLess("vendor-tie-break", RIBEntry{ASPath: []uint32{65100}, Nodes: []string{"a"}}, RIBEntry{ASPath: []uint32{65100}, Nodes: []string{"b"}})
+}
+
+func TestBGPDecisionOptionsControlMEDScope(t *testing.T) {
+	receiver := model.Node{Name: "rx", ASN: 65000}
+	always := NewBGPDecisionProcess(BGPDecisionOptions{AlwaysCompareMED: true})
+	sameNeighborOnly := NewBGPDecisionProcess(BGPDecisionOptions{})
+
+	lowMEDDifferentNeighbor := RIBEntry{ASPath: []uint32{65100}, MED: 10, Nodes: []string{"z"}}
+	highMEDDifferentNeighbor := RIBEntry{ASPath: []uint32{65200}, MED: 20, Nodes: []string{"a"}}
+	if !always.Less(receiver, lowMEDDifferentNeighbor, highMEDDifferentNeighbor) {
+		t.Fatalf("AlwaysCompareMED should compare MED across different neighboring ASNs")
+	}
+	if sameNeighborOnly.Less(receiver, lowMEDDifferentNeighbor, highMEDDifferentNeighbor) {
+		t.Fatalf("MED should be skipped across different neighboring ASNs when AlwaysCompareMED is false")
+	}
+
+	lowMEDSameNeighbor := RIBEntry{ASPath: []uint32{65100}, MED: 10, Nodes: []string{"z"}}
+	highMEDSameNeighbor := RIBEntry{ASPath: []uint32{65100}, MED: 20, Nodes: []string{"a"}}
+	if !sameNeighborOnly.Less(receiver, lowMEDSameNeighbor, highMEDSameNeighbor) {
+		t.Fatalf("MED should be compared within the same neighboring AS")
+	}
+}
+
+func TestBGPDecisionOptionsDocumentUnsupportedRouterIDTieBreak(t *testing.T) {
+	behavior := NewFRRBehavior()
+	options := behavior.DecisionOptions()
+	if options.CompareRouterID {
+		t.Fatalf("router-id tie-break should remain explicitly unsupported until routes carry router-id attributes")
+	}
+	if !options.PreferLowerRouterID {
+		t.Fatalf("router-id tie-break direction should be documented for future implementation")
+	}
 }
 
 func TestDefaultBGPDecisionProcessEquivalent(t *testing.T) {
@@ -207,6 +240,10 @@ func TestDefaultBGPDecisionProcessEquivalent(t *testing.T) {
 	d := RIBEntry{LocalPref: 100, ASPath: []uint32{65300}, MED: 10, Links: []string{"d", "e"}}
 	if !decision.Equivalent(receiver, a, d) {
 		t.Fatalf("routes with equal BGP attributes before tie-break should be equivalent")
+	}
+	e := RIBEntry{LocalPref: 100, ASPath: []uint32{65100}, OriginCode: string(BGPOriginIncomplete), MED: 10}
+	if decision.Equivalent(receiver, a, e) {
+		t.Fatalf("routes with different origin-code should not be equivalent")
 	}
 }
 

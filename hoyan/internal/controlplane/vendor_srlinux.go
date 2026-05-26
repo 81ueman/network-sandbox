@@ -5,13 +5,13 @@ import "github.com/81ueman/network-sandbox/hoyan/internal/model"
 type srlinuxBehavior struct{ baseDeviceBehavior }
 
 func NewSRLinuxBehavior() DeviceBehavior {
-	return srlinuxBehavior{baseDeviceBehavior{kind: model.KindSRLinux, decision: srlinuxDecisionProcess{}}}
+	return srlinuxBehavior{baseDeviceBehavior{kind: model.KindSRLinux, decision: srlinuxDecisionProcess{defaultBGPDecisionProcess{options: DefaultBGPDecisionOptions()}}}}
 }
 
-type srlinuxDecisionProcess struct{}
+type srlinuxDecisionProcess struct{ defaultBGPDecisionProcess }
 
-func (srlinuxDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
-	return defaultBGPDecisionProcess{}.Less(receiver, a, b)
+func (d srlinuxDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+	return d.defaultBGPDecisionProcess.Less(receiver, a, b)
 }
 
 func (srlinuxDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {

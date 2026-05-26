@@ -16,6 +16,7 @@ type BGPBehavior interface {
 	SelectRoutes(device model.Node, routes []RIBEntry) []RIBEntry
 	ExportRoute(from model.Node, to model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision
 	ImportRoute(to model.Node, from model.Node, session model.BGPNeighbor, route RIBEntry) BGPRouteDecision
+	DecisionOptions() BGPDecisionOptions
 	DecisionProcess() BGPDecisionProcess
 }
 
@@ -79,4 +80,11 @@ func (b baseDeviceBehavior) DecisionProcess() BGPDecisionProcess {
 		return DefaultBGPDecisionProcess()
 	}
 	return b.decision
+}
+
+func (b baseDeviceBehavior) DecisionOptions() BGPDecisionOptions {
+	if withOptions, ok := b.DecisionProcess().(interface{ Options() BGPDecisionOptions }); ok {
+		return withOptions.Options()
+	}
+	return DefaultBGPDecisionOptions()
 }
