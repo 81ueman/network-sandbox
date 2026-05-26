@@ -78,6 +78,7 @@ func NewRootCommand() *cobra.Command {
 		NewRIBCompareCommand(),
 		NewFIBCompareCommand(),
 		NewRenderTopologyCommand(),
+		NewLabsCommand(),
 		NewModelCommand(),
 	)
 	return cmd
@@ -94,12 +95,16 @@ func NewVerifyCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, &opts.queriesPath); err != nil {
+				return err
+			}
 			if err := runVerify(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
@@ -112,6 +117,7 @@ func NewVerifyCommand() *cobra.Command {
 }
 
 type verifyOptions struct {
+	labPath                 string
 	topologyPath            string
 	queriesPath             string
 	strictConfig            bool
@@ -242,6 +248,9 @@ func NewLiveCheckCommand() *cobra.Command {
 			if err := opts.validate(); err != nil {
 				return err
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, &opts.queriesPath); err != nil {
+				return err
+			}
 			err := livecheck.Run(cmd.Context(), livecheck.Options{
 				Topology:      opts.topologyPath,
 				Queries:       opts.queriesPath,
@@ -261,6 +270,7 @@ func NewLiveCheckCommand() *cobra.Command {
 			return nil
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML for live dataplane checks")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "overall wait timeout")
@@ -277,6 +287,7 @@ func NewLiveCheckCommand() *cobra.Command {
 }
 
 type liveCheckOptions struct {
+	labPath             string
 	topologyPath        string
 	queriesPath         string
 	strictConfig        bool
@@ -318,18 +329,23 @@ func NewRIBCompareCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			if err := runRIBCompare(cmd.Context(), opts, cmd.OutOrStdout()); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	return cmd
 }
 
 type ribCompareOptions struct {
+	labPath      string
 	topologyPath string
 	strictConfig bool
 }
@@ -368,9 +384,13 @@ func NewFIBCompareCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			return runFIBCompare(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.allowUnsupported, "allow-unsupported", false, "skip nodes without a live FIB collector")
@@ -379,6 +399,7 @@ func NewFIBCompareCommand() *cobra.Command {
 }
 
 type fibCompareOptions struct {
+	labPath          string
 	topologyPath     string
 	strictConfig     bool
 	allowUnsupported bool
@@ -498,12 +519,4 @@ func shouldRewriteConfigPaths(sourceDir, outputPath string) bool {
 		return true
 	}
 	return outputDir != sourceDir
-}
-
-func addTopologyFlag(cmd *cobra.Command, value *string, usage string) {
-	cmd.Flags().StringVar(value, "topology", "hoyan.clab.yml", usage)
-}
-
-func addQueriesFlag(cmd *cobra.Command, value *string, usage string) {
-	cmd.Flags().StringVar(value, "queries", "intent/queries.yml", usage)
 }
