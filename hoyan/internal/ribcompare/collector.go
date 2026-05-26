@@ -1,11 +1,19 @@
 package ribcompare
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 )
+
+const srlinuxJSONMaxAttempts = 3
+
+var srlinuxJSONRetryDelay = 250 * time.Millisecond
 
 func Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
@@ -114,18 +122,18 @@ func (srlinuxCollector) Collect(ctx context.Context, runner Runner, nodes []mode
 	var out []NormalizedBgpRoute
 	for _, n := range nodes {
 		containerName := n.RuntimeName()
-		summary, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "summary")
+		summary, err := RunSRLinuxJSON(ctx, runner, containerName, "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "summary")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 summary: %w", containerName, err)
+			return nil, fmt.Errorf("%s SR Linux BGP RIB summary collection: %w", n.Name, err)
 		}
 		prefixes, err := ParseSRLinuxSummary(summary)
 		if err != nil {
 			return nil, fmt.Errorf("%s SR Linux BGP RIB summary: %w", n.Name, err)
 		}
 		for _, prefix := range prefixes {
-			detail, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--", "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "prefix", prefix, "detail")
+			detail, err := RunSRLinuxJSON(ctx, runner, containerName, "show", "network-instance", "default", "protocols", "bgp", "routes", "ipv4", "prefix", prefix, "detail")
 			if err != nil {
-				return nil, fmt.Errorf("docker exec -i %s sr_cli BGP ipv4 prefix %s detail: %w", containerName, prefix, err)
+				return nil, fmt.Errorf("%s SR Linux BGP RIB prefix %s detail collection: %w", n.Name, prefix, err)
 			}
 			routes, err := ParseSRLinuxDetail(n.Name, prefix, detail)
 			if err != nil {
@@ -136,4 +144,48 @@ func (srlinuxCollector) Collect(ctx context.Context, runner Runner, nodes []mode
 	}
 	sortRoutes(out)
 	return out, nil
+}
+
+func RunSRLinuxJSON(ctx context.Context, runner Runner, containerName string, showArgs ...string) ([]byte, error) {
+	args := append([]string{"exec", "-i", containerName, "sr_cli", "--output-format", "json", "--pagination", "off", "--"}, showArgs...)
+	var last []byte
+	for attempt := 1; attempt <= srlinuxJSONMaxAttempts; attempt++ {
+		data, err := runner.Run(ctx, "docker", args...)
+		if err != nil {
+			return nil, fmt.Errorf("docker exec -i %s sr_cli %s: %w", containerName, strings.Join(showArgs, " "), err)
+		}
+		trimmed := bytes.TrimSpace(data)
+		if len(trimmed) > 0 && json.Valid(trimmed) {
+			return data, nil
+		}
+		last = data
+		if attempt < srlinuxJSONMaxAttempts {
+			if err := sleepContext(ctx, srlinuxJSONRetryDelay); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, fmt.Errorf("docker exec -i %s sr_cli %s returned malformed JSON after %d attempts: bytes=%d preview=%q", containerName, strings.Join(showArgs, " "), srlinuxJSONMaxAttempts, len(last), previewBytes(last, 160))
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func previewBytes(data []byte, limit int) string {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) <= limit {
+		return string(trimmed)
+	}
+	return string(trimmed[:limit]) + "..."
 }

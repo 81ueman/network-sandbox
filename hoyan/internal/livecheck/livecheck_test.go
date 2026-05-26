@@ -59,6 +59,26 @@ func TestWaitForFRRContainers(t *testing.T) {
 	}
 }
 
+func TestWaitForSRLinuxCLIUsesJSONReadinessProbe(t *testing.T) {
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		if cmd != "docker exec -i clab-test-core-gz sr_cli --output-format json --pagination off -- show version" {
+			t.Fatalf("unexpected command: %s", cmd)
+		}
+		return []byte(`{"version":"test"}`), nil
+	}}
+	nodes := []model.Node{
+		{Name: "core-gz", ContainerName: "clab-test-core-gz", Kind: model.KindSRLinux},
+		{Name: "r1", ContainerName: "clab-test-r1", Kind: model.KindFRR},
+	}
+	if err := WaitForSRLinuxCLI(context.Background(), runner, nodes, time.Millisecond); err != nil {
+		t.Fatalf("WaitForSRLinuxCLI() error = %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want one SR Linux readiness probe", runner.calls)
+	}
+}
+
 func TestRunDestroysOnSuccess(t *testing.T) {
 	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
 		cmd := name + " " + strings.Join(args, " ")

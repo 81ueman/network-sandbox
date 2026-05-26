@@ -86,6 +86,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if err := WaitForContainers(deadlineCtx, runner, nodes, opts.PollInterval); err != nil {
 		return err
 	}
+	if err := WaitForSRLinuxCLI(deadlineCtx, runner, nodes, opts.PollInterval); err != nil {
+		return err
+	}
 	if err := ApplyNftablesPolicies(deadlineCtx, runner, topo, opts.Out); err != nil {
 		return err
 	}
@@ -166,6 +169,30 @@ func WaitForContainers(ctx context.Context, runner ribcompare.Runner, nodes []mo
 			return fmt.Errorf("containers did not become ready: %w", lastErr)
 		}
 		return fmt.Errorf("containers did not become ready")
+	})
+}
+
+func WaitForSRLinuxCLI(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, interval time.Duration) error {
+	srlinuxNodes := ribcompare.NodesByKind(nodes, model.KindSRLinux)
+	if len(srlinuxNodes) == 0 {
+		return nil
+	}
+	var lastErr error
+	return poll(ctx, interval, func() (bool, error) {
+		for _, n := range srlinuxNodes {
+			containerName := n.RuntimeName()
+			if _, err := ribcompare.RunSRLinuxJSON(ctx, runner, containerName, "show", "version"); err != nil {
+				lastErr = fmt.Errorf("%s SR Linux CLI is not ready: %w", n.Name, err)
+				return false, nil
+			}
+		}
+		lastErr = nil
+		return true, nil
+	}, func() error {
+		if lastErr != nil {
+			return fmt.Errorf("SR Linux CLI did not become ready: %w", lastErr)
+		}
+		return fmt.Errorf("SR Linux CLI did not become ready")
 	})
 }
 

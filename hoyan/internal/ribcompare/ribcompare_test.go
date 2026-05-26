@@ -1,13 +1,21 @@
 package ribcompare
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
 )
+
+type runnerFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+func (f runnerFunc) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return f(ctx, name, args...)
+}
 
 func TestExpectedRoutesIncludesMultipleBgpPaths(t *testing.T) {
 	topo, err := model.LoadLabTopology(filepath.Join("..", "..", "hoyan.clab.yml"))
@@ -174,6 +182,53 @@ func TestParseSRLinux(t *testing.T) {
 	}
 	if pathByNextHop(routes[0].Paths, "203.0.113.1") != nil || pathByNextHop(routes[0].Paths, "203.0.113.2") != nil {
 		t.Fatalf("advertised/non-route sections were parsed: %#v", routes[0].Paths)
+	}
+}
+
+func TestRunSRLinuxJSONRetriesEmptyOutput(t *testing.T) {
+	oldDelay := srlinuxJSONRetryDelay
+	srlinuxJSONRetryDelay = 0
+	defer func() { srlinuxJSONRetryDelay = oldDelay }()
+
+	calls := 0
+	runner := runnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		calls++
+		if name != "docker" || strings.Join(args[:4], " ") != "exec -i clab-test-core-gz sr_cli" {
+			t.Fatalf("unexpected command: %s %v", name, args)
+		}
+		if calls == 1 {
+			return nil, nil
+		}
+		return []byte(`{"header":[]}`), nil
+	})
+	data, err := RunSRLinuxJSON(context.Background(), runner, "clab-test-core-gz", "show", "version")
+	if err != nil {
+		t.Fatalf("RunSRLinuxJSON() error = %v", err)
+	}
+	if string(data) != `{"header":[]}` {
+		t.Fatalf("data = %q", data)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want retry after empty output", calls)
+	}
+}
+
+func TestRunSRLinuxJSONReportsMalformedOutput(t *testing.T) {
+	oldDelay := srlinuxJSONRetryDelay
+	srlinuxJSONRetryDelay = 0
+	defer func() { srlinuxJSONRetryDelay = oldDelay }()
+
+	runner := runnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(`{"header":`), nil
+	})
+	_, err := RunSRLinuxJSON(context.Background(), runner, "clab-test-core-gz", "show", "version")
+	if err == nil {
+		t.Fatalf("RunSRLinuxJSON() succeeded unexpectedly")
+	}
+	for _, want := range []string{"malformed JSON", "bytes=10", `preview="{\"header\":"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
 	}
 }
 
