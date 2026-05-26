@@ -176,8 +176,9 @@ go run ./cmd/hoyan live-check --topology hoyan.issue-21.clab.yml
 go run ./cmd/hoyan rib-compare --topology hoyan.issue-21.clab.yml
 ```
 
-To run the full live integration check, including deploy, convergence wait,
-modeled-vs-live BGP RIB comparison, and cleanup:
+To run the full live integration check, including deploy, BGP convergence wait,
+modeled-vs-live RIB comparison for BGP, connected, and static route sources,
+and cleanup:
 
 ```bash
 go run ./cmd/hoyan live-check
@@ -193,9 +194,11 @@ for the full timeout:
 go run ./cmd/hoyan live-check --max-polls 5 --poll-interval 25s
 ```
 
-Live BGP RIB comparison is exact. It requires modeled and live RIBs to match on
-prefixes, paths, best flag, valid flag, next-hop, AS path, origin, local-pref,
-and MED. Unexpected live prefixes or paths are reported as diffs.
+After BGP converges, `live-check` collects the first-class RIB route-table
+view for non-BGP sources and compares modeled BGP, connected, and static routes.
+The output includes a source summary such as `bgp=10, connected=4, static=2`.
+BGP RIB comparison is exact on prefixes, paths, best flag, valid flag,
+next-hop, AS path, origin, local-pref, and MED.
 
 For debugging, keep the lab running if the comparison fails:
 
@@ -209,8 +212,8 @@ To keep the lab running even on success:
 go run ./cmd/hoyan live-check --skip-destroy
 ```
 
-If the lab is already deployed, compare the modeled BGP RIB with live nodes
-directly:
+If the lab is already deployed, compare the modeled RIB with live nodes
+directly. This compares BGP, connected, and static route sources:
 
 ```bash
 go run ./cmd/hoyan rib-compare
@@ -230,7 +233,7 @@ including ECMP group differences. Live collectors currently use:
 
 ```bash
 docker exec -i <frr-node> ip -j route show table main
-docker exec -i <ceos-node> Cli -p 15 -c "show ip route vrf default bgp | json"
+docker exec -i <ceos-node> Cli -p 15 -c "show ip route vrf default | json"
 docker exec -it <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary
 ```
 

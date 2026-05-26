@@ -67,11 +67,11 @@ func TestCollectIncludesInstalledStaticAndConnectedRoutes(t *testing.T) {
 		switch cmd {
 		case "docker exec -i r1 vtysh -c show ip bgp json":
 			return []byte(`{}`), nil
-		case "docker exec -i r1 ip -j route show table main":
-			return []byte(`[
-			  {"dst":"192.0.2.0/30","dev":"eth1","protocol":"kernel"},
-			  {"dst":"203.0.113.0/24","gateway":"192.0.2.2","dev":"eth1","protocol":"static"}
-			]`), nil
+		case "docker exec -i r1 vtysh -c show ip route json":
+			return []byte(`{
+			  "192.0.2.0/30":[{"protocol":"connected","interfaceName":"eth1"}],
+			  "203.0.113.0/24":[{"protocol":"static","nexthops":[{"ip":"192.0.2.2","interfaceName":"eth1"}]}]
+			}`), nil
 		default:
 			t.Fatalf("unexpected command: %s", cmd)
 			return nil, nil
@@ -86,6 +86,75 @@ func TestCollectIncludesInstalledStaticAndConnectedRoutes(t *testing.T) {
 	}
 	if routeByPrefixProtocol(routes, "203.0.113.0/24", "static") == nil {
 		t.Fatalf("static route missing from collected routes: %#v", routes)
+	}
+}
+
+func TestParseFRRRouteTableStaticAndConnected(t *testing.T) {
+	data := []byte(`{
+	  "192.0.2.0/30":[{"protocol":"connected","interfaceName":"eth1"}],
+	  "203.0.113.0/24":[{"protocol":"static","nexthops":[{"ip":"192.0.2.2","interfaceName":"eth1"}]}],
+	  "10.0.0.0/24":[{"protocol":"bgp","nexthops":[{"ip":"198.51.100.1"}]}]
+	}`)
+	routes, err := ParseFRRRouteTable("r1", data)
+	if err != nil {
+		t.Fatalf("ParseFRRRouteTable() error = %v", err)
+	}
+	if routeByPrefixProtocol(routes, "192.0.2.0/30", "connected") == nil {
+		t.Fatalf("connected route missing: %#v", routes)
+	}
+	static := routeByPrefixProtocol(routes, "203.0.113.0/24", "static")
+	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
+		t.Fatalf("static route = %#v", static)
+	}
+	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
+		t.Fatalf("BGP route table entry should be excluded: %#v", routes)
+	}
+}
+
+func TestParseCEOSRouteTableStaticAndConnected(t *testing.T) {
+	data := []byte(`{
+	  "vrfs":{"default":{"routes":{
+	    "192.0.2.0/30":{"routeType":"connected","vias":[{"interface":"Ethernet1"}]},
+	    "203.0.113.0/24":{"routeType":"static","vias":[{"nexthopAddr":"192.0.2.2","interface":"Ethernet1"}]},
+	    "10.0.0.0/24":{"routeType":"eBGP","vias":[{"nexthopAddr":"198.51.100.1"}]}
+	  }}}
+	}`)
+	routes, err := ParseCEOSRouteTable("ceos1", data)
+	if err != nil {
+		t.Fatalf("ParseCEOSRouteTable() error = %v", err)
+	}
+	if routeByPrefixProtocol(routes, "192.0.2.0/30", "connected") == nil {
+		t.Fatalf("connected route missing: %#v", routes)
+	}
+	static := routeByPrefixProtocol(routes, "203.0.113.0/24", "static")
+	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
+		t.Fatalf("static route = %#v", static)
+	}
+	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
+		t.Fatalf("BGP route table entry should be excluded: %#v", routes)
+	}
+}
+
+func TestParseSRLinuxRouteTableStaticAndConnected(t *testing.T) {
+	data := []byte(`noise
+	{"instance":[{"ip route":[
+	  {"Prefix":"192.0.2.0/30","Route Type":"local","Active":"True","Next-hop Interface":"ethernet-1/1.0"},
+	  {"Prefix":"203.0.113.0/24","Route Type":"static","Active":"True","Next-hop (Type)":"192.0.2.2/32 (direct)","Next-hop Interface":"ethernet-1/1.0"},
+	  {"Prefix":"10.0.0.0/24","Route Type":"bgp","Active":"True","Next-hop (Type)":"198.51.100.1/32 (indirect)"}
+	]}]}`)
+	routes, err := ParseSRLinuxRouteTable("srl1", data)
+	if err != nil {
+		t.Fatalf("ParseSRLinuxRouteTable() error = %v", err)
+	}
+	if routeByPrefixProtocol(routes, "192.0.2.0/30", "connected") == nil {
+		t.Fatalf("connected route missing: %#v", routes)
+	}
+	static := routeByPrefixProtocol(routes, "203.0.113.0/24", "static")
+	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
+		t.Fatalf("static route = %#v", static)
+	}
+	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
+		t.Fatalf("BGP route table entry should be excluded: %#v", routes)
 	}
 }
 

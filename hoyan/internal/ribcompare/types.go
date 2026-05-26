@@ -6,7 +6,7 @@ import (
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 )
 
-type NormalizedBgpRoute struct {
+type NormalizedRoute struct {
 	Node            string
 	NetworkInstance string
 	AFI             string
@@ -14,6 +14,8 @@ type NormalizedBgpRoute struct {
 	Protocol        string
 	Paths           []NormalizedBgpPath
 }
+
+type NormalizedBgpRoute = NormalizedRoute
 
 type NormalizedBgpPath struct {
 	Best             bool
@@ -35,6 +37,22 @@ type NormalizedBgpPath struct {
 type BgpRibCollector interface {
 	Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error)
 }
+
+type RouteTableCollector interface {
+	CollectRouteTables(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error)
+}
+
+type Collector interface {
+	BgpRibCollector
+	RouteTableCollector
+}
+
+type RouteSources string
+
+const (
+	RouteSourcesBGP RouteSources = "bgp"
+	RouteSourcesAll RouteSources = "all"
+)
 
 type BgpRibCompareOptions struct {
 	CompareBest             bool
