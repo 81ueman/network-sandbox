@@ -51,13 +51,13 @@ go run ./cmd/hoyan verify --prefix-classes --format json
 ```
 
 `--prefix-classes` builds prefix classes from advertised route prefixes,
-prefix-list and policy predicates, and query destinations. Route, packet, and
-failure checks are expanded across matching classes. The default output
-collapses classes with identical reachability, expected result, counterexample,
-reason, and symbolic conditions; `--no-collapse` prints each class result
-separately. JSON output includes `class_id` or `class_ids`, `space` or
-`spaces`, `matched_predicates`, `reachable_condition`, and
-`unreachable_condition`.
+prefix-list and policy predicates, query destinations, and modeled RIB/FIB
+prefixes. Route, packet, and failure checks are expanded across matching
+classes. The default output collapses classes with identical reachability,
+expected result, counterexample, reason, and symbolic conditions; `--no-collapse`
+prints each class result separately. JSON output includes `class_id` or
+`class_ids`, `space` or `spaces`, `matched_predicates`, `reachable_condition`,
+and `unreachable_condition`.
 
 Data-plane policies are parsed from the device startup configs.
 Linux/FRR data-plane ACLs are stored as nftables rulesets under
@@ -98,11 +98,11 @@ cost, and install condition. Use `--format json` when feeding the output to
 
 The `prefix-classes` view shows the PrefixUniverse classes derived from
 advertised route prefixes, prefix-list predicates, policy destination prefixes,
-and an optional `--prefix` request predicate. `model symbolic-route --prefix`
-uses the same request-aware PrefixUniverse and emits one symbolic route result
-per matching class, including `class_id`, `space`, matched predicates, and
-reachable/unreachable conditions. `model symbolic-packet` remains IP-address
-based.
+modeled RIB/FIB prefixes, and an optional `--prefix` request predicate.
+`model symbolic-route --prefix` uses the same request-aware PrefixUniverse and
+emits one symbolic route result per matching class, including `class_id`,
+`space`, matched predicates, and reachable/unreachable conditions.
+`model symbolic-packet` remains IP-address based.
 
 Modeled FIB semantics use reachability OR for explicitly grouped ECMP /
 equivalent candidates: entries with the same prefix, rank, and `group_id` do

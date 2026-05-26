@@ -323,6 +323,7 @@ func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.W
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
+	graph := sim.NewGraph(topo)
 	var filter model.PrefixSet
 	var request []model.PrefixPredicate
 	if opts.prefix != "" {
@@ -333,7 +334,7 @@ func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.W
 		filter = model.ExactPrefixSet{Prefix: prefix}
 		request = append(request, model.PrefixPredicate{Source: "request:prefix-classes:" + prefix.String(), Set: filter})
 	}
-	universe, err := modelPrefixUniverse(topo, request)
+	universe, err := modelPrefixUniverse(topo, graph, request)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
@@ -400,7 +401,7 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 		return ExitError{Code: 2, Err: err}
 	}
 	filter := model.ExactPrefixSet{Prefix: parsedPrefix}
-	universe, err := modelPrefixUniverse(topo, []model.PrefixPredicate{{
+	universe, err := modelPrefixUniverse(topo, graph, []model.PrefixPredicate{{
 		Source: "request:symbolic-route:" + parsedPrefix.String(),
 		Set:    filter,
 	}})
@@ -452,8 +453,10 @@ func canonicalPrefix(raw string) (string, error) {
 	return prefix.String(), nil
 }
 
-func modelPrefixUniverse(topo *model.Topology, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
+func modelPrefixUniverse(topo *model.Topology, graph *sim.Graph, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
 	predicates := model.CollectPrefixPredicateMetadata(topo, nil)
+	predicates = append(predicates, sim.CollectRIBPrefixPredicates(graph)...)
+	predicates = append(predicates, sim.CollectFIBPrefixPredicates(graph)...)
 	predicates = append(predicates, request...)
 	return model.BuildPrefixUniverseFromPredicates(predicates)
 }

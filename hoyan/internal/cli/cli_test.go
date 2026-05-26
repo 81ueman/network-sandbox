@@ -210,6 +210,22 @@ func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
 			t.Fatalf("verify JSON missing %q: %#v", key, first)
 		}
 	}
+	var foundRIB, foundFIB bool
+	for _, row := range rows {
+		predicates, _ := row["matched_predicates"].([]any)
+		for _, raw := range predicates {
+			source, _ := raw.(string)
+			if strings.HasPrefix(source, "rib:") {
+				foundRIB = true
+			}
+			if strings.HasPrefix(source, "fib:") {
+				foundFIB = true
+			}
+		}
+	}
+	if !foundRIB || !foundFIB {
+		t.Fatalf("verify JSON missing RIB/FIB predicates: rib=%v fib=%v", foundRIB, foundFIB)
+	}
 }
 
 func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
@@ -366,6 +382,22 @@ func TestModelPrefixClassesCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 		if !ok || len(predicates) == 0 {
 			t.Fatalf("row missing matched_predicates: %#v", row)
 		}
+	}
+	var foundRIB, foundFIB bool
+	for _, row := range rows {
+		predicates, _ := row["matched_predicates"].([]any)
+		for _, raw := range predicates {
+			source, _ := raw.(string)
+			if strings.HasPrefix(source, "rib:") {
+				foundRIB = true
+			}
+			if strings.HasPrefix(source, "fib:") {
+				foundFIB = true
+			}
+		}
+	}
+	if !foundRIB || !foundFIB {
+		t.Fatalf("prefix-classes JSON missing RIB/FIB predicates: rib=%v fib=%v", foundRIB, foundFIB)
 	}
 }
 
