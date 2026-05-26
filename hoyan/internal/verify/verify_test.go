@@ -18,8 +18,8 @@ func TestRunBundledQueries(t *testing.T) {
 		t.Fatalf("LoadQueries() error = %v", err)
 	}
 	report := Run(topo, queries)
-	if len(report.Results) != 13 {
-		t.Fatalf("results = %d, want 13", len(report.Results))
+	if len(report.Results) != 15 {
+		t.Fatalf("results = %d, want 15", len(report.Results))
 	}
 	for _, result := range report.Results {
 		switch result.Name {

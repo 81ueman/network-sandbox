@@ -294,6 +294,17 @@ func (e *Engine) SymbolicPacketReachabilityForClass(from string, universe model.
 	}
 }
 
+func (e *Engine) SymbolicPacketReachabilityForPacketClass(from string, class model.PacketClass) SymbolicReachabilityResult {
+	if class.DstSet == nil {
+		return SymbolicReachabilityResult{
+			Reachable:   failure.False(),
+			Unreachable: failure.True(),
+			Reason:      "packet class destination prefix set is empty",
+		}
+	}
+	return e.SymbolicPacketReachabilityForPrefixSetSpec(from, class.DstSet, class.Spec())
+}
+
 func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, packetPrefix netip.Prefix, spec model.PacketSpec, initialCond failure.Cond) SymbolicReachabilityResult {
 	maxHops := len(e.idx.NodesByName)
 	if maxHops == 0 {

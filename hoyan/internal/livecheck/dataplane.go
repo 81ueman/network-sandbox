@@ -33,21 +33,27 @@ func RunDataplaneChecks(ctx context.Context, runner ribcompare.Runner, topo *mod
 		if check.ExpectReachable != nil {
 			expected = *check.ExpectReachable
 		}
-		spec := model.PacketSpec{Protocol: check.Protocol, DstPort: model.ExactPort(check.DstPort)}
-		_, modeled, reason := graph.PacketReachableSpec(check.From, check.To, spec, failure.None())
-		live, err := runPacketProbe(ctx, runner, topo, check)
-		if err != nil {
-			return fmt.Errorf("%s live dataplane probe: %w", check.Name, err)
-		}
-		fmt.Fprintf(out, "[dataplane] %s live=%v modeled=%v expected=%v\n", check.Name, live, modeled, expected)
-		if reason != "" {
-			fmt.Fprintf(out, "  modeled reason: %s\n", reason)
-		}
-		if live != expected {
-			return fmt.Errorf("%s live dataplane reachable=%v expected=%v", check.Name, live, expected)
-		}
-		if live != modeled {
-			return fmt.Errorf("%s live dataplane reachable=%v modeled=%v", check.Name, live, modeled)
+		ports := check.DstPortValues()
+		for _, port := range ports {
+			checkForPort := check
+			checkForPort.DstPort = port
+			checkName := packetCheckName(check.Name, port, len(ports))
+			spec := model.PacketSpec{Protocol: check.Protocol, DstPort: model.ExactPort(port)}
+			_, modeled, reason := graph.PacketReachableSpec(check.From, check.To, spec, failure.None())
+			live, err := runPacketProbe(ctx, runner, topo, checkForPort)
+			if err != nil {
+				return fmt.Errorf("%s live dataplane probe: %w", checkName, err)
+			}
+			fmt.Fprintf(out, "[dataplane] %s live=%v modeled=%v expected=%v\n", checkName, live, modeled, expected)
+			if reason != "" {
+				fmt.Fprintf(out, "  modeled reason: %s\n", reason)
+			}
+			if live != expected {
+				return fmt.Errorf("%s live dataplane reachable=%v expected=%v", checkName, live, expected)
+			}
+			if live != modeled {
+				return fmt.Errorf("%s live dataplane reachable=%v modeled=%v", checkName, live, modeled)
+			}
 		}
 	}
 	return nil
@@ -80,6 +86,13 @@ func runPacketProbe(ctx context.Context, runner ribcompare.Runner, topo *model.T
 	default:
 		return false, fmt.Errorf("unsupported live packet protocol %q", check.Protocol)
 	}
+}
+
+func packetCheckName(name string, port int, portCount int) string {
+	if portCount <= 1 || port <= 0 {
+		return name
+	}
+	return fmt.Sprintf("%s:dst-port-%d", name, port)
 }
 
 func runDockerExecTTY(ctx context.Context, runner ribcompare.Runner, container string, args ...string) ([]byte, error) {
