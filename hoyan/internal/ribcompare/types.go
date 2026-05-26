@@ -67,13 +67,21 @@ type AttributeMismatch struct {
 	Actual   any
 }
 
+type DuplicatePathConflict struct {
+	RouteKey string
+	PathKey  string
+	Side     string
+	Paths    []NormalizedBgpPath
+}
+
 type BgpRibCompareResult struct {
-	OK                 bool
-	MissingPrefixes    []string
-	UnexpectedPrefixes []string
-	MissingPaths       []PathDiff
-	UnexpectedPaths    []PathDiff
-	Mismatched         []AttributeMismatch
+	OK                     bool
+	MissingPrefixes        []string
+	UnexpectedPrefixes     []string
+	MissingPaths           []PathDiff
+	UnexpectedPaths        []PathDiff
+	Mismatched             []AttributeMismatch
+	DuplicatePathConflicts []DuplicatePathConflict
 }
 
 type Runner interface {

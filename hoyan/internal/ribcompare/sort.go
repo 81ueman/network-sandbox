@@ -44,3 +44,7 @@ func sortedUnionKeys[A any, B any](a map[string]A, b map[string]B) []string {
 func mismatchSortKey(m AttributeMismatch) string {
 	return m.RouteKey + "|" + m.PathKey + "|" + m.Field
 }
+
+func duplicateConflictSortKey(c DuplicatePathConflict) string {
+	return c.RouteKey + "|" + c.PathKey + "|" + c.Side
+}

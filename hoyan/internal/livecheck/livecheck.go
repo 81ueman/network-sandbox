@@ -294,7 +294,7 @@ func CountExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribc
 }
 
 func countDiffs(result ribcompare.BgpRibCompareResult) int {
-	return len(result.MissingPrefixes) + len(result.UnexpectedPrefixes) + len(result.MissingPaths) + len(result.UnexpectedPaths) + len(result.Mismatched)
+	return len(result.MissingPrefixes) + len(result.UnexpectedPrefixes) + len(result.MissingPaths) + len(result.UnexpectedPaths) + len(result.Mismatched) + len(result.DuplicatePathConflicts)
 }
 
 func poll(ctx context.Context, interval time.Duration, fn func() (bool, error), onTimeout func() error) error {

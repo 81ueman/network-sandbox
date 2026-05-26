@@ -21,5 +21,8 @@ func FormatDiffs(result BgpRibCompareResult) []string {
 	for _, m := range result.Mismatched {
 		out = append(out, fmt.Sprintf("[DIFF] %s path %s field=%s expected=%v actual=%v", m.RouteKey, m.PathKey, m.Field, m.Expected, m.Actual))
 	}
+	for _, c := range result.DuplicatePathConflicts {
+		out = append(out, fmt.Sprintf("[DIFF] %s path %s duplicate path conflict side=%s paths=%d", c.RouteKey, c.PathKey, c.Side, len(c.Paths)))
+	}
 	return out
 }

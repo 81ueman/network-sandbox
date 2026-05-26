@@ -36,11 +36,15 @@ func CompareBgpRib(expected []NormalizedBgpRoute, actual []NormalizedBgpRoute, o
 	sort.Slice(result.Mismatched, func(i, j int) bool {
 		return mismatchSortKey(result.Mismatched[i]) < mismatchSortKey(result.Mismatched[j])
 	})
+	sort.Slice(result.DuplicatePathConflicts, func(i, j int) bool {
+		return duplicateConflictSortKey(result.DuplicatePathConflicts[i]) < duplicateConflictSortKey(result.DuplicatePathConflicts[j])
+	})
 	result.OK = len(result.MissingPrefixes) == 0 &&
 		len(result.UnexpectedPrefixes) == 0 &&
 		len(result.MissingPaths) == 0 &&
 		len(result.UnexpectedPaths) == 0 &&
-		len(result.Mismatched) == 0
+		len(result.Mismatched) == 0 &&
+		len(result.DuplicatePathConflicts) == 0
 	return result
 }
 
