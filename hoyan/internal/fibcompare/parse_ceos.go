@@ -35,12 +35,7 @@ func ParseCEOSRoutes(node string, data []byte) ([]NormalizedFIBRoute, error) {
 }
 
 func ceosProtocol(routeType string) string {
-	switch routeType {
-	case "eBGP", "iBGP", "BGP", "bgp":
-		return "bgp"
-	default:
-		return routeType
-	}
+	return canonicalProtocol(routeType)
 }
 
 func ceosNextHops(raw any) []NormalizedFIBNextHop {

@@ -158,6 +158,17 @@ normalizes selected FRR multipath RIB entries into an ECMP next-hop set for
 live kernel FIB comparison. cEOS and SR Linux do not currently expose
 equivalent FIB install groups in this model.
 
+Connected routes are classified when the model derives routes from interface
+addresses. `link` means the interface belongs to a containerlab topology link,
+`loopback` means a loopback interface on an infrastructure node, `service`
+means a loopback interface on a customer/service/host node, and `host` means a
+non-loopback host-length connected prefix. `hoyan model rib --format json` and
+`hoyan model fib --format json` include `connected_class` for connected routes.
+Live RIB/FIB compare canonicalizes vendor protocol names such as `kernel`,
+`local`, `direct`, and `connected` to `connected`; `link`, `loopback`, and
+`service` connected routes are compared, while unclassified host connected
+routes remain outside the strict compare set.
+
 When running Hoyan from multiple git worktrees, render an isolated topology per
 worktree first. The suffix is appended to the lab name and Docker management
 network name, derives a separate `172.86.<n>.0/24` management subnet, keeps
@@ -228,10 +239,12 @@ run:
 go run ./cmd/hoyan fib-compare
 ```
 
-`fib-compare` normalizes modeled BGP-derived FIB entries and live
-installed FIB entries by node, VRF, AFI, prefix, and next-hop set. It reports
-missing routes, unexpected routes, missing next-hops, and unexpected next-hops,
-including ECMP group differences. Live collectors currently use:
+`fib-compare` normalizes modeled BGP, next-hop static, and comparable connected
+FIB entries with live installed FIB entries by node, VRF, AFI, protocol,
+prefix, and next-hop set. Null0/blackhole static routes without a comparable
+next-hop are outside the strict FIB set. It reports missing routes, unexpected
+routes, missing next-hops, and unexpected next-hops, including ECMP group
+differences. Live collectors currently use:
 
 ```bash
 docker exec -i <frr-node> ip -j route show table main
@@ -249,18 +262,18 @@ Use `--no-check-fib` to skip the installed FIB comparison for a quick
 control-plane/dataplane-only run.
 
 Limitations: the modeled side uses the no-failure installed FIB only, Linux
-kernel BGP routes are the FRR source of truth, cEOS compares programmed BGP
-routes from EOS route JSON, SR Linux compares active route-table entries from
+kernel BGP routes are the FRR source of truth, cEOS compares programmed routes
+from EOS route JSON, SR Linux compares active route-table entries from
 `ipv4-unicast summary`, protocol/metric/preference fields are normalized for
-inspection but the first comparison target is prefix plus next-hop
-address/interface set, local/connected/default routes are out of scope, and
-hardware ASIC FIB or per-flow ECMP hashing is not verified. BGP routes whose
-live next-hop cannot be mapped to a topology data-plane interface are skipped
-from the strict set comparison for now; #97 tracks making those unresolved or
-management-fallback routes explicit diagnostics. SR Linux next-hop addresses
-are compared by interface only for now because route-table summary output does
-not expose the peer gateway address consistently; #99 tracks strict SR Linux
-next-hop address normalization.
+inspection but the first comparison target is protocol plus prefix plus
+next-hop address/interface set, default routes and unclassified host connected
+routes are out of scope, and hardware ASIC FIB or per-flow ECMP hashing is not
+verified. BGP routes whose live next-hop cannot be mapped to a topology
+data-plane interface are skipped from the strict set comparison for now; #97
+tracks making those unresolved or management-fallback routes explicit
+diagnostics. SR Linux next-hop addresses are compared by interface only for now
+because route-table summary output does not expose the peer gateway address
+consistently; #99 tracks strict SR Linux next-hop address normalization.
 
 The live comparison reads BGP table state from FRR, cEOS, and SR Linux nodes,
 not kernel routes, installed route tables, or dataplane forwarding state. It

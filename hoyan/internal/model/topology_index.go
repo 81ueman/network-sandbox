@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 )
 
 type TopologyIndex struct {
@@ -150,6 +151,74 @@ func (idx *TopologyIndex) InterfaceToPeer(node string, peer string) (InterfaceRe
 		return InterfaceRef{}, false
 	}
 	return idx.InterfaceOnLink(node, link.Name)
+}
+
+func (idx *TopologyIndex) ConnectedClass(node string, iface Interface, prefix Prefix) ConnectedRouteClass {
+	if idx != nil {
+		n, ok := idx.Node(node)
+		if ok {
+			for _, edge := range idx.Adj[NodeID(node)] {
+				linkIface := edge.Link.AIntf
+				if edge.Link.B == node {
+					linkIface = edge.Link.BIntf
+				}
+				if EquivalentInterfaceName(n.Kind, linkIface, iface.Name) {
+					return ConnectedRouteClassLink
+				}
+			}
+			if isServiceNode(n) && isLoopbackInterface(iface.Name) {
+				return ConnectedRouteClassService
+			}
+		}
+	}
+	if isLoopbackInterface(iface.Name) {
+		return ConnectedRouteClassLoopback
+	}
+	if prefix.Bits() == prefix.Addr().BitLen() {
+		return ConnectedRouteClassHost
+	}
+	return ConnectedRouteClassService
+}
+
+func (idx *TopologyIndex) ConnectedClassForRoute(node, prefix, iface string) ConnectedRouteClass {
+	n, ok := idx.Node(node)
+	if !ok {
+		return ""
+	}
+	want, err := ParsePrefix(prefix)
+	if err != nil {
+		return ""
+	}
+	for _, candidate := range n.Interfaces {
+		if iface != "" && !EquivalentInterfaceName(n.Kind, candidate.Name, iface) {
+			continue
+		}
+		pfx, err := netip.ParsePrefix(candidate.Address)
+		if err != nil {
+			continue
+		}
+		candidatePrefix := PrefixFromNetIP(pfx.Masked())
+		if candidatePrefix.String() == want.String() {
+			return idx.ConnectedClass(node, candidate, candidatePrefix)
+		}
+		if iface != "" && EquivalentInterfaceName(n.Kind, candidate.Name, iface) {
+			if want.Bits() == want.Addr().BitLen() {
+				return ConnectedRouteClassHost
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+func isLoopbackInterface(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return name == "lo" || strings.HasPrefix(name, "lo") || strings.HasPrefix(name, "loopback")
+}
+
+func isServiceNode(n Node) bool {
+	role := strings.ToLower(strings.TrimSpace(n.Role))
+	return role == "customer" || role == "service" || role == "host"
 }
 
 func (idx *TopologyIndex) PeerInterfaceToNode(node string, peer string) (InterfaceRef, bool) {
