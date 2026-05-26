@@ -126,6 +126,9 @@ func (e *Engine) packetReachableFrom(state packetReachableState) (Path, bool, st
 }
 
 func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[string]bool, packet controlplane.PacketMessage, currentNode model.Node, rule FIBEntry) (Path, bool, string) {
+	if rule.Discard {
+		return state.full, false, "discard route selected"
+	}
 	if rule.NextHop == "" {
 		return state.full, false, "selected route has no next-hop"
 	}

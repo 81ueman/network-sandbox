@@ -85,6 +85,7 @@ type fibInspectRow struct {
 	Node           string   `json:"node"`
 	Prefix         string   `json:"prefix"`
 	SourceKind     string   `json:"source_kind,omitempty"`
+	Discard        bool     `json:"discard,omitempty"`
 	ConnectedClass string   `json:"connected_class,omitempty"`
 	Interface      string   `json:"interface,omitempty"`
 	NextHop        string   `json:"next_hop_node,omitempty"`
@@ -706,6 +707,7 @@ func collectFIBRows(graph *sim.Graph, nodes []string, prefix string) []fibInspec
 				Node:           node,
 				Prefix:         entry.Prefix.String(),
 				SourceKind:     string(entry.SourceKind),
+				Discard:        entry.Discard,
 				ConnectedClass: string(entry.ConnectedClass),
 				Interface:      entry.Interface,
 				NextHop:        entry.NextHop,
@@ -987,15 +989,16 @@ func formatBoolPtr(v *bool) string {
 func writeFIBTable(out io.Writer, rows []fibInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tDISCARD\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
 	} else {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tDISCARD\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
 	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%t\t%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
 			row.Node,
 			row.Prefix,
 			row.SourceKind,
+			row.Discard,
 			row.ConnectedClass,
 			row.NextHop,
 			row.Interface,

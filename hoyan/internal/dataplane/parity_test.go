@@ -499,6 +499,19 @@ func noRouteEngine() *Engine {
 	return NewEngine(idx, nil, map[string][]FIBEntry{})
 }
 
+func discardRouteEngine(cond failure.Cond) *Engine {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx := mustTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+	})
+	return NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), SourceKind: model.RouteSourceBlackhole, Discard: true, Condition: cond}},
+	})
+}
+
 func forwardingLoopEngine() *Engine {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx := mustTopologyIndex(&model.Topology{

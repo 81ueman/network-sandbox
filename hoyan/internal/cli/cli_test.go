@@ -574,6 +574,32 @@ func TestModelFIBCommandOutputsECMPMetadataJSON(t *testing.T) {
 	}
 }
 
+func TestModelFIBCommandOutputsDiscardJSON(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelFIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "hz-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v, want one local discard FIB entry", rows)
+	}
+	if rows[0]["source_kind"] != "blackhole" || rows[0]["discard"] != true || rows[0]["interface"] != "Null0" {
+		t.Fatalf("discard FIB JSON = %#v, want blackhole discard via Null0", rows[0])
+	}
+}
+
 func TestModelPrefixClassesCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 	var out bytes.Buffer
 	cmd := NewModelPrefixClassesCommand()

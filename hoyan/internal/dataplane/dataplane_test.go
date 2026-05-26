@@ -703,6 +703,14 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 	}
 }
 
+func TestPacketReachableReportsDiscardRoute(t *testing.T) {
+	engine := discardRouteEngine(failure.True())
+	_, ok, reason := engine.PacketReachable("src", "10.0.0.10", "icmp", failure.None())
+	if ok || reason != "discard route selected" {
+		t.Fatalf("PacketReachable() = ok %v reason %q, want discard route selected", ok, reason)
+	}
+}
+
 func firstUnreachableReason(result SymbolicReachabilityResult, kind SymbolicUnreachableReasonKind) (SymbolicUnreachableReason, bool) {
 	for _, reason := range result.UnreachableReasons {
 		if reason.Kind == kind {
@@ -755,5 +763,39 @@ func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
 	}
 	if !genericFIB["rx"][0].Equivalent || !genericFIB["rx"][1].Equivalent {
 		t.Fatalf("generic equivalent routes should be marked equivalent: %#v", genericFIB["rx"])
+	}
+}
+
+func TestDeriveFIBMarksBlackholeRouteAsDiscard(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	idx := mustTopologyIndex(&model.Topology{
+		Nodes: []model.Node{{Name: "src", Kind: model.KindFRR}},
+	})
+	rib := map[string]map[string][]controlplane.RIBEntry{
+		"src": {
+			prefix.String(): {
+				{
+					Prefix:       prefix,
+					SourceKind:   model.RouteSourceBlackhole,
+					RouteSource:  model.ConfiguredRoute{Prefix: prefix, Kind: model.RouteSourceBlackhole, Interface: "Null0"},
+					SelectedCond: failure.True(),
+				},
+				{
+					Prefix:       prefix,
+					SourceKind:   model.RouteSourceBGP,
+					NextHop:      "remote",
+					SelectedCond: failure.True(),
+				},
+			},
+		},
+	}
+	fib := map[string][]FIBEntry{}
+	NewEngine(idx, rib, fib).DeriveFIB()
+	if len(fib["src"]) != 1 {
+		t.Fatalf("FIB entries = %#v, want local blackhole selected over same-prefix BGP", fib["src"])
+	}
+	entry := fib["src"][0]
+	if !entry.Discard || entry.SourceKind != model.RouteSourceBlackhole || entry.Interface != "Null0" {
+		t.Fatalf("blackhole FIB entry = %#v, want discard blackhole via Null0", entry)
 	}
 }

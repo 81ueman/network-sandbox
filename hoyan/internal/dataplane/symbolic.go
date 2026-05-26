@@ -45,6 +45,7 @@ type SymbolicUnreachableReasonKind string
 const (
 	UnreachableNoRoute                  SymbolicUnreachableReasonKind = "no_route"
 	UnreachableNoNextHop                SymbolicUnreachableReasonKind = "no_next_hop"
+	UnreachableDiscard                  SymbolicUnreachableReasonKind = "discard"
 	UnreachableNodeFailed               SymbolicUnreachableReasonKind = "node_failed"
 	UnreachableLinkFailed               SymbolicUnreachableReasonKind = "link_failed"
 	UnreachableIngressPolicy            SymbolicUnreachableReasonKind = "ingress_policy"
@@ -427,6 +428,16 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 	})
 	for _, candidate := range candidates {
 		entry := candidate.Entry
+		if entry.Discard {
+			addUnreachableReason(reasons, SymbolicUnreachableReason{
+				Kind:    UnreachableDiscard,
+				Node:    state.Node,
+				Cond:    failure.And(state.Cond, candidate.Cond),
+				Path:    state.Path,
+				Message: "discard route selected",
+			})
+			continue
+		}
 		if entry.NextHop == "" {
 			addUnreachableReason(reasons, SymbolicUnreachableReason{
 				Kind:    UnreachableNoNextHop,

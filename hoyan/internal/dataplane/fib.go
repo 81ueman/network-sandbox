@@ -21,6 +21,7 @@ type FIBEntry struct {
 	NextHop        string
 	Interface      string
 	SourceKind     model.RouteSourceKind
+	Discard        bool
 	ConnectedClass model.ConnectedRouteClass
 	Path           Path
 	Condition      failure.Cond
@@ -85,6 +86,7 @@ func (e *Engine) DeriveFIB() {
 					NextHop:        route.NextHop,
 					Interface:      route.RouteSource.Interface,
 					SourceKind:     route.SourceKind,
+					Discard:        route.SourceKind == model.RouteSourceBlackhole,
 					ConnectedClass: route.RouteSource.ConnectedClass,
 					Path:           Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
 					Condition:      route.SelectedCond,
