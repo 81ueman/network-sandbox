@@ -44,50 +44,99 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 	if ctx.NodeFailed(model.NodeID(dstNode)) {
 		return Path{}, false, "destination node is down"
 	}
-	current := from
-	ingressInterface := ""
-	visited := map[string]bool{}
-	full := Path{Nodes: []string{from}}
-	for {
-		if ctx.NodeFailed(model.NodeID(current)) {
-			return full, false, "current node is down"
-		}
-		if visited[current] {
-			return full, false, "forwarding loop"
-		}
-		visited[current] = true
-		if e.originates(current, dstPrefix.NetIP()) {
-			return full, true, ""
-		}
-		currentNode, _ := e.idx.Node(current)
-		packet := controlplane.PacketMessage{Node: current, Prefix: dstPrefix.NetIP(), Protocol: protocol, IngressInterface: ingressInterface}
-		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); ok {
-			return full, false, "denied by policy " + pol
-		}
-		rule, ok := e.LookupFIB(current, to, ctx)
-		if !ok {
-			return full, false, "no forwarding route"
-		}
-		if rule.NextHop == "" {
-			return full, false, "selected route has no next-hop"
-		}
-		if ctx.NodeFailed(model.NodeID(rule.NextHop)) {
-			return full, false, "next-hop node is down"
-		}
-		link, ok := e.idx.LinkBetween(current, rule.NextHop)
-		if !ok || ctx.LinkFailed(model.LinkID(link.Name)) {
-			return full, false, "next-hop link is down"
-		}
-		packet.EgressInterface = interfaceOnLink(link, current)
-		if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
-			return full, false, "denied by policy " + pol
-		}
-		full.Links = append(full.Links, link.Name)
-		full.Nodes = append(full.Nodes, rule.NextHop)
-		full.Cost += link.Cost
-		ingressInterface = interfaceOnLink(link, rule.NextHop)
-		current = rule.NextHop
+	return e.packetReachableFrom(packetReachableState{
+		current:   from,
+		to:        to,
+		protocol:  protocol,
+		dstPrefix: dstPrefix.NetIP(),
+		ctx:       ctx,
+		visited:   map[string]bool{},
+		full:      Path{Nodes: []string{from}},
+	})
+}
+
+type packetReachableState struct {
+	current          string
+	to               string
+	protocol         string
+	dstPrefix        netip.Prefix
+	ingressInterface string
+	ctx              failure.Context
+	visited          map[string]bool
+	full             Path
+}
+
+func (e *Engine) packetReachableFrom(state packetReachableState) (Path, bool, string) {
+	if state.ctx.NodeFailed(model.NodeID(state.current)) {
+		return state.full, false, "current node is down"
 	}
+	if state.visited[state.current] {
+		return state.full, false, "forwarding loop"
+	}
+	if e.originates(state.current, state.dstPrefix) {
+		return state.full, true, ""
+	}
+	currentNode, _ := e.idx.Node(state.current)
+	packet := controlplane.PacketMessage{Node: state.current, Prefix: state.dstPrefix, Protocol: state.protocol, IngressInterface: state.ingressInterface}
+	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); ok {
+		return state.full, false, "denied by policy " + pol
+	}
+	candidates := e.SymbolicLookupFIB(state.current, state.to)
+	if len(candidates) == 0 {
+		return state.full, false, "no forwarding route"
+	}
+	nextVisited := copyVisited(state.visited)
+	nextVisited[state.current] = true
+	var firstReason string
+	for _, candidate := range candidates {
+		if !candidate.Cond.Eval(state.ctx) {
+			continue
+		}
+		rule := candidate.Entry
+		nextFull, ok, reason := e.tryPacketCandidate(state, nextVisited, packet, currentNode, rule)
+		if ok {
+			return nextFull, true, ""
+		}
+		if firstReason == "" {
+			firstReason = reason
+		}
+	}
+	if firstReason == "" {
+		return state.full, false, "no forwarding route"
+	}
+	return state.full, false, firstReason
+}
+
+func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[string]bool, packet controlplane.PacketMessage, currentNode model.Node, rule FIBEntry) (Path, bool, string) {
+	if rule.NextHop == "" {
+		return state.full, false, "selected route has no next-hop"
+	}
+	if state.ctx.NodeFailed(model.NodeID(rule.NextHop)) {
+		return state.full, false, "next-hop node is down"
+	}
+	link, ok := e.idx.LinkBetween(state.current, rule.NextHop)
+	if !ok || state.ctx.LinkFailed(model.LinkID(link.Name)) {
+		return state.full, false, "next-hop link is down"
+	}
+	packet.EgressInterface = interfaceOnLink(link, state.current)
+	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
+		return state.full, false, "denied by policy " + pol
+	}
+	nextFull := Path{
+		Nodes: append(append([]string(nil), state.full.Nodes...), rule.NextHop),
+		Links: append(append([]string(nil), state.full.Links...), link.Name),
+		Cost:  state.full.Cost + link.Cost,
+	}
+	return e.packetReachableFrom(packetReachableState{
+		current:          rule.NextHop,
+		to:               state.to,
+		protocol:         state.protocol,
+		dstPrefix:        state.dstPrefix,
+		ingressInterface: interfaceOnLink(link, rule.NextHop),
+		ctx:              state.ctx,
+		visited:          nextVisited,
+		full:             nextFull,
+	})
 }
 
 func (e *Engine) FailureContext(failures failure.Set) failure.Context {

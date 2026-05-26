@@ -151,9 +151,38 @@ func TestModelFIBCommandOutputsTable(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"NODE", "PREFIX", "NEXT-HOP", "CONDITION", "bj-edge1", "10.4.0.0/16"} {
+	for _, want := range []string{"NODE", "PREFIX", "NEXT-HOP", "RANK", "GROUP", "EQUIV", "CONDITION", "bj-edge1", "10.4.0.0/16"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestModelFIBCommandOutputsECMPMetadataJSON(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelFIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) == 0 {
+		t.Fatalf("rows = 0, want modeled FIB entries")
+	}
+	first := rows[0]
+	for _, key := range []string{"rank", "group_id", "equivalent"} {
+		if _, ok := first[key]; !ok {
+			t.Fatalf("FIB JSON missing %q metadata: %#v", key, first)
 		}
 	}
 }
