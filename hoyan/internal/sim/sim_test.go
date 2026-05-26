@@ -164,6 +164,84 @@ func TestRedistributeConnectedUsesRouteMapFilter(t *testing.T) {
 	}
 }
 
+func TestAggregateAddressOriginatesOnlyWithContributor(t *testing.T) {
+	aggregate := model.MustPrefix("10.0.0.0/16")
+	contributor := model.MustPrefix("10.0.1.0/24")
+	topo := threeNodeAggregateTopology(aggregate, contributor, false)
+	g := NewGraph(topo)
+
+	var aggregateRoute RIBEntry
+	for _, route := range g.RIB("r1", aggregate.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceAggregate && route.Provenance.OriginNode == "r1" {
+			aggregateRoute = route
+			break
+		}
+	}
+	if aggregateRoute.SourceKind == "" {
+		t.Fatalf("aggregate route missing from r1 RIB: %#v", g.RIB("r1", aggregate.String()))
+	}
+	if aggregateRoute.Attrs.OriginCode != "igp" || aggregateRoute.LocalPref != 100 {
+		t.Fatalf("aggregate BGP attributes = %#v, want BGP aggregate origin/local-pref", aggregateRoute)
+	}
+	if got, want := strings.Join(aggregateRoute.AggregateContributors, ","), contributor.String(); got != want {
+		t.Fatalf("aggregate contributors = %q, want %q", got, want)
+	}
+	if !aggregateRoute.Condition.Eval(FailureContext{}) {
+		t.Fatalf("aggregate should exist with contributor present: %#v", aggregateRoute)
+	}
+	if aggregateRoute.Condition.Eval(g.FailureContext(LinkFailures("r1-r2"))) {
+		t.Fatalf("aggregate should be withdrawn when learned contributor is lost: %s", aggregateRoute.Condition)
+	}
+
+	var learnedAggregate bool
+	for _, route := range g.RIB("r3", aggregate.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceAggregate && route.Provenance.OriginNode == "r1" && route.From == "r1" && route.Condition.Eval(FailureContext{}) {
+			learnedAggregate = true
+		}
+	}
+	if !learnedAggregate {
+		t.Fatalf("r3 did not learn active aggregate route: %#v", g.RIB("r3", aggregate.String()))
+	}
+}
+
+func TestAggregateAddressWithoutContributorDoesNotOriginate(t *testing.T) {
+	aggregate := model.MustPrefix("10.0.0.0/16")
+	topo := threeNodeAggregateTopology(aggregate, model.Prefix{}, false)
+	g := NewGraph(topo)
+	for _, route := range g.RIB("r1", aggregate.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceAggregate && route.Condition.Eval(FailureContext{}) {
+			t.Fatalf("aggregate route originated without contributor: %#v", route)
+		}
+	}
+}
+
+func TestAggregateSummaryOnlySuppressesMoreSpecificAdvertisement(t *testing.T) {
+	aggregate := model.MustPrefix("10.0.0.0/16")
+	contributor := model.MustPrefix("10.0.1.0/24")
+	topo := threeNodeAggregateTopology(aggregate, contributor, true)
+	g := NewGraph(topo)
+
+	for _, route := range g.RIB("r3", contributor.String()) {
+		route = route.Normalize()
+		if route.Provenance.OriginNode == "r2" && route.From == "r1" && route.Condition.Eval(FailureContext{}) {
+			t.Fatalf("summary-only aggregate should suppress active more-specific advertisement via r1: %#v", route)
+		}
+	}
+	var learnedAggregate bool
+	for _, route := range g.RIB("r3", aggregate.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceAggregate && route.From == "r1" && route.Condition.Eval(FailureContext{}) {
+			learnedAggregate = true
+		}
+	}
+	if !learnedAggregate {
+		t.Fatalf("summary-only aggregate route missing at r3: %#v", g.RIB("r3", aggregate.String()))
+	}
+}
+
 func TestDefaultRouteSourceEntersPrefixUniverse(t *testing.T) {
 	defaultRoute := model.MustPrefix("0.0.0.0/0")
 	topo := &model.Topology{Nodes: []model.Node{{Name: "r1", Routes: []model.ConfiguredRoute{{Prefix: defaultRoute, Kind: model.RouteSourceStatic}}}}}
@@ -196,6 +274,47 @@ func twoNodeRedistributeTopology(prefix model.Prefix, redist []model.BGPRedistri
 			},
 		},
 		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/30"}},
+	}
+}
+
+func threeNodeAggregateTopology(aggregate, contributor model.Prefix, summaryOnly bool) *model.Topology {
+	r1Routes := []model.ConfiguredRoute{{
+		Prefix:        aggregate,
+		Kind:          model.RouteSourceAggregate,
+		AdminDistance: 200,
+		SummaryOnly:   summaryOnly,
+	}}
+	var r2Prefixes []model.Prefix
+	if !contributor.IsZero() {
+		r2Prefixes = []model.Prefix{contributor}
+	}
+	return &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name: "r1", Kind: model.KindFRR, ASN: 65001,
+				Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/30"}, {Name: "eth2", Address: "192.0.2.5/30"}},
+				Routes:     r1Routes,
+				Neighbors: []model.BGPNeighbor{
+					{Address: "192.0.2.2", RemoteAS: 65002, Activated: true, PeerNode: "r2"},
+					{Address: "192.0.2.6", RemoteAS: 65003, Activated: true, PeerNode: "r3"},
+				},
+			},
+			{
+				Name: "r2", Kind: model.KindFRR, ASN: 65002,
+				Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.2/30"}},
+				Prefixes:   r2Prefixes,
+				Neighbors:  []model.BGPNeighbor{{Address: "192.0.2.1", RemoteAS: 65001, Activated: true, PeerNode: "r1"}},
+			},
+			{
+				Name: "r3", Kind: model.KindFRR, ASN: 65003,
+				Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.6/30"}},
+				Neighbors:  []model.BGPNeighbor{{Address: "192.0.2.5", RemoteAS: 65001, Activated: true, PeerNode: "r1"}},
+			},
+		},
+		Links: []model.Link{
+			{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/30"},
+			{Name: "r1-r3", A: "r1", B: "r3", AIntf: "eth2", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.4/30"},
+		},
 	}
 }
 

@@ -57,27 +57,28 @@ type packetClassInspectRow struct {
 }
 
 type ribInspectRow struct {
-	Node              string   `json:"node"`
-	Prefix            string   `json:"prefix"`
-	SourceKind        string   `json:"source_kind,omitempty"`
-	ConnectedClass    string   `json:"connected_class,omitempty"`
-	RouteInterface    string   `json:"interface,omitempty"`
-	NextHopNode       string   `json:"next_hop_node,omitempty"`
-	NextHopAddr       string   `json:"next_hop_addr,omitempty"`
-	OriginNode        string   `json:"origin_node,omitempty"`
-	FromNode          string   `json:"from_node,omitempty"`
-	PathNodes         []string `json:"path_nodes,omitempty"`
-	PathLinks         []string `json:"path_links,omitempty"`
-	ASPath            []uint32 `json:"as_path,omitempty"`
-	Communities       []string `json:"communities,omitempty"`
-	OriginCode        string   `json:"origin_code,omitempty"`
-	LocalPref         int      `json:"local_pref,omitempty"`
-	MED               int      `json:"med,omitempty"`
-	LearnedIBGP       bool     `json:"learned_ibgp"`
-	Invalid           bool     `json:"invalid"`
-	Condition         string   `json:"condition,omitempty"`
-	SelectedCondition string   `json:"selected_condition,omitempty"`
-	BaseCondition     string   `json:"base_condition,omitempty"`
+	Node                  string   `json:"node"`
+	Prefix                string   `json:"prefix"`
+	SourceKind            string   `json:"source_kind,omitempty"`
+	ConnectedClass        string   `json:"connected_class,omitempty"`
+	RouteInterface        string   `json:"interface,omitempty"`
+	NextHopNode           string   `json:"next_hop_node,omitempty"`
+	NextHopAddr           string   `json:"next_hop_addr,omitempty"`
+	OriginNode            string   `json:"origin_node,omitempty"`
+	FromNode              string   `json:"from_node,omitempty"`
+	PathNodes             []string `json:"path_nodes,omitempty"`
+	PathLinks             []string `json:"path_links,omitempty"`
+	ASPath                []uint32 `json:"as_path,omitempty"`
+	Communities           []string `json:"communities,omitempty"`
+	OriginCode            string   `json:"origin_code,omitempty"`
+	LocalPref             int      `json:"local_pref,omitempty"`
+	MED                   int      `json:"med,omitempty"`
+	LearnedIBGP           bool     `json:"learned_ibgp"`
+	Invalid               bool     `json:"invalid"`
+	AggregateContributors []string `json:"aggregate_contributors,omitempty"`
+	Condition             string   `json:"condition,omitempty"`
+	SelectedCondition     string   `json:"selected_condition,omitempty"`
+	BaseCondition         string   `json:"base_condition,omitempty"`
 }
 
 type fibInspectRow struct {
@@ -638,27 +639,28 @@ func ribRowsForRoutes(node string, routes []sim.RIBEntry) []ribInspectRow {
 	for _, route := range routes {
 		route = route.Normalize()
 		rows = append(rows, ribInspectRow{
-			Node:              node,
-			Prefix:            route.NLRI.Prefix.String(),
-			SourceKind:        string(route.SourceKind),
-			ConnectedClass:    string(route.RouteSource.ConnectedClass),
-			RouteInterface:    route.RouteSource.Interface,
-			NextHopNode:       route.ForwardingNextHop.Node,
-			NextHopAddr:       route.ForwardingNextHop.Addr,
-			OriginNode:        route.Provenance.OriginNode,
-			FromNode:          route.Provenance.FromNode,
-			PathNodes:         append([]string(nil), route.Provenance.PathNodes...),
-			PathLinks:         append([]string(nil), route.Provenance.PathLinks...),
-			ASPath:            append([]uint32(nil), route.Attrs.ASPath...),
-			Communities:       append([]string(nil), route.Attrs.Communities...),
-			OriginCode:        string(route.Attrs.OriginCode),
-			LocalPref:         route.Attrs.LocalPref,
-			MED:               route.Attrs.MED,
-			LearnedIBGP:       route.Attrs.LearnedIBGP,
-			Invalid:           route.Attrs.Invalid,
-			Condition:         condString(route.Condition),
-			SelectedCondition: condString(route.SelectedCond),
-			BaseCondition:     condString(route.BaseCond),
+			Node:                  node,
+			Prefix:                route.NLRI.Prefix.String(),
+			SourceKind:            string(route.SourceKind),
+			ConnectedClass:        string(route.RouteSource.ConnectedClass),
+			RouteInterface:        route.RouteSource.Interface,
+			NextHopNode:           route.ForwardingNextHop.Node,
+			NextHopAddr:           route.ForwardingNextHop.Addr,
+			OriginNode:            route.Provenance.OriginNode,
+			FromNode:              route.Provenance.FromNode,
+			PathNodes:             append([]string(nil), route.Provenance.PathNodes...),
+			PathLinks:             append([]string(nil), route.Provenance.PathLinks...),
+			ASPath:                append([]uint32(nil), route.Attrs.ASPath...),
+			Communities:           append([]string(nil), route.Attrs.Communities...),
+			OriginCode:            string(route.Attrs.OriginCode),
+			LocalPref:             route.Attrs.LocalPref,
+			MED:                   route.Attrs.MED,
+			LearnedIBGP:           route.Attrs.LearnedIBGP,
+			Invalid:               route.Attrs.Invalid,
+			AggregateContributors: append([]string(nil), route.AggregateContributors...),
+			Condition:             condString(route.Condition),
+			SelectedCondition:     condString(route.SelectedCond),
+			BaseCondition:         condString(route.BaseCond),
 		})
 	}
 	return rows
