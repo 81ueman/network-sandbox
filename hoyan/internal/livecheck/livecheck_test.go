@@ -281,9 +281,9 @@ func TestApplyNftablesPolicies(t *testing.T) {
 			{Name: "core-hz", ContainerName: "clab-test-core-hz", Kind: model.KindFRR},
 			{Name: "core-bj", ContainerName: "clab-test-core-bj", Kind: model.KindFRR},
 		},
-		Policies: []model.Policy{
-			{Name: "BLOCK-HTTP-TO-HZ", Node: "core-hz", Source: model.PolicySource{Vendor: "nftables"}},
-			{Name: "OTHER", Node: "core-bj", Source: model.PolicySource{Vendor: "ceos"}},
+		ACLs: []model.ACL{
+			{Name: "BLOCK-HTTP-TO-HZ", Node: "core-hz", Source: model.ConfigSource{Vendor: "nftables"}},
+			{Name: "OTHER", Node: "core-bj", Source: model.ConfigSource{Vendor: "ceos"}},
 		},
 	}
 	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {

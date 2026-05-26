@@ -24,7 +24,8 @@ type ParsedConfig struct {
 	ASPathLists    []ASPathList
 	CommunityLists []CommunityList
 	RoutePolicies  []RoutePolicy
-	Policies       []Policy
+	ACLs           []ACL
+	ACLBindings    []ACLBinding
 }
 
 type ParseResult struct {
@@ -48,6 +49,21 @@ type aclBinding struct {
 	Name      string
 	Interface string
 	Stage     string
+	Source    ConfigSource
+}
+
+type parsedACLRule struct {
+	Name      string
+	Stage     string
+	Interface string
+	Action    ACLAction
+	Protocol  string
+	SrcPrefix Prefix
+	DstPrefix Prefix
+	SrcPort   PortSet
+	DstPort   PortSet
+	Seq       int
+	Source    ConfigSource
 }
 
 func (w UnsupportedStatement) String() string {
@@ -82,10 +98,10 @@ func ParseConfigWithWarnings(kind DeviceKind, path string) (ParseResult, error) 
 	return parseConfig(kind, path, true)
 }
 
-func ParseNftablesConfig(path string) ([]Policy, error) {
+func ParseNftablesACLConfig(path string) ([]ACL, []ACLBinding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return parseNftables(path, string(data))
 }
@@ -113,7 +129,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 	asPathLists := map[string]*ASPathList{}
 	communityLists := map[string]*CommunityList{}
 	routePolicies := map[string]*RoutePolicy{}
-	aclPolicies := map[string][]Policy{}
+	aclPolicies := map[string][]parsedACLRule{}
 	var aclBindings []aclBinding
 	var currentInterface string
 	var currentACL string
@@ -304,7 +320,7 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 		case currentInterface != "" && len(fields) >= 4 && fields[0] == "ip" && fields[1] == "access-group":
 			stage, ok := aclStage(fields[3])
 			if ok {
-				aclBindings = append(aclBindings, aclBinding{Name: fields[2], Interface: currentInterface, Stage: stage})
+				aclBindings = append(aclBindings, aclBinding{Name: fields[2], Interface: currentInterface, Stage: stage, Source: ConfigSource{Vendor: string(kind), File: path, Line: lineNo, Raw: line}})
 			}
 		case len(fields) >= 4 && fields[0] == "ip" && fields[1] == "route":
 			route, err := parseFRRLikeStaticRoute(kind, path, lineNo, line, fields)
@@ -388,7 +404,8 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 	cfg.ASPathLists = sortedASPathLists(asPathLists)
 	cfg.CommunityLists = sortedCommunityLists(communityLists)
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
-	cfg.Policies = boundACLPolicies(aclPolicies, aclBindings)
+	cfg.ACLs = normalizedACLs(kind, aclPolicies, defaultACLAction(kind, ACLDefaultDeny))
+	cfg.ACLBindings = normalizedACLBindings(aclBindings)
 	if cfg.Loopback == "" && cfg.RouterID != "" {
 		cfg.Loopback = cfg.RouterID + "/32"
 	}
@@ -408,7 +425,7 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	neighborNextHopSelf := map[string]bool{}
 	prefixLists := map[string]*PrefixList{}
 	routePolicies := map[string]*RoutePolicy{}
-	srlACLs := map[string]map[int]*Policy{}
+	srlACLs := map[string]map[int]*parsedACLRule{}
 	var aclBindings []aclBinding
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	lineNo := 0
@@ -422,7 +439,7 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 		}
 		switch {
 		case containsSeq(fields, "acl", "interface") && containsAnyField(fields, "input", "output") && containsAnyField(fields, "acl-filter"):
-			binding, ok := parseSRLinuxACLBinding(fields)
+			binding, ok := parseSRLinuxACLBinding(path, lineNo, line, fields)
 			if ok {
 				aclBindings = append(aclBindings, binding)
 			}
@@ -552,7 +569,8 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	addSRLinuxDefaultPolicyActions(routePolicies)
 	cfg.PrefixLists = sortedPrefixLists(prefixLists)
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
-	cfg.Policies = boundACLPolicies(flattenSRLinuxACLs(srlACLs), aclBindings)
+	cfg.ACLs = normalizedACLs(KindSRLinux, flattenSRLinuxACLs(srlACLs), ACLDefaultDeny)
+	cfg.ACLBindings = normalizedACLBindings(aclBindings)
 	return ParseResult{Config: cfg, Warnings: warnings}, nil
 }
 
@@ -570,7 +588,7 @@ func parseFRRLikeStaticRoute(kind DeviceKind, path string, lineNo int, raw strin
 		Prefix:          prefix,
 		Kind:            RouteSourceStatic,
 		AdminDistance:   1,
-		Source:          PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
+		Source:          ConfigSource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
 	}
 	target := fields[3]
 	if strings.EqualFold(target, "Null0") {
@@ -601,7 +619,7 @@ func parseAggregateRoute(kind DeviceKind, path string, lineNo int, raw string, f
 		Prefix:          prefix,
 		Kind:            RouteSourceAggregate,
 		AdminDistance:   200,
-		Source:          PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
+		Source:          ConfigSource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
 	}
 	for _, opt := range fields[2:] {
 		switch opt {
@@ -615,7 +633,7 @@ func parseAggregateRoute(kind DeviceKind, path string, lineNo int, raw string, f
 }
 
 func parseFRRLikeRedistribution(kind DeviceKind, path string, lineNo int, raw string, fields []string) (BGPRedistribution, error) {
-	redist := BGPRedistribution{Source: PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw}}
+	redist := BGPRedistribution{Source: ConfigSource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw}}
 	switch fields[1] {
 	case "connected":
 		redist.Kind = RouteSourceConnected
@@ -649,7 +667,7 @@ func parseSRLinuxStaticRoute(path string, lineNo int, raw string, fields []strin
 		Prefix:          prefix,
 		Kind:            RouteSourceStatic,
 		AdminDistance:   5,
-		Source:          PolicySource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
+		Source:          ConfigSource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
 	}
 	if nh := fieldAfter(fields, "next-hop"); nh != "" {
 		if _, err := netip.ParseAddr(nh); err == nil {
@@ -870,9 +888,10 @@ func unsupportedStatement(vendor, file string, line int, text, reason string) Un
 	}
 }
 
-func parseNftables(path, text string) ([]Policy, error) {
-	var policies []Policy
+func parseNftables(path, text string) ([]ACL, []ACLBinding, error) {
+	var rules []parsedACLRule
 	var tableName string
+	var chainDefault ACLDefaultAction = ACLDefaultPermit
 	inForward := false
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	lineNo := 0
@@ -899,39 +918,79 @@ func parseNftables(path, text string) ([]Policy, error) {
 		case len(fields) >= 3 && fields[0] == "chain" && fields[1] == "forward":
 			inForward = true
 		case inForward && len(fields) >= 8 && fields[0] == "type" && fields[1] == "filter" && fields[2] == "hook" && fields[3] == "forward":
+			if action, ok := nftablesChainPolicy(fields); ok {
+				chainDefault = action
+			}
 			continue
 		case inForward:
 			policy, ok, err := parseNftablesForwardRule(path, lineNo, line, tableName, fields)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if ok {
-				policies = append(policies, policy)
+				rules = append(rules, policy)
 			}
 		default:
-			return nil, fmt.Errorf("%s:%d: unsupported nftables statement %q", path, lineNo, line)
+			return nil, nil, fmt.Errorf("%s:%d: unsupported nftables statement %q", path, lineNo, line)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return policies, nil
+	aclName := nftablesPolicyName(tableName)
+	acl := ACL{
+		Name:          aclName,
+		Vendor:        KindFRR,
+		DefaultAction: chainDefault,
+		Source:        ConfigSource{Vendor: "nftables", File: path},
+	}
+	bindingSeen := map[string]bool{}
+	var bindings []ACLBinding
+	for _, rule := range rules {
+		acl.Rules = append(acl.Rules, parsedACLRuleToACLRule(rule))
+		key := rule.Stage + "\x00" + rule.Interface
+		if !bindingSeen[key] {
+			bindings = append(bindings, ACLBinding{
+				Interface: rule.Interface,
+				Direction: rule.Stage,
+				ACLName:   aclName,
+				Source:    rule.Source,
+			})
+			bindingSeen[key] = true
+		}
+	}
+	return []ACL{acl}, bindings, nil
 }
 
-func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fields []string) (Policy, bool, error) {
+func nftablesChainPolicy(fields []string) (ACLDefaultAction, bool) {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != "policy" {
+			continue
+		}
+		switch strings.TrimSuffix(fields[i+1], ";") {
+		case "accept":
+			return ACLDefaultPermit, true
+		case "drop":
+			return ACLDefaultDeny, true
+		}
+	}
+	return "", false
+}
+
+func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fields []string) (parsedACLRule, bool, error) {
 	stage := ""
 	iface := ""
 	protocol := ""
 	dstPrefix := Prefix{}
 	dstPort := PortSet(nil)
-	action := ""
+	action := ACLAction("")
 	for i := 0; i < len(fields); i++ {
 		switch fields[i] {
 		case ";":
 			continue
 		case "iifname", "oifname":
 			if i+1 >= len(fields) {
-				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables interface match %q", path, lineNo, raw)
+				return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables interface match %q", path, lineNo, raw)
 			}
 			if fields[i] == "iifname" {
 				stage = "ingress"
@@ -942,7 +1001,7 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 			i++
 		case "ip":
 			if i+2 >= len(fields) {
-				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
+				return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
 			}
 			switch fields[i+1] {
 			case "protocol":
@@ -950,43 +1009,42 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 			case "daddr":
 				pfx, err := ParsePrefix(fields[i+2])
 				if err != nil {
-					return Policy{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
+					return parsedACLRule{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
 				}
 				dstPrefix = pfx
 			default:
-				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
+				return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables ip match %q", path, lineNo, raw)
 			}
 			i += 2
 		case "tcp", "udp":
 			if i+2 >= len(fields) || fields[i+1] != "dport" || !supportedACLPortTail([]string{"eq", fields[i+2]}) {
-				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables transport match %q", path, lineNo, raw)
+				return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables transport match %q", path, lineNo, raw)
 			}
 			if protocol == "" {
 				protocol = fields[i]
 			}
 			port, err := parseACLPort(fields[i+2])
 			if err != nil {
-				return Policy{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
+				return parsedACLRule{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
 			}
 			dstPort = ExactPort(port)
 			i += 2
 		case "drop":
-			action = "deny"
+			action = ACLDeny
 		case "accept":
-			return Policy{}, false, nil
+			action = ACLPermit
 		default:
-			return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables forward statement %q", path, lineNo, raw)
+			return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables forward statement %q", path, lineNo, raw)
 		}
 	}
 	if stage == "" || iface == "" || protocol == "" || dstPrefix.IsZero() || action == "" {
-		return Policy{}, false, fmt.Errorf("%s:%d: incomplete nftables forward rule %q", path, lineNo, raw)
+		return parsedACLRule{}, false, fmt.Errorf("%s:%d: incomplete nftables forward rule %q", path, lineNo, raw)
 	}
 	if protocol != "tcp" && protocol != "udp" && protocol != "icmp" && protocol != "ip" {
-		return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables protocol %q", path, lineNo, protocol)
+		return parsedACLRule{}, false, fmt.Errorf("%s:%d: unsupported nftables protocol %q", path, lineNo, protocol)
 	}
-	return Policy{
+	return parsedACLRule{
 		Name:      nftablesPolicyName(tableName),
-		Plane:     "data",
 		Stage:     stage,
 		Interface: iface,
 		Action:    action,
@@ -994,7 +1052,7 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 		DstPrefix: dstPrefix,
 		DstPort:   dstPort,
 		Seq:       lineNo,
-		Source: PolicySource{
+		Source: ConfigSource{
 			Vendor: "nftables",
 			File:   path,
 			Line:   lineNo,
@@ -1026,7 +1084,7 @@ func isACLRuleLine(fields []string) bool {
 	return false
 }
 
-func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fields []string) (Policy, bool, error) {
+func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fields []string) (parsedACLRule, bool, error) {
 	seq := 0
 	if len(fields) >= 2 && fields[0] == "seq" {
 		fields = fields[1:]
@@ -1036,44 +1094,41 @@ func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fi
 		fields = fields[1:]
 	}
 	if len(fields) < 4 {
-		return Policy{}, false, fmt.Errorf("unsupported %s ACL statement", routeMapVendorName(kind))
+		return parsedACLRule{}, false, fmt.Errorf("unsupported %s ACL statement", routeMapVendorName(kind))
 	}
-	action := fields[0]
-	if action != "permit" && action != "deny" {
-		return Policy{}, false, fmt.Errorf("unsupported %s ACL action %q", routeMapVendorName(kind), action)
+	action := ACLAction(fields[0])
+	if action != ACLPermit && action != ACLDeny {
+		return parsedACLRule{}, false, fmt.Errorf("unsupported %s ACL action %q", routeMapVendorName(kind), fields[0])
 	}
 	protocol := fields[1]
 	if protocol != "ip" && protocol != "tcp" && protocol != "udp" && protocol != "icmp" {
-		return Policy{}, false, fmt.Errorf("unsupported %s ACL protocol %q", routeMapVendorName(kind), protocol)
+		return parsedACLRule{}, false, fmt.Errorf("unsupported %s ACL protocol %q", routeMapVendorName(kind), protocol)
 	}
 	rest := fields[2:]
-	srcEnd, err := skipACLAddress(rest)
+	srcPrefix, srcEnd, err := parseACLAddress(rest)
 	if err != nil {
-		return Policy{}, false, err
+		return parsedACLRule{}, false, err
 	}
 	if srcEnd >= len(rest) {
-		return Policy{}, false, fmt.Errorf("unsupported %s ACL destination", routeMapVendorName(kind))
+		return parsedACLRule{}, false, fmt.Errorf("unsupported %s ACL destination", routeMapVendorName(kind))
 	}
 	dstPrefix, dstEnd, err := parseACLAddress(rest[srcEnd:])
 	if err != nil {
-		return Policy{}, false, err
+		return parsedACLRule{}, false, err
 	}
 	dstPort, err := parseACLPortTail(rest[srcEnd+dstEnd:])
 	if err != nil {
-		return Policy{}, false, fmt.Errorf("unsupported %s ACL port match", routeMapVendorName(kind))
+		return parsedACLRule{}, false, fmt.Errorf("unsupported %s ACL port match", routeMapVendorName(kind))
 	}
-	if action != "deny" {
-		return Policy{}, false, nil
-	}
-	return Policy{
+	return parsedACLRule{
 		Name:      name,
-		Plane:     "data",
-		Action:    "deny",
+		Action:    action,
 		Protocol:  aclPolicyProtocol(protocol),
+		SrcPrefix: srcPrefix,
 		DstPrefix: dstPrefix,
 		DstPort:   dstPort,
 		Seq:       seq,
-		Source: PolicySource{
+		Source: ConfigSource{
 			Vendor: string(kind),
 			File:   path,
 			Line:   lineNo,
@@ -1192,25 +1247,91 @@ func aclStage(raw string) (string, bool) {
 	}
 }
 
-func boundACLPolicies(aclPolicies map[string][]Policy, bindings []aclBinding) []Policy {
-	var out []Policy
-	for _, binding := range bindings {
-		for _, policy := range aclPolicies[binding.Name] {
-			policy.Stage = binding.Stage
-			policy.Interface = binding.Interface
-			out = append(out, policy)
+func normalizedACLs(kind DeviceKind, aclPolicies map[string][]parsedACLRule, defaultAction ACLDefaultAction) []ACL {
+	var out []ACL
+	for name, policies := range aclPolicies {
+		acl := ACL{
+			Name:          name,
+			Vendor:        kind,
+			DefaultAction: defaultAction,
 		}
+		for _, policy := range policies {
+			acl.Rules = append(acl.Rules, parsedACLRuleToACLRule(policy))
+			if acl.Source.Raw == "" && policy.Source.Raw != "" {
+				acl.Source = policy.Source
+			}
+		}
+		sort.Slice(acl.Rules, func(i, j int) bool {
+			return acl.Rules[i].Seq < acl.Rules[j].Seq
+		})
+		out = append(out, acl)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name == out[j].Name {
-			return out[i].Seq < out[j].Seq
-		}
 		return out[i].Name < out[j].Name
 	})
 	return out
 }
 
-func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo int, raw string, fields []string) error {
+func normalizedACLBindings(bindings []aclBinding) []ACLBinding {
+	out := make([]ACLBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		out = append(out, ACLBinding{
+			Interface: binding.Interface,
+			Direction: binding.Stage,
+			ACLName:   binding.Name,
+			Source:    binding.Source,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ACLName == out[j].ACLName {
+			if out[i].Interface == out[j].Interface {
+				return out[i].Direction < out[j].Direction
+			}
+			return out[i].Interface < out[j].Interface
+		}
+		return out[i].ACLName < out[j].ACLName
+	})
+	return out
+}
+
+func parsedACLRuleToACLRule(policy parsedACLRule) ACLRule {
+	action := policy.Action
+	if action == "" {
+		action = ACLDeny
+	}
+	return ACLRule{
+		Seq:    policy.Seq,
+		Action: action,
+		Match: PacketSpec{
+			SrcSet:   prefixSetOrNil(policy.SrcPrefix),
+			DstSet:   prefixSetOrNil(policy.DstPrefix),
+			Protocol: policy.Protocol,
+			SrcPort:  policy.SrcPort,
+			DstPort:  policy.DstPort,
+		},
+		Source: policy.Source,
+	}
+}
+
+func prefixSetOrNil(prefix Prefix) PrefixSet {
+	if prefix.IsZero() {
+		return nil
+	}
+	return ExactPrefixSet{Prefix: prefix}
+}
+
+func defaultACLAction(kind DeviceKind, fallback ACLDefaultAction) ACLDefaultAction {
+	switch kind {
+	case KindCEOS, KindSRLinux:
+		return ACLDefaultDeny
+	case KindFRR:
+		return fallback
+	default:
+		return fallback
+	}
+}
+
+func parseSRLinuxACL(aclPolicies map[string]map[int]*parsedACLRule, path string, lineNo int, raw string, fields []string) error {
 	name := fieldAfter(fields, "acl-filter")
 	if name == "" || fieldAfter(fields, "type") != "ipv4" {
 		return nil
@@ -1224,15 +1345,14 @@ func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo
 		return err
 	}
 	if aclPolicies[name] == nil {
-		aclPolicies[name] = map[int]*Policy{}
+		aclPolicies[name] = map[int]*parsedACLRule{}
 	}
 	policy := aclPolicies[name][seq]
 	if policy == nil {
-		policy = &Policy{
+		policy = &parsedACLRule{
 			Name:   name,
-			Plane:  "data",
 			Seq:    seq,
-			Source: PolicySource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
+			Source: ConfigSource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
 		}
 		aclPolicies[name][seq] = policy
 	}
@@ -1266,9 +1386,9 @@ func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo
 	if containsSeq(fields, "action") {
 		switch fields[len(fields)-1] {
 		case "drop":
-			policy.Action = "deny"
+			policy.Action = ACLDeny
 		case "accept":
-			policy.Action = "permit"
+			policy.Action = ACLPermit
 		default:
 			return fmt.Errorf("unsupported SR Linux ACL action %q", fields[len(fields)-1])
 		}
@@ -1277,7 +1397,7 @@ func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo
 	return fmt.Errorf("unsupported SR Linux ACL statement")
 }
 
-func parseSRLinuxACLBinding(fields []string) (aclBinding, bool) {
+func parseSRLinuxACLBinding(path string, lineNo int, raw string, fields []string) (aclBinding, bool) {
 	name := fieldAfter(fields, "acl-filter")
 	if name == "" || fieldAfter(fields, "type") != "ipv4" {
 		return aclBinding{}, false
@@ -1293,17 +1413,14 @@ func parseSRLinuxACLBinding(fields []string) (aclBinding, bool) {
 	if iface == "" || stage == "" {
 		return aclBinding{}, false
 	}
-	return aclBinding{Name: name, Interface: iface, Stage: stage}, true
+	return aclBinding{Name: name, Interface: iface, Stage: stage, Source: ConfigSource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw}}, true
 }
 
-func flattenSRLinuxACLs(raw map[string]map[int]*Policy) map[string][]Policy {
-	out := map[string][]Policy{}
+func flattenSRLinuxACLs(raw map[string]map[int]*parsedACLRule) map[string][]parsedACLRule {
+	out := map[string][]parsedACLRule{}
 	for name, entries := range raw {
 		for _, policy := range entries {
-			if policy.Action != "deny" {
-				continue
-			}
-			if policy.Protocol == "" || policy.DstPrefix.IsZero() {
+			if policy.Action != ACLDeny && policy.Action != ACLPermit {
 				continue
 			}
 			out[name] = append(out[name], *policy)

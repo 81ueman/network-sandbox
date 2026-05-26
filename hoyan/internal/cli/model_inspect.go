@@ -129,30 +129,37 @@ type symbolicPacketInspectState struct {
 }
 
 type symbolicPacketBlockedPath struct {
-	PathNodes []string           `json:"path_nodes,omitempty"`
-	PathLinks []string           `json:"path_links,omitempty"`
-	Cost      int                `json:"cost"`
-	Condition string             `json:"condition,omitempty"`
-	Reason    string             `json:"reason,omitempty"`
-	Policy    string             `json:"policy,omitempty"`
-	Node      string             `json:"node,omitempty"`
-	Interface string             `json:"interface,omitempty"`
-	Stage     string             `json:"stage,omitempty"`
-	Source    model.PolicySource `json:"source,omitempty"`
+	PathNodes     []string               `json:"path_nodes,omitempty"`
+	PathLinks     []string               `json:"path_links,omitempty"`
+	Cost          int                    `json:"cost"`
+	Condition     string                 `json:"condition,omitempty"`
+	Reason        string                 `json:"reason,omitempty"`
+	ACL           string                 `json:"acl,omitempty"`
+	RuleSeq       int                    `json:"rule_seq,omitempty"`
+	Action        model.ACLAction        `json:"action,omitempty"`
+	DefaultAction model.ACLDefaultAction `json:"default_action,omitempty"`
+	Node          string                 `json:"node,omitempty"`
+	Interface     string                 `json:"interface,omitempty"`
+	Stage         string                 `json:"stage,omitempty"`
+	Source        model.ConfigSource     `json:"source,omitempty"`
 }
 
 type symbolicPacketInspectBlockedReason struct {
-	Kind       string   `json:"kind"`
-	Node       string   `json:"node,omitempty"`
-	Link       string   `json:"link,omitempty"`
-	Interface  string   `json:"interface,omitempty"`
-	PolicyName string   `json:"policy_name,omitempty"`
-	PolicyRaw  string   `json:"policy_raw,omitempty"`
-	PathNodes  []string `json:"path_nodes,omitempty"`
-	PathLinks  []string `json:"path_links,omitempty"`
-	Cost       int      `json:"cost"`
-	Condition  string   `json:"condition,omitempty"`
-	Message    string   `json:"message,omitempty"`
+	Kind          string                 `json:"kind"`
+	Node          string                 `json:"node,omitempty"`
+	Link          string                 `json:"link,omitempty"`
+	Interface     string                 `json:"interface,omitempty"`
+	PolicyName    string                 `json:"policy_name,omitempty"`
+	ACLName       string                 `json:"acl_name,omitempty"`
+	RuleSeq       int                    `json:"rule_seq,omitempty"`
+	Action        model.ACLAction        `json:"action,omitempty"`
+	DefaultAction model.ACLDefaultAction `json:"default_action,omitempty"`
+	PolicyRaw     string                 `json:"policy_raw,omitempty"`
+	PathNodes     []string               `json:"path_nodes,omitempty"`
+	PathLinks     []string               `json:"path_links,omitempty"`
+	Cost          int                    `json:"cost"`
+	Condition     string                 `json:"condition,omitempty"`
+	Message       string                 `json:"message,omitempty"`
 }
 
 type symbolicRouteInspect struct {
@@ -755,31 +762,38 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 	}
 	for _, path := range result.Blocked {
 		out.Blocked = append(out.Blocked, symbolicPacketBlockedPath{
-			PathNodes: append([]string(nil), path.Path.Nodes...),
-			PathLinks: append([]string(nil), path.Path.Links...),
-			Cost:      path.Path.Cost,
-			Condition: condString(path.Cond),
-			Reason:    path.Reason,
-			Policy:    path.Policy,
-			Node:      path.Node,
-			Interface: path.Interface,
-			Stage:     path.Stage,
-			Source:    path.Source,
+			PathNodes:     append([]string(nil), path.Path.Nodes...),
+			PathLinks:     append([]string(nil), path.Path.Links...),
+			Cost:          path.Path.Cost,
+			Condition:     condString(path.Cond),
+			Reason:        path.Reason,
+			ACL:           path.ACL,
+			RuleSeq:       path.RuleSeq,
+			Action:        path.Action,
+			DefaultAction: path.DefaultAction,
+			Node:          path.Node,
+			Interface:     path.Interface,
+			Stage:         path.Stage,
+			Source:        path.Source,
 		})
 	}
 	for _, reason := range result.UnreachableReasons {
 		out.UnreachableReasons = append(out.UnreachableReasons, symbolicPacketInspectBlockedReason{
-			Kind:       string(reason.Kind),
-			Node:       reason.Node,
-			Link:       reason.Link,
-			Interface:  reason.Interface,
-			PolicyName: reason.PolicyName,
-			PolicyRaw:  reason.PolicyRaw,
-			PathNodes:  append([]string(nil), reason.Path.Nodes...),
-			PathLinks:  append([]string(nil), reason.Path.Links...),
-			Cost:       reason.Path.Cost,
-			Condition:  condString(reason.Cond),
-			Message:    reason.Message,
+			Kind:          string(reason.Kind),
+			Node:          reason.Node,
+			Link:          reason.Link,
+			Interface:     reason.Interface,
+			PolicyName:    reason.PolicyName,
+			ACLName:       reason.ACLName,
+			RuleSeq:       reason.RuleSeq,
+			Action:        reason.Action,
+			DefaultAction: reason.DefaultAction,
+			PolicyRaw:     reason.PolicyRaw,
+			PathNodes:     append([]string(nil), reason.Path.Nodes...),
+			PathLinks:     append([]string(nil), reason.Path.Links...),
+			Cost:          reason.Path.Cost,
+			Condition:     condString(reason.Cond),
+			Message:       reason.Message,
 		})
 	}
 	return out
@@ -1089,9 +1103,9 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect, showC
 	fmt.Fprintln(out, "blocked:")
 	blockedTW := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
-		fmt.Fprintln(blockedTW, "PATH\tCOST\tCONDITION\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+		fmt.Fprintln(blockedTW, "PATH\tCOST\tCONDITION\tACL\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
 	} else {
-		fmt.Fprintln(blockedTW, "PATH\tCOST\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+		fmt.Fprintln(blockedTW, "PATH\tCOST\tACL\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
 	}
 	for _, path := range result.Blocked {
 		fmt.Fprintf(blockedTW, "%s\t%d",
@@ -1102,18 +1116,18 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect, showC
 			fmt.Fprintf(blockedTW, "\t%s", path.Condition)
 		}
 		fmt.Fprintf(blockedTW, "\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			path.Policy,
+			path.ACL,
 			path.Node,
 			path.Interface,
 			path.Stage,
-			formatPolicySource(path.Source),
+			formatConfigSource(path.Source),
 			path.Reason,
 		)
 	}
 	return blockedTW.Flush()
 }
 
-func formatPolicySource(src model.PolicySource) string {
+func formatConfigSource(src model.ConfigSource) string {
 	var parts []string
 	if src.Vendor != "" {
 		parts = append(parts, src.Vendor)

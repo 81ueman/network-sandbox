@@ -149,18 +149,21 @@ func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
 		{node: "core-sh", iface: "Ethernet5"},
 		{node: "core-gz", iface: "ethernet-1/4.0"},
 	} {
-		policy := policyByNodeInterface(topo.Policies, tt.node, tt.iface)
-		if policy == nil {
-			t.Fatalf("policy for %s %s not found in %#v", tt.node, tt.iface, topo.Policies)
+		acl, binding := aclByNodeInterface(topo, tt.node, tt.iface)
+		if acl == nil || binding == nil {
+			t.Fatalf("acl for %s %s not found in ACLs=%#v bindings=%#v", tt.node, tt.iface, topo.ACLs, topo.ACLBindings)
 		}
-		if policy.Name != "BLOCK-HTTP-TO-HZ" || policy.Plane != "data" || policy.Stage != "egress" || policy.Action != "deny" || policy.Protocol != "tcp" || policy.DstPrefix.String() != "10.4.0.0/16" || !policy.DstPort.Contains(80) {
-			t.Fatalf("policy for %s %s = %#v", tt.node, tt.iface, policy)
+		if acl.Name != "BLOCK-HTTP-TO-HZ" || binding.Direction != "egress" || len(acl.Rules) == 0 || acl.Rules[0].Action != ACLDeny || acl.Rules[0].Match.Protocol != "tcp" {
+			t.Fatalf("acl for %s %s = %#v binding=%#v", tt.node, tt.iface, acl, binding)
 		}
-		if policy.Source.File == "" || policy.Source.Line == 0 || policy.Source.Raw == "" {
-			t.Fatalf("policy source not populated: %#v", policy.Source)
+		if acl.Rules[0].Match.DstSet == nil || !acl.Rules[0].Match.DstPort.Contains(80) {
+			t.Fatalf("acl first rule match = %#v, want dst 10.4.0.0/16 tcp/80", acl.Rules[0].Match)
 		}
-		if tt.node == "core-hz" && policy.Source.Vendor != "nftables" {
-			t.Fatalf("core-hz policy source vendor = %q, want nftables", policy.Source.Vendor)
+		if acl.Rules[0].Source.File == "" || acl.Rules[0].Source.Line == 0 || acl.Rules[0].Source.Raw == "" {
+			t.Fatalf("acl rule source not populated: %#v", acl.Rules[0].Source)
+		}
+		if tt.node == "core-hz" && acl.Source.Vendor != "nftables" {
+			t.Fatalf("core-hz acl source vendor = %q, want nftables", acl.Source.Vendor)
 		}
 	}
 }
@@ -225,21 +228,56 @@ func TestParseNftablesConfig(t *testing.T) {
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	policies, err := ParseNftablesConfig(path)
+	acls, bindings, err := ParseNftablesACLConfig(path)
 	if err != nil {
-		t.Fatalf("ParseNftablesConfig() error = %v", err)
+		t.Fatalf("ParseNftablesACLConfig() error = %v", err)
 	}
-	if len(policies) != 2 {
-		t.Fatalf("policies = %d, want 2: %#v", len(policies), policies)
+	if len(acls) != 1 || len(acls[0].Rules) != 2 {
+		t.Fatalf("ACLs = %#v, want one ACL with two rules", acls)
 	}
-	if policies[0].Name != "BLOCK-HTTP-TO-HZ" || policies[0].Stage != "egress" || policies[0].Interface != "eth1" || policies[0].Protocol != "tcp" || policies[0].DstPrefix.String() != "10.4.0.0/16" || policies[0].Action != "deny" || !policies[0].DstPort.Contains(80) {
-		t.Fatalf("first policy = %#v", policies[0])
+	acl := acls[0]
+	if acl.Name != "BLOCK-HTTP-TO-HZ" || acl.DefaultAction != ACLDefaultPermit {
+		t.Fatalf("acl metadata = %#v", acl)
 	}
-	if policies[1].Stage != "ingress" || policies[1].Interface != "eth2" || policies[1].Protocol != "icmp" || policies[1].DstPrefix.String() != "10.5.0.0/16" {
-		t.Fatalf("second policy = %#v", policies[1])
+	if acl.Rules[0].Match.Protocol != "tcp" || acl.Rules[0].Action != ACLDeny || !acl.Rules[0].Match.DstPort.Contains(80) {
+		t.Fatalf("first rule = %#v", acl.Rules[0])
 	}
-	if policies[0].Source.Vendor != "nftables" || policies[0].Source.File != path || policies[0].Source.Raw == "" {
-		t.Fatalf("source = %#v", policies[0].Source)
+	if len(bindings) != 2 || bindings[0].Direction != "egress" || bindings[0].Interface != "eth1" || bindings[1].Direction != "ingress" || bindings[1].Interface != "eth2" {
+		t.Fatalf("bindings = %#v", bindings)
+	}
+	if acl.Rules[0].Source.Vendor != "nftables" || acl.Rules[0].Source.File != path || acl.Rules[0].Source.Raw == "" {
+		t.Fatalf("source = %#v", acl.Rules[0].Source)
+	}
+}
+
+func TestParseFRRLikeACLsBuildNormalizedIRWithPermitAndBinding(t *testing.T) {
+	cfg := parseCEOSConfigText(t, `
+hostname r1
+interface Ethernet1
+   no switchport
+   ip address 192.0.2.1/31
+   ip access-group WEB-FILTER out
+!
+ip access-list WEB-FILTER
+   10 permit tcp any 10.0.0.0/24 eq 443
+   20 deny tcp any 10.0.0.0/24 eq 80
+!
+`)
+	if len(cfg.ACLs) != 1 {
+		t.Fatalf("ACLs = %#v, want one ACL", cfg.ACLs)
+	}
+	acl := cfg.ACLs[0]
+	if acl.Name != "WEB-FILTER" || acl.Vendor != KindCEOS || acl.DefaultAction != ACLDefaultDeny {
+		t.Fatalf("ACL metadata = %#v", acl)
+	}
+	if len(acl.Rules) != 2 || acl.Rules[0].Action != ACLPermit || acl.Rules[0].Seq != 10 || acl.Rules[1].Action != ACLDeny || acl.Rules[1].Seq != 20 {
+		t.Fatalf("ACL rules = %#v, want permit seq 10 then deny seq 20", acl.Rules)
+	}
+	if acl.Rules[0].Match.Protocol != "tcp" || !acl.Rules[0].Match.DstPort.Contains(443) {
+		t.Fatalf("permit rule match = %#v, want tcp/443", acl.Rules[0].Match)
+	}
+	if len(cfg.ACLBindings) != 1 || cfg.ACLBindings[0].ACLName != "WEB-FILTER" || cfg.ACLBindings[0].Interface != "Ethernet1" || cfg.ACLBindings[0].Direction != "egress" {
+		t.Fatalf("ACL bindings = %#v", cfg.ACLBindings)
 	}
 }
 
@@ -254,9 +292,9 @@ func TestParseNftablesRejectsUnsupportedStatement(t *testing.T) {
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	_, err := ParseNftablesConfig(path)
+	_, _, err := ParseNftablesACLConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "unsupported nftables ip match") {
-		t.Fatalf("ParseNftablesConfig() error = %v", err)
+		t.Fatalf("ParseNftablesACLConfig() error = %v", err)
 	}
 }
 
@@ -691,38 +729,33 @@ func TestValidateRejectsMissingRouteMapMatchReferences(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsInvalidPolicyFields(t *testing.T) {
+func TestValidateRejectsInvalidACLFields(t *testing.T) {
 	tests := []struct {
-		name   string
-		policy Policy
-		want   string
+		name string
+		acl  ACL
+		want string
 	}{
 		{
-			name:   "action",
-			policy: Policy{Name: "p1", Node: "r1", Action: "drop"},
-			want:   "policy p1 has invalid action drop",
+			name: "default action",
+			acl:  ACL{Name: "a1", Node: "r1", DefaultAction: "drop"},
+			want: "acl a1 has invalid default action drop",
 		},
 		{
-			name:   "plane",
-			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Plane: "mgmt"},
-			want:   "policy p1 has invalid plane mgmt",
+			name: "rule action",
+			acl:  ACL{Name: "a1", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{Seq: 10, Action: "drop"}}},
+			want: "acl a1 rule 10 has invalid action drop",
 		},
 		{
-			name:   "stage",
-			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Stage: "pre"},
-			want:   "policy p1 has invalid stage pre",
-		},
-		{
-			name:   "protocol",
-			policy: Policy{Name: "p1", Node: "r1", Action: "deny", Protocol: "gre"},
-			want:   "policy p1 has invalid protocol gre",
+			name: "protocol",
+			acl:  ACL{Name: "a1", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{Seq: 10, Action: ACLDeny, Match: PacketSpec{Protocol: "gre"}}}},
+			want: "acl a1 rule 10 has invalid protocol gre",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			topo := &Topology{
-				Nodes:    []Node{{Name: "r1"}},
-				Policies: []Policy{tt.policy},
+				Nodes: []Node{{Name: "r1"}},
+				ACLs:  []ACL{tt.acl},
 			}
 			err := topo.Validate()
 			if err == nil || err.Error() != tt.want {
@@ -732,13 +765,13 @@ func TestValidateRejectsInvalidPolicyFields(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsUnknownPolicyPeer(t *testing.T) {
+func TestValidateRejectsUnknownACLBindingNode(t *testing.T) {
 	topo := &Topology{
-		Nodes:    []Node{{Name: "r1"}},
-		Policies: []Policy{{Name: "p1", Node: "r1", Peer: "missing", Action: "deny"}},
+		Nodes:       []Node{{Name: "r1"}},
+		ACLBindings: []ACLBinding{{Node: "missing", ACLName: "a1", Direction: "egress"}},
 	}
 	err := topo.Validate()
-	if err == nil || err.Error() != "policy p1 references unknown peer node missing" {
+	if err == nil || err.Error() != "acl binding a1 references unknown node missing" {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
@@ -1218,13 +1251,19 @@ func communityListByName(lists []CommunityList, name string) *CommunityList {
 	return nil
 }
 
-func policyByNodeInterface(policies []Policy, node, iface string) *Policy {
-	for i := range policies {
-		if policies[i].Node == node && policies[i].Interface == iface {
-			return &policies[i]
+func aclByNodeInterface(topo *Topology, node, iface string) (*ACL, *ACLBinding) {
+	for i := range topo.ACLBindings {
+		binding := &topo.ACLBindings[i]
+		if binding.Node != node || binding.Interface != iface {
+			continue
+		}
+		for j := range topo.ACLs {
+			if topo.ACLs[j].Node == node && topo.ACLs[j].Name == binding.ACLName {
+				return &topo.ACLs[j], binding
+			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func neighborByAddress(neighbors []BGPNeighbor, addr string) *BGPNeighbor {

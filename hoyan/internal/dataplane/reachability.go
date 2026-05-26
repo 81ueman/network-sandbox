@@ -96,8 +96,8 @@ func (e *Engine) packetReachableFrom(state packetReachableState) (Path, bool, st
 	packetSpec.DstSet = model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(state.dstPrefix)}
 	packetSpec.IngressInterface = state.ingressInterface
 	packet := controlplane.PacketMessage{Node: state.current, Prefix: state.dstPrefix, Spec: packetSpec}
-	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); ok {
-		return state.full, false, "denied by policy " + pol
+	if decision := e.dataACLDecision(currentNode, packet, "ingress"); decision.Denied {
+		return state.full, false, decision.Reason
 	}
 	candidates := e.SymbolicLookupFIB(state.current, state.to)
 	if len(candidates) == 0 {
@@ -140,8 +140,8 @@ func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[
 		return state.full, false, "next-hop link is down"
 	}
 	packet.Spec.EgressInterface = interfaceOnLink(link, state.current)
-	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
-		return state.full, false, "denied by policy " + pol
+	if decision := e.dataACLDecision(currentNode, packet, "egress"); decision.Denied {
+		return state.full, false, decision.Reason
 	}
 	nextFull := Path{
 		Nodes: append(append([]string(nil), state.full.Nodes...), rule.NextHop),
@@ -158,6 +158,14 @@ func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[
 		visited:          nextVisited,
 		full:             nextFull,
 	})
+}
+
+func (e *Engine) dataACLDecision(node model.Node, packet controlplane.PacketMessage, stage string) controlplane.PolicyDecision {
+	behavior := controlplane.BehaviorFor(node.Kind)
+	if e != nil && e.idx != nil && e.idx.Topology != nil {
+		return behavior.EvaluateDataACL(node, packet, stage, e.idx.Topology.ACLs, e.idx.Topology.ACLBindings)
+	}
+	return controlplane.PolicyDecision{}
 }
 
 func (e *Engine) FailureContext(failures failure.Set) failure.Context {

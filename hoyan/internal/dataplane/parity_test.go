@@ -540,16 +540,10 @@ func ingressACLDenyEngine() *Engine {
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "DENY-TCP-IN",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "ingress",
-			Interface: "eth1",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: pfx,
-		}},
+		ACLs: testACLs("DENY-TCP-IN", "mid", model.ACLRule{
+			Seq: 10, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}},
+		}),
+		ACLBindings: testACLBindings("DENY-TCP-IN", "mid", "eth1", "ingress"),
 	})
 	return NewEngine(idx, nil, map[string][]FIBEntry{
 		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
@@ -569,16 +563,10 @@ func egressACLDenyEngine(policyInterface, policyProtocol string) *Engine {
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "DENY-POLICY",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "egress",
-			Interface: policyInterface,
-			Action:    "deny",
-			Protocol:  policyProtocol,
-			DstPrefix: pfx,
-		}},
+		ACLs: testACLs("DENY-POLICY", "mid", model.ACLRule{
+			Seq: 10, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: policyProtocol, DstSet: model.ExactPrefixSet{Prefix: pfx}},
+		}),
+		ACLBindings: testACLBindings("DENY-POLICY", "mid", policyInterface, "egress"),
 	})
 	return NewEngine(idx, nil, map[string][]FIBEntry{
 		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},

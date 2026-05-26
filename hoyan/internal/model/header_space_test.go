@@ -7,10 +7,10 @@ import (
 
 func TestHeaderSpaceSplitsTCPDstPorts(t *testing.T) {
 	pfx := MustPrefix("10.0.0.0/24")
-	topo := &Topology{Policies: []Policy{
-		{Name: "DENY-HTTP", Plane: "data", Stage: "egress", Action: "deny", Protocol: "tcp", DstPrefix: pfx, DstPort: ExactPort(80)},
-		{Name: "ALLOW-HTTPS", Plane: "data", Stage: "egress", Action: "permit", Protocol: "tcp", DstPrefix: pfx, DstPort: ExactPort(443)},
-	}}
+	topo := aclTestTopology("WEB", "r1", "eth1", "egress",
+		ACLRule{Seq: 10, Action: ACLDeny, Match: PacketSpec{Protocol: "tcp", DstSet: ExactPrefixSet{Prefix: pfx}, DstPort: ExactPort(80)}},
+		ACLRule{Seq: 20, Action: ACLPermit, Match: PacketSpec{Protocol: "tcp", DstSet: ExactPrefixSet{Prefix: pfx}, DstPort: ExactPort(443)}},
+	)
 	universe, err := NewPrefixUniverse(topo, nil)
 	if err != nil {
 		t.Fatalf("NewPrefixUniverse() error = %v", err)
@@ -28,14 +28,9 @@ func TestHeaderSpaceSplitsTCPDstPorts(t *testing.T) {
 func TestHeaderSpaceLinksDstPrefixToPrefixClass(t *testing.T) {
 	topo := &Topology{
 		Nodes: []Node{{Name: "dst", Prefixes: MustPrefixes("10.0.0.0/24", "10.0.1.0/24")}},
-		Policies: []Policy{{
-			Name:      "DENY-DST",
-			Plane:     "data",
-			Stage:     "egress",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: MustPrefix("10.0.1.0/24"),
-		}},
+		ACLs: []ACL{{Name: "DENY-DST", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{
+			Seq: 10, Action: ACLDeny, Match: PacketSpec{Protocol: "tcp", DstSet: ExactPrefixSet{Prefix: MustPrefix("10.0.1.0/24")}},
+		}}}},
 	}
 	universe, err := NewPrefixUniverse(topo, nil)
 	if err != nil {
@@ -56,10 +51,15 @@ func TestHeaderSpaceLinksDstPrefixToPrefixClass(t *testing.T) {
 
 func TestHeaderSpaceSplitsIngressInterface(t *testing.T) {
 	pfx := MustPrefix("10.0.0.0/24")
-	topo := &Topology{Policies: []Policy{
-		{Name: "DENY-IN-1", Plane: "data", Stage: "ingress", Interface: "eth1", Action: "deny", Protocol: "tcp", DstPrefix: pfx},
-		{Name: "DENY-IN-2", Plane: "data", Stage: "ingress", Interface: "eth2", Action: "deny", Protocol: "tcp", DstPrefix: pfx},
-	}}
+	topo := &Topology{
+		ACLs: []ACL{{Name: "DENY-IN", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{
+			Seq: 10, Action: ACLDeny, Match: PacketSpec{Protocol: "tcp", DstSet: ExactPrefixSet{Prefix: pfx}},
+		}}}},
+		ACLBindings: []ACLBinding{
+			{Node: "r1", Interface: "eth1", Direction: "ingress", ACLName: "DENY-IN"},
+			{Node: "r1", Interface: "eth2", Direction: "ingress", ACLName: "DENY-IN"},
+		},
+	}
 	universe, err := NewPrefixUniverse(topo, nil)
 	if err != nil {
 		t.Fatalf("NewPrefixUniverse() error = %v", err)
@@ -75,10 +75,10 @@ func TestHeaderSpaceSplitsIngressInterface(t *testing.T) {
 }
 
 func TestHeaderSpaceAvoidsUnusedDimensionCrossProduct(t *testing.T) {
-	topo := &Topology{Policies: []Policy{
-		{Name: "DENY-A", Plane: "data", Stage: "egress", Action: "deny", DstPrefix: MustPrefix("10.0.0.0/24")},
-		{Name: "DENY-B", Plane: "data", Stage: "egress", Action: "deny", DstPrefix: MustPrefix("10.0.1.0/24")},
-	}}
+	topo := &Topology{ACLs: []ACL{{Name: "DENY", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{
+		{Seq: 10, Action: ACLDeny, Match: PacketSpec{DstSet: ExactPrefixSet{Prefix: MustPrefix("10.0.0.0/24")}}},
+		{Seq: 20, Action: ACLDeny, Match: PacketSpec{DstSet: ExactPrefixSet{Prefix: MustPrefix("10.0.1.0/24")}}},
+	}}}}
 	universe, err := NewPrefixUniverse(topo, nil)
 	if err != nil {
 		t.Fatalf("NewPrefixUniverse() error = %v", err)
@@ -106,5 +106,12 @@ func TestCollectHeaderPredicatesIncludesQueries(t *testing.T) {
 	}
 	if !predicates[0].DstPort.Contains(80) || !predicates[1].DstPort.Contains(443) {
 		t.Fatalf("DstPorts = %#v, %#v; want 80 and 443", predicates[0].DstPort, predicates[1].DstPort)
+	}
+}
+
+func aclTestTopology(name, node, iface, direction string, rules ...ACLRule) *Topology {
+	return &Topology{
+		ACLs:        []ACL{{Name: name, Node: node, DefaultAction: ACLDefaultPermit, Rules: rules}},
+		ACLBindings: []ACLBinding{{Node: node, Interface: iface, Direction: direction, ACLName: name}},
 	}
 }
