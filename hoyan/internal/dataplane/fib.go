@@ -17,15 +17,16 @@ type Path struct {
 }
 
 type FIBEntry struct {
-	Prefix     netip.Prefix
-	NextHop    string
-	Interface  string
-	SourceKind model.RouteSourceKind
-	Path       Path
-	Condition  failure.Cond
-	Rank       int
-	GroupID    string
-	Equivalent bool
+	Prefix         netip.Prefix
+	NextHop        string
+	Interface      string
+	SourceKind     model.RouteSourceKind
+	ConnectedClass model.ConnectedRouteClass
+	Path           Path
+	Condition      failure.Cond
+	Rank           int
+	GroupID        string
+	Equivalent     bool
 }
 
 type Engine struct {
@@ -80,15 +81,16 @@ func (e *Engine) DeriveFIB() {
 					}
 				}
 				entries = append(entries, FIBEntry{
-					Prefix:     route.Prefix.NetIP(),
-					NextHop:    route.NextHop,
-					Interface:  route.RouteSource.Interface,
-					SourceKind: route.SourceKind,
-					Path:       Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
-					Condition:  route.SelectedCond,
-					Rank:       group.rank,
-					GroupID:    group.id,
-					Equivalent: group.equivalent,
+					Prefix:         route.Prefix.NetIP(),
+					NextHop:        route.NextHop,
+					Interface:      route.RouteSource.Interface,
+					SourceKind:     route.SourceKind,
+					ConnectedClass: route.RouteSource.ConnectedClass,
+					Path:           Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
+					Condition:      route.SelectedCond,
+					Rank:           group.rank,
+					GroupID:        group.id,
+					Equivalent:     group.equivalent,
 				})
 			}
 		}

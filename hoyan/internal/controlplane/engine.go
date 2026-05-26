@@ -220,13 +220,15 @@ func (e *Engine) connectedRoutes(node model.Node) []model.ConfiguredRoute {
 		if err != nil {
 			continue
 		}
+		prefix := model.PrefixFromNetIP(pfx.Masked())
 		out = append(out, model.ConfiguredRoute{
 			Node:            node.Name,
 			NetworkInstance: model.NetworkInstanceDefault,
 			AFI:             model.AFIIPv4,
-			Prefix:          model.PrefixFromNetIP(pfx.Masked()),
+			Prefix:          prefix,
 			Interface:       iface.Name,
 			Kind:            model.RouteSourceConnected,
+			ConnectedClass:  e.idx.ConnectedClass(node.Name, iface, prefix),
 			AdminDistance:   0,
 		})
 	}

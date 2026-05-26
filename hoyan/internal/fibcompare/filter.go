@@ -13,20 +13,59 @@ func ComparableRoutes(topo *model.Topology, routes []NormalizedFIBRoute, opts Op
 	}
 	var out []NormalizedFIBRoute
 	for _, route := range routes {
-		if route.Protocol != "bgp" {
+		route.Protocol = canonicalProtocol(route.Protocol)
+		if route.Protocol == "connected" && route.ConnectedClass == "" {
+			route.ConnectedClass = idx.ConnectedClassForRoute(route.Node, route.Prefix, firstNextHopInterface(route.NextHops))
+		}
+		if !comparableProtocol(route) {
+			continue
+		}
+		if route.Protocol == "connected" && !comparableConnectedClass(route.ConnectedClass) {
+			continue
+		}
+		if route.Protocol == "static" && len(route.NextHops) == 0 {
 			continue
 		}
 		filtered := route
 		filtered.NextHops = normalizeRouteNextHops(idx, filtered)
-		filtered.NextHops = comparableNextHops(idx, route.Node, filtered.NextHops, opts)
-		filtered.NextHops = normalizeRouteNextHops(idx, filtered)
-		if len(route.NextHops) > 0 && len(filtered.NextHops) == 0 {
-			continue
+		if route.Protocol == "bgp" {
+			filtered.NextHops = comparableNextHops(idx, route.Node, filtered.NextHops, opts)
+			filtered.NextHops = normalizeRouteNextHops(idx, filtered)
+			if len(route.NextHops) > 0 && len(filtered.NextHops) == 0 {
+				continue
+			}
 		}
 		out = append(out, filtered)
 	}
 	sortRoutes(out)
 	return out
+}
+
+func comparableProtocol(route NormalizedFIBRoute) bool {
+	switch route.Protocol {
+	case "bgp", "connected", "static":
+		return true
+	default:
+		return false
+	}
+}
+
+func comparableConnectedClass(class model.ConnectedRouteClass) bool {
+	switch class {
+	case model.ConnectedRouteClassLink, model.ConnectedRouteClassLoopback, model.ConnectedRouteClassService:
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNextHopInterface(hops []NormalizedFIBNextHop) string {
+	for _, hop := range hops {
+		if hop.Interface != "" {
+			return hop.Interface
+		}
+	}
+	return ""
 }
 
 func normalizeRouteNextHops(idx *model.TopologyIndex, route NormalizedFIBRoute) []NormalizedFIBNextHop {

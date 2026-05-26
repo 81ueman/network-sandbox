@@ -61,6 +61,34 @@ func TestExpectedRoutesIncludesStaticAndConnectedSources(t *testing.T) {
 	}
 }
 
+func TestExpectedConnectedRoutesCarryClassAndIncludeLoopbackService(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{{
+			Name: "svc",
+			Kind: model.KindFRR,
+			Role: "customer",
+			Interfaces: []model.Interface{
+				{Name: "lo", Address: "10.0.0.10/32"},
+				{Name: "eth1", Address: "192.0.2.1/31"},
+			},
+		}, {
+			Name:       "r2",
+			Kind:       model.KindFRR,
+			Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.0/31"}},
+		}},
+		Links: []model.Link{{Name: "svc-r2", A: "svc", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1}},
+	}
+	routes := Expected(topo)
+	link := routeByPrefixProtocol(routes, "192.0.2.0/31", "connected")
+	if link == nil || link.ConnectedClass != model.ConnectedRouteClassLink {
+		t.Fatalf("link connected route = %#v", link)
+	}
+	service := routeByPrefixProtocol(routes, "10.0.0.10/32", "connected")
+	if service == nil || service.ConnectedClass != model.ConnectedRouteClassService {
+		t.Fatalf("service connected route = %#v", service)
+	}
+}
+
 func TestCollectIncludesInstalledStaticAndConnectedRoutes(t *testing.T) {
 	runner := runnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cmd := name + " " + strings.Join(args, " ")
@@ -72,6 +100,8 @@ func TestCollectIncludesInstalledStaticAndConnectedRoutes(t *testing.T) {
 			  {"dst":"192.0.2.0/30","dev":"eth1","protocol":"kernel"},
 			  {"dst":"203.0.113.0/24","gateway":"192.0.2.2","dev":"eth1","protocol":"static"}
 			]`), nil
+		case "docker exec -i r1 ip -j route show table local":
+			return []byte(`[]`), nil
 		default:
 			t.Fatalf("unexpected command: %s", cmd)
 			return nil, nil

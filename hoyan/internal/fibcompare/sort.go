@@ -18,6 +18,10 @@ func sortNextHops(hops []NormalizedFIBNextHop) {
 }
 
 func routeKey(r NormalizedFIBRoute) string {
+	protocol := canonicalProtocol(r.Protocol)
+	if protocol != "" && protocol != "bgp" {
+		return r.Node + "|" + r.VRF + "|" + r.AFI + "|" + protocol + "|" + r.Prefix
+	}
 	return r.Node + "|" + r.VRF + "|" + r.AFI + "|" + r.Prefix
 }
 

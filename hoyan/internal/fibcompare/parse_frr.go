@@ -27,7 +27,7 @@ func ParseLinuxIPRoute(node string, data []byte) ([]NormalizedFIBRoute, error) {
 			AFI:        "ipv4",
 			Prefix:     prefix,
 			NextHops:   routeNextHops(item),
-			Protocol:   stringValue(item["protocol"]),
+			Protocol:   linuxRouteProtocol(item),
 			Preference: intValue(item["pref"]),
 			Metric:     intValue(item["metric"]),
 			Installed:  true,
@@ -37,6 +37,13 @@ func ParseLinuxIPRoute(node string, data []byte) ([]NormalizedFIBRoute, error) {
 	}
 	sortRoutes(out)
 	return out, nil
+}
+
+func linuxRouteProtocol(item map[string]any) string {
+	if protocol := canonicalProtocol(stringValue(item["protocol"])); protocol != "" {
+		return protocol
+	}
+	return canonicalProtocol(stringValue(item["type"]))
 }
 
 func routePrefix(item map[string]any) (string, bool, error) {

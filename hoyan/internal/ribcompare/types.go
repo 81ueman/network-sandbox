@@ -12,6 +12,7 @@ type NormalizedBgpRoute struct {
 	AFI             string
 	Prefix          string
 	Protocol        string
+	ConnectedClass  model.ConnectedRouteClass
 	Paths           []NormalizedBgpPath
 }
 

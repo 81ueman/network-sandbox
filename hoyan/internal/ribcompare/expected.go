@@ -65,6 +65,7 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 					AFI:             "ipv4",
 					Prefix:          prefix,
 					Protocol:        protocol,
+					ConnectedClass:  connectedClassForProtocol(protocol, rib),
 					Paths:           paths,
 				})
 			}
@@ -104,29 +105,37 @@ func expectedRouteProtocol(route sim.RIBEntry) string {
 	}
 }
 
+func connectedClassForProtocol(protocol string, routes []sim.RIBEntry) model.ConnectedRouteClass {
+	if protocol != "connected" {
+		return ""
+	}
+	for _, route := range routes {
+		route = route.Normalize()
+		if expectedRouteProtocol(route) == "connected" && route.RouteSource.ConnectedClass != "" {
+			return route.RouteSource.ConnectedClass
+		}
+	}
+	return ""
+}
+
 func routeComparableInLiveRIB(idx *model.TopologyIndex, node string, route sim.RIBEntry) bool {
 	route = route.Normalize()
 	switch route.SourceKind {
 	case model.RouteSourceBGP:
 		return true
 	case model.RouteSourceConnected:
-		iface := route.RouteSource.Interface
-		if iface == "" {
-			return false
-		}
-		for _, edge := range idx.Adj[model.NodeID(node)] {
-			linkIface := edge.Link.AIntf
-			if edge.Link.B == node {
-				linkIface = edge.Link.BIntf
-			}
-			n, ok := idx.Node(node)
-			if ok && model.EquivalentInterfaceName(n.Kind, linkIface, iface) {
-				return true
-			}
-		}
-		return false
+		return comparableConnectedClass(route.RouteSource.ConnectedClass)
 	case model.RouteSourceStatic:
 		return route.RouteSource.NextHop != ""
+	default:
+		return false
+	}
+}
+
+func comparableConnectedClass(class model.ConnectedRouteClass) bool {
+	switch class {
+	case model.ConnectedRouteClassLink, model.ConnectedRouteClassLoopback, model.ConnectedRouteClassService:
+		return true
 	default:
 		return false
 	}
