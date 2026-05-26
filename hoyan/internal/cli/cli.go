@@ -252,7 +252,7 @@ func NewLiveCheckCommand() *cobra.Command {
 				KeepOnFailure: opts.keepOnFailure,
 				SkipDestroy:   opts.skipDestroy,
 				CheckFIB:      opts.checkFIB && !opts.noCheckFIB,
-				FIBOptions:    fibcompare.Options{AllowUnsupported: opts.fibAllowUnsupported},
+				FIBOptions:    fibcompare.Options{AllowUnsupported: opts.fibAllowUnsupported, UnresolvedPolicy: fibcompare.UnresolvedPolicy(opts.fibUnresolvedPolicy)},
 				Out:           cmd.OutOrStdout(),
 			}, ribcompare.ExecRunner{})
 			if err != nil {
@@ -272,6 +272,7 @@ func NewLiveCheckCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.checkFIB, "check-fib", true, "compare modeled FIB with live installed FIB after BGP convergence")
 	cmd.Flags().BoolVar(&opts.noCheckFIB, "no-check-fib", false, "skip modeled-vs-live installed FIB comparison")
 	cmd.Flags().BoolVar(&opts.fibAllowUnsupported, "fib-allow-unsupported", false, "skip nodes without a live FIB collector when FIB comparison is enabled")
+	cmd.Flags().StringVar(&opts.fibUnresolvedPolicy, "fib-unresolved-policy", string(fibcompare.UnresolvedPolicyWarn), "handling for unresolved live BGP FIB routes: warn, fail, or ignore")
 	return cmd
 }
 
@@ -287,6 +288,7 @@ type liveCheckOptions struct {
 	checkFIB            bool
 	noCheckFIB          bool
 	fibAllowUnsupported bool
+	fibUnresolvedPolicy string
 }
 
 func (o liveCheckOptions) validate() error {
@@ -298,6 +300,9 @@ func (o liveCheckOptions) validate() error {
 	}
 	if o.maxPolls <= 0 {
 		return fmt.Errorf("--max-polls must be greater than zero")
+	}
+	if err := validateFIBUnresolvedPolicy(o.fibUnresolvedPolicy); err != nil {
+		return err
 	}
 	return nil
 }
@@ -369,6 +374,7 @@ func NewFIBCompareCommand() *cobra.Command {
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.allowUnsupported, "allow-unsupported", false, "skip nodes without a live FIB collector")
+	cmd.Flags().StringVar(&opts.unresolvedPolicy, "unresolved-policy", string(fibcompare.UnresolvedPolicyWarn), "handling for unresolved live BGP FIB routes: warn, fail, or ignore")
 	return cmd
 }
 
@@ -376,9 +382,13 @@ type fibCompareOptions struct {
 	topologyPath     string
 	strictConfig     bool
 	allowUnsupported bool
+	unresolvedPolicy string
 }
 
 func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) error {
+	if err := validateFIBUnresolvedPolicy(opts.unresolvedPolicy); err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
 	topo, _, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{StrictConfig: opts.strictConfig})
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
@@ -387,14 +397,17 @@ func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) e
 	if opts.allowUnsupported {
 		nodes = fibcompare.SupportedNodes(nodes)
 	}
-	fibOpts := fibcompare.Options{AllowUnsupported: opts.allowUnsupported}
-	expected := fibcompare.ComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, nodes), fibOpts)
+	fibOpts := fibcompare.Options{AllowUnsupported: opts.allowUnsupported, UnresolvedPolicy: fibcompare.UnresolvedPolicy(opts.unresolvedPolicy)}
+	expected := fibcompare.AnalyzeComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, nodes), fibOpts)
 	actual, err := fibcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes, fibOpts)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
-	actual = fibcompare.ComparableRoutes(topo, actual, fibOpts)
-	result := fibcompare.Compare(expected, actual)
+	actualFiltered := fibcompare.AnalyzeComparableRoutes(topo, actual, fibOpts)
+	for _, line := range fibcompare.FormatWarnings(fibcompare.WarningDiagnostics(actualFiltered, fibOpts)) {
+		fmt.Fprintln(out, line)
+	}
+	result := fibcompare.CompareFilterResults(expected, actualFiltered, fibOpts)
 	for _, line := range fibcompare.FormatDiffs(result) {
 		fmt.Fprintln(out, line)
 	}
@@ -403,6 +416,13 @@ func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) e
 	}
 	fmt.Fprintln(out, "FIBs match expected modeled forwarding entries")
 	return nil
+}
+
+func validateFIBUnresolvedPolicy(policy string) error {
+	if _, ok := fibcompare.ParseUnresolvedPolicy(policy); ok {
+		return nil
+	}
+	return fmt.Errorf("FIB unresolved policy must be one of warn, fail, or ignore")
 }
 
 func NewRenderTopologyCommand() *cobra.Command {

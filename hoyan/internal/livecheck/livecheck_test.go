@@ -1,6 +1,7 @@
 package livecheck
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -122,6 +123,7 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 }
 
 func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
+	var out bytes.Buffer
 	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
 		cmd := name + " " + strings.Join(args, " ")
 		switch {
@@ -138,6 +140,7 @@ func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
 		case strings.Contains(cmd, "ip -j route show table main"):
 			return []byte(`[
 			  {"dst":"10.1.1.10/32","protocol":"static"},
+			  {"dst":"10.3.0.0/16","gateway":"172.86.191.1","dev":"eth0","protocol":"bgp"},
 			  {"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}
 			]`), nil
 		case strings.Contains(cmd, "ip -j route show table local"):
@@ -152,6 +155,7 @@ func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
 		Timeout:      time.Second,
 		PollInterval: time.Millisecond,
 		CheckFIB:     true,
+		Out:          &out,
 	}
 	if err := Run(context.Background(), opts, runner); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -164,6 +168,9 @@ func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
 	}
 	if !collectedFIB {
 		t.Fatalf("FIB collector was not called: %v", runner.calls)
+	}
+	if !strings.Contains(out.String(), "[WARN] r1|default|ipv4|10.3.0.0/16 unresolved live BGP route reason=unresolved_or_mgmt_fallback") {
+		t.Fatalf("output missing unresolved warning:\n%s", out.String())
 	}
 }
 

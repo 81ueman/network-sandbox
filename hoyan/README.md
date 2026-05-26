@@ -240,9 +240,18 @@ go run ./cmd/hoyan fib-compare
 `fib-compare` normalizes modeled BGP, next-hop static, and comparable connected
 FIB entries with live installed FIB entries by node, VRF, AFI, protocol,
 prefix, and next-hop set. Null0/blackhole static routes without a comparable
-next-hop are outside the strict FIB set. It reports missing routes, unexpected
-routes, missing next-hops, and unexpected next-hops, including ECMP group
-differences. Live collectors currently use:
+next-hop are outside the strict FIB set. A comparable live BGP route must have
+a next-hop that resolves to a topology data-plane interface; if the kernel route
+falls back to a management/default interface such as `eth0`, or the recursive
+next-hop cannot be mapped to a topology link, the route is reported as
+`unresolved_or_mgmt_fallback`, `unresolved_recursive_next_hop`, or
+`topology_interface_missing`. By default these unresolved live routes are
+warnings and are excluded from the strict set comparison, because they are live
+installed routes whose forwarding cannot be verified against the topology. Use
+`go run ./cmd/hoyan fib-compare --unresolved-policy fail` to make them fail the
+run, or `--unresolved-policy ignore` to keep the exclusion silent. It reports
+missing routes, unexpected routes, missing next-hops, and unexpected next-hops,
+including ECMP group differences. Live collectors currently use:
 
 ```bash
 docker exec -i <frr-node> ip -j route show table main
@@ -257,7 +266,8 @@ go run ./cmd/hoyan live-check
 ```
 
 Use `--no-check-fib` to skip the installed FIB comparison for a quick
-control-plane/dataplane-only run.
+control-plane/dataplane-only run. `live-check` uses the same unresolved-route
+policy with `--fib-unresolved-policy warn|fail|ignore`; the default is `warn`.
 
 Limitations: the modeled side uses the no-failure installed FIB only, Linux
 kernel BGP routes are the FRR source of truth, cEOS compares programmed routes
@@ -267,9 +277,8 @@ inspection but the first comparison target is protocol plus prefix plus
 next-hop address/interface set, default routes and unclassified host connected
 routes are out of scope, and hardware ASIC FIB or per-flow ECMP hashing is not
 verified. BGP routes whose live next-hop cannot be mapped to a topology
-data-plane interface are skipped from the strict set comparison for now; #97
-tracks making those unresolved or management-fallback routes explicit
-diagnostics. SR Linux next-hop addresses are compared by interface only for now
+data-plane interface are diagnostics rather than silent skips. SR Linux
+next-hop addresses are compared by interface only for now
 because route-table summary output does not expose the peer gateway address
 consistently; #99 tracks strict SR Linux next-hop address normalization.
 

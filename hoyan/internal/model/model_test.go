@@ -1139,6 +1139,20 @@ func TestParseSRLinuxConfig(t *testing.T) {
 	if len(cfg.Interfaces) != 6 || len(cfg.Neighbors) != 6 {
 		t.Fatalf("interfaces/neighbors = %d/%d, want 6/6", len(cfg.Interfaces), len(cfg.Neighbors))
 	}
+	policy := routePolicyByName(cfg.RoutePolicies, "GZ-NH-SELF")
+	if policy == nil || len(policy.Rules) < 1 || !policy.Rules[0].SetNextHopSelf {
+		t.Fatalf("GZ-NH-SELF policy = %#v, want set next-hop self", policy)
+	}
+	neighbor := neighborByAddress(cfg.Neighbors, "198.18.20.8")
+	if neighbor == nil || neighbor.ExportPolicy != "GZ-NH-SELF" {
+		t.Fatalf("neighbor 198.18.20.8 = %#v, want export policy GZ-NH-SELF", neighbor)
+	}
+	for _, addr := range []string{"198.18.20.5", "198.18.20.2"} {
+		neighbor := neighborByAddress(cfg.Neighbors, addr)
+		if neighbor == nil || neighbor.ExportPolicy != "" {
+			t.Fatalf("neighbor %s = %#v, want no export policy", addr, neighbor)
+		}
+	}
 }
 
 func TestParseSRLinuxNextHopSelf(t *testing.T) {

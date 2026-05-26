@@ -778,6 +778,8 @@ func parseSRLinuxRoutePolicy(routePolicies map[string]*RoutePolicy, prefixLists 
 			return err
 		}
 		rule.SetMED = intPtr(v)
+	case containsSeq(fields, "action", "bgp", "next-hop", "set") && strings.EqualFold(fields[len(fields)-1], "self"):
+		rule.SetNextHopSelf = true
 	default:
 		markUnsupportedSRLinuxRoutePolicyRule(prefixLists, rule)
 		return fmt.Errorf("unsupported SR Linux routing-policy statement")

@@ -280,6 +280,67 @@ func TestComparableRoutesFiltersNonBGPAndUnsupportedNextHops(t *testing.T) {
 	}
 }
 
+func TestAnalyzeComparableRoutesReportsManagementFallback(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "r1", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/31"}}},
+			{Name: "r2", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.0/31"}}},
+		},
+		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1"}},
+	}
+	routes := []NormalizedFIBRoute{{
+		Node:     "r1",
+		VRF:      "default",
+		AFI:      "ipv4",
+		Prefix:   "10.3.0.0/16",
+		Protocol: "bgp",
+		NextHops: []NormalizedFIBNextHop{{Address: "172.86.191.1", Interface: "eth0"}},
+	}}
+	result := AnalyzeComparableRoutes(topo, routes, Options{})
+	if len(result.Routes) != 0 {
+		t.Fatalf("routes = %#v, want unresolved route excluded", result.Routes)
+	}
+	if len(result.Unresolved) != 1 {
+		t.Fatalf("unresolved = %#v, want one diagnostic", result.Unresolved)
+	}
+	got := result.Unresolved[0]
+	if got.RouteKey != "r1|default|ipv4|10.3.0.0/16" || got.Reason != "unresolved_or_mgmt_fallback" {
+		t.Fatalf("diagnostic = %#v", got)
+	}
+	if len(got.NextHops) != 1 || got.NextHops[0].Reason != "unresolved_or_mgmt_fallback" {
+		t.Fatalf("next-hop diagnostic = %#v", got.NextHops)
+	}
+}
+
+func TestCompareFilterResultsWarnExcludesUnresolvedRoute(t *testing.T) {
+	expected := FilterResult{Routes: []NormalizedFIBRoute{{
+		Node:     "r1",
+		VRF:      "default",
+		AFI:      "ipv4",
+		Prefix:   "10.3.0.0/16",
+		Protocol: "bgp",
+		NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.0", Interface: "eth1"}},
+	}}}
+	actual := FilterResult{Unresolved: []UnresolvedRoute{{
+		RouteKey: "r1|default|ipv4|10.3.0.0/16",
+		Node:     "r1",
+		VRF:      "default",
+		AFI:      "ipv4",
+		Prefix:   "10.3.0.0/16",
+		Protocol: "bgp",
+		Reason:   "unresolved_or_mgmt_fallback",
+	}}}
+	result := CompareFilterResults(expected, actual, Options{})
+	if !result.OK {
+		t.Fatalf("result = %#v, want warning policy to exclude unresolved route from strict comparison", result)
+	}
+
+	result = CompareFilterResults(expected, actual, Options{UnresolvedPolicy: UnresolvedPolicyFail})
+	if result.OK || len(result.UnresolvedRoutes) != 1 {
+		t.Fatalf("result = %#v, want unresolved route as failing diff", result)
+	}
+}
+
 type fakeRunner struct {
 	fn func(name string, args ...string) ([]byte, error)
 }

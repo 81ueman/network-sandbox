@@ -60,6 +60,11 @@ func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string
 			out.OriginCode = rule.SetOriginCode
 			out.Attrs.OriginCode = BGPOriginCode(rule.SetOriginCode)
 		}
+		if rule.SetNextHopSelf {
+			out.NextHop = node.Name
+			out.ForwardingNextHop.Node = node.Name
+			out.ForwardingNextHop.Addr = ""
+		}
 		return BGPRouteDecision{Route: out.Normalize(), Accept: true}
 	}
 	return BGPRouteDecision{Route: route, Accept: false, Reason: "route-map implicit deny"}

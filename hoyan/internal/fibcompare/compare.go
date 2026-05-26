@@ -43,6 +43,7 @@ func Compare(expected, actual []NormalizedFIBRoute) Result {
 		len(result.MissingNextHops) == 0 &&
 		len(result.UnexpectedNextHops) == 0 &&
 		len(result.Mismatched) == 0 &&
+		len(result.UnresolvedRoutes) == 0 &&
 		len(result.UnsupportedNodes) == 0
 	return result
 }
