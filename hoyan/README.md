@@ -139,6 +139,38 @@ go run -tags z3 ./cmd/hoyan verify
 
 ## Compare Modeled BGP RIBs With Live Nodes
 
+## Live Snapshots
+
+Use `hoyan live snapshot` to collect live BGP RIB, all-source route-table, and
+installed FIB state once and save it as reusable JSON. This is useful when you
+want to iterate on parser, normalizer, or compare logic without collecting the
+same device state on every run:
+
+```bash
+go run ./cmd/hoyan live snapshot --lab labs/base-wan --output labs/base-wan/snapshots/latest.json
+go run ./cmd/hoyan live snapshot --topology hoyan.clab.yml --output live-state.json --raw-dir snapshots/raw
+```
+
+The snapshot includes the topology hash, referenced config file hashes, the
+current git commit when available, collection time, node kinds, normalized RIB
+routes, normalized installed FIB routes, and unresolved FIB diagnostics. When
+`--raw-dir` is set, raw vendor command output is written beside the snapshot for
+parser regression fixtures.
+
+Compare commands can reuse the saved state without connecting to devices:
+
+```bash
+go run ./cmd/hoyan rib-compare --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json
+go run ./cmd/hoyan fib-compare --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json
+go run ./cmd/hoyan live-check --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json --offline
+```
+
+By default, snapshot compare warns when the current topology or referenced
+configs no longer match the hashes saved in the snapshot. Use
+`--snapshot-hash-policy fail` to make a mismatch fail, or `ignore` to skip the
+check. `live-check --snapshot` skips RIB/FIB collection; without `--offline` it
+still deploys the lab and runs live packet probes.
+
 ## Inspect Modeled RIB, FIB, and Symbolic Paths
 
 Use `hoyan model` to inspect the offline model built from the containerlab

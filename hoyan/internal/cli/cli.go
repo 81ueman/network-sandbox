@@ -14,6 +14,7 @@ import (
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/fibcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/livecheck"
+	"github.com/81ueman/network-sandbox/hoyan/internal/livesnapshot"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
@@ -74,6 +75,7 @@ func NewRootCommand() *cobra.Command {
 	}
 	cmd.AddCommand(
 		NewVerifyCommand(),
+		NewLiveCommand(),
 		NewLiveCheckCommand(),
 		NewRIBCompareCommand(),
 		NewFIBCompareCommand(),
@@ -82,6 +84,84 @@ func NewRootCommand() *cobra.Command {
 		NewModelCommand(),
 	)
 	return cmd
+}
+
+func NewLiveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "live",
+		Short:         "Collect reusable live device state",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	cmd.AddCommand(NewLiveSnapshotCommand())
+	return cmd
+}
+
+func NewLiveSnapshotCommand() *cobra.Command {
+	var opts liveSnapshotOptions
+	cmd := &cobra.Command{
+		Use:           "snapshot",
+		Short:         "Collect live RIB and FIB state into a snapshot JSON file",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
+			if err := runLiveSnapshot(cmd.Context(), opts, cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	addLabFlag(cmd, &opts.labPath)
+	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().StringVarP(&opts.outputPath, "output", "o", "live-state.json", "snapshot JSON output path, or - for stdout")
+	cmd.Flags().StringVar(&opts.rawDir, "raw-dir", "", "optional directory for raw vendor command output")
+	cmd.Flags().BoolVar(&opts.fibAllowUnsupported, "fib-allow-unsupported", true, "skip nodes without a live FIB collector")
+	cmd.Flags().StringVar(&opts.fibUnresolvedPolicy, "fib-unresolved-policy", string(fibcompare.UnresolvedPolicyWarn), "handling for unresolved live BGP FIB routes: warn, fail, or ignore")
+	return cmd
+}
+
+type liveSnapshotOptions struct {
+	labPath             string
+	topologyPath        string
+	outputPath          string
+	rawDir              string
+	fibAllowUnsupported bool
+	fibUnresolvedPolicy string
+}
+
+func runLiveSnapshot(ctx context.Context, opts liveSnapshotOptions, out io.Writer) error {
+	if err := validateFIBUnresolvedPolicy(opts.fibUnresolvedPolicy); err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	snap, err := livesnapshot.Build(ctx, opts.topologyPath, opts.labPath, ribcompare.ExecRunner{}, opts.rawDir, fibcompare.Options{
+		AllowUnsupported: opts.fibAllowUnsupported,
+		UnresolvedPolicy: fibcompare.UnresolvedPolicy(opts.fibUnresolvedPolicy),
+	})
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	if opts.outputPath == "" || opts.outputPath == "-" {
+		data, err := livesnapshot.Marshal(snap)
+		if err != nil {
+			return ExitError{Code: 2, Err: err}
+		}
+		_, err = out.Write(data)
+		return err
+	}
+	if err := livesnapshot.Save(opts.outputPath, snap); err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	fmt.Fprintf(out, "wrote live snapshot %s\n", opts.outputPath)
+	if opts.rawDir != "" {
+		fmt.Fprintf(out, "wrote raw command output under %s\n", opts.rawDir)
+	}
+	return nil
 }
 
 func NewVerifyCommand() *cobra.Command {
@@ -254,6 +334,9 @@ func NewLiveCheckCommand() *cobra.Command {
 			err := livecheck.Run(cmd.Context(), livecheck.Options{
 				Topology:      opts.topologyPath,
 				Queries:       opts.queriesPath,
+				Snapshot:      opts.snapshotPath,
+				HashPolicy:    livecheck.HashPolicy(opts.snapshotHashPolicy),
+				Offline:       opts.offline,
 				StrictConfig:  opts.strictConfig,
 				Timeout:       opts.timeout,
 				PollInterval:  opts.pollInterval,
@@ -278,6 +361,9 @@ func NewLiveCheckCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.maxPolls, "max-polls", livecheck.DefaultMaxPolls, "maximum BGP collection polls before reporting diffs")
 	cmd.Flags().BoolVar(&opts.keepOnFailure, "keep-on-failure", false, "leave lab running when the check fails")
 	cmd.Flags().BoolVar(&opts.skipDestroy, "skip-destroy", false, "leave lab running after the check")
+	cmd.Flags().StringVar(&opts.snapshotPath, "snapshot", "", "live snapshot JSON to use instead of collecting RIB/FIB from devices")
+	cmd.Flags().StringVar(&opts.snapshotHashPolicy, "snapshot-hash-policy", string(livesnapshot.HashPolicyWarn), "handling for snapshot topology/config hash mismatch: warn, fail, or ignore")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "with --snapshot, skip deploy and live dataplane probes")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.checkFIB, "check-fib", true, "compare modeled FIB with live installed FIB after BGP convergence")
 	cmd.Flags().BoolVar(&opts.noCheckFIB, "no-check-fib", false, "skip modeled-vs-live installed FIB comparison")
@@ -296,6 +382,9 @@ type liveCheckOptions struct {
 	maxPolls            int
 	keepOnFailure       bool
 	skipDestroy         bool
+	snapshotPath        string
+	snapshotHashPolicy  string
+	offline             bool
 	checkFIB            bool
 	noCheckFIB          bool
 	fibAllowUnsupported bool
@@ -314,6 +403,12 @@ func (o liveCheckOptions) validate() error {
 	}
 	if err := validateFIBUnresolvedPolicy(o.fibUnresolvedPolicy); err != nil {
 		return err
+	}
+	if _, ok := livesnapshot.ParseHashPolicy(o.snapshotHashPolicy); !ok {
+		return fmt.Errorf("snapshot hash policy must be one of warn, fail, or ignore")
+	}
+	if o.offline && o.snapshotPath == "" {
+		return fmt.Errorf("--offline requires --snapshot")
 	}
 	return nil
 }
@@ -341,16 +436,23 @@ func NewRIBCompareCommand() *cobra.Command {
 	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
+	cmd.Flags().StringVar(&opts.snapshotPath, "snapshot", "", "live snapshot JSON to use instead of collecting from devices")
+	cmd.Flags().StringVar(&opts.snapshotHashPolicy, "snapshot-hash-policy", string(livesnapshot.HashPolicyWarn), "handling for snapshot topology/config hash mismatch: warn, fail, or ignore")
 	return cmd
 }
 
 type ribCompareOptions struct {
-	labPath      string
-	topologyPath string
-	strictConfig bool
+	labPath            string
+	topologyPath       string
+	strictConfig       bool
+	snapshotPath       string
+	snapshotHashPolicy string
 }
 
 func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) error {
+	if _, ok := livesnapshot.ParseHashPolicy(opts.snapshotHashPolicy); !ok {
+		return ExitError{Code: 2, Err: fmt.Errorf("snapshot hash policy must be one of warn, fail, or ignore")}
+	}
 	topo, _, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{StrictConfig: opts.strictConfig})
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
@@ -358,9 +460,21 @@ func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) e
 	nodes := ribcompare.SupportedNodes(topo.Nodes)
 	expected := ribcompare.ExpectedForNodes(topo, nodes)
 	fmt.Fprintf(out, "comparing RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
-	actual, err := ribcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes)
-	if err != nil {
-		return ExitError{Code: 2, Err: err}
+	var actual []ribcompare.NormalizedRoute
+	if opts.snapshotPath != "" {
+		snap, err := livesnapshot.Load(opts.snapshotPath)
+		if err != nil {
+			return ExitError{Code: 2, Err: err}
+		}
+		if err := checkSnapshotHashes(opts.topologyPath, snap, opts.snapshotHashPolicy, out); err != nil {
+			return err
+		}
+		actual = livesnapshot.AllRIBRoutes(snap)
+	} else {
+		actual, err = ribcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes)
+		if err != nil {
+			return ExitError{Code: 2, Err: err}
+		}
 	}
 	result := ribcompare.CompareBgpRib(expected, actual, ribcompare.DefaultBgpRibCompareOptions())
 	for _, line := range ribcompare.FormatDiffs(result) {
@@ -395,20 +509,27 @@ func NewFIBCompareCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.allowUnsupported, "allow-unsupported", false, "skip nodes without a live FIB collector")
 	cmd.Flags().StringVar(&opts.unresolvedPolicy, "unresolved-policy", string(fibcompare.UnresolvedPolicyWarn), "handling for unresolved live BGP FIB routes: warn, fail, or ignore")
+	cmd.Flags().StringVar(&opts.snapshotPath, "snapshot", "", "live snapshot JSON to use instead of collecting from devices")
+	cmd.Flags().StringVar(&opts.snapshotHashPolicy, "snapshot-hash-policy", string(livesnapshot.HashPolicyWarn), "handling for snapshot topology/config hash mismatch: warn, fail, or ignore")
 	return cmd
 }
 
 type fibCompareOptions struct {
-	labPath          string
-	topologyPath     string
-	strictConfig     bool
-	allowUnsupported bool
-	unresolvedPolicy string
+	labPath            string
+	topologyPath       string
+	strictConfig       bool
+	allowUnsupported   bool
+	unresolvedPolicy   string
+	snapshotPath       string
+	snapshotHashPolicy string
 }
 
 func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) error {
 	if err := validateFIBUnresolvedPolicy(opts.unresolvedPolicy); err != nil {
 		return ExitError{Code: 2, Err: err}
+	}
+	if _, ok := livesnapshot.ParseHashPolicy(opts.snapshotHashPolicy); !ok {
+		return ExitError{Code: 2, Err: fmt.Errorf("snapshot hash policy must be one of warn, fail, or ignore")}
 	}
 	topo, _, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{StrictConfig: opts.strictConfig})
 	if err != nil {
@@ -420,11 +541,23 @@ func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) e
 	}
 	fibOpts := fibcompare.Options{AllowUnsupported: opts.allowUnsupported, UnresolvedPolicy: fibcompare.UnresolvedPolicy(opts.unresolvedPolicy)}
 	expected := fibcompare.AnalyzeComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, nodes), fibOpts)
-	actual, err := fibcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes, fibOpts)
-	if err != nil {
-		return ExitError{Code: 2, Err: err}
+	var actualFiltered fibcompare.FilterResult
+	if opts.snapshotPath != "" {
+		snap, err := livesnapshot.Load(opts.snapshotPath)
+		if err != nil {
+			return ExitError{Code: 2, Err: err}
+		}
+		if err := checkSnapshotHashes(opts.topologyPath, snap, opts.snapshotHashPolicy, out); err != nil {
+			return err
+		}
+		actualFiltered = fibcompare.AnalyzeComparableRoutes(topo, livesnapshot.FIBRoutes(snap), fibOpts)
+	} else {
+		actual, err := fibcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes, fibOpts)
+		if err != nil {
+			return ExitError{Code: 2, Err: err}
+		}
+		actualFiltered = fibcompare.AnalyzeComparableRoutes(topo, actual, fibOpts)
 	}
-	actualFiltered := fibcompare.AnalyzeComparableRoutes(topo, actual, fibOpts)
 	for _, line := range fibcompare.FormatWarnings(fibcompare.WarningDiagnostics(actualFiltered, fibOpts)) {
 		fmt.Fprintln(out, line)
 	}
@@ -436,6 +569,37 @@ func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) e
 		return ExitError{Code: 1, Err: fmt.Errorf("FIB comparison found diff(s)")}
 	}
 	fmt.Fprintln(out, "FIBs match expected modeled forwarding entries")
+	return nil
+}
+
+func checkSnapshotHashes(topologyPath string, snap *livesnapshot.Snapshot, policyRaw string, out io.Writer) error {
+	policy, ok := livesnapshot.ParseHashPolicy(policyRaw)
+	if !ok {
+		return ExitError{Code: 2, Err: fmt.Errorf("snapshot hash policy must be one of warn, fail, or ignore")}
+	}
+	if policy == livesnapshot.HashPolicyIgnore {
+		return nil
+	}
+	result, err := livesnapshot.CheckHashes(topologyPath, snap)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	if len(result.Mismatches) == 0 && len(result.Missing) == 0 {
+		return nil
+	}
+	var lines []string
+	for _, mismatch := range result.Mismatches {
+		lines = append(lines, fmt.Sprintf("snapshot hash mismatch: %s snapshot=%s current=%s", mismatch.Path, mismatch.Want, mismatch.Got))
+	}
+	for _, missing := range result.Missing {
+		lines = append(lines, fmt.Sprintf("snapshot hash missing current input: %s", missing))
+	}
+	if policy == livesnapshot.HashPolicyFail {
+		return ExitError{Code: 2, Err: errors.New(strings.Join(lines, "; "))}
+	}
+	for _, line := range lines {
+		fmt.Fprintf(out, "warning: %s\n", line)
+	}
 	return nil
 }
 

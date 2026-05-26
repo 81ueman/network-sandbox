@@ -20,7 +20,7 @@ func TestRootHelpListsSubcommands(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	help := out.String()
-	for _, want := range []string{"verify", "live-check", "rib-compare", "fib-compare", "render-topology", "labs", "model"} {
+	for _, want := range []string{"verify", "live", "live-check", "rib-compare", "fib-compare", "render-topology", "labs", "model"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help output missing %q:\n%s", want, help)
 		}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/81ueman/network-sandbox/hoyan/internal/livesnapshot"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
@@ -119,6 +120,63 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	}
 	if !destroyed {
 		t.Fatalf("destroy was not called: %v", runner.calls)
+	}
+}
+
+func TestRunSnapshotOfflineDoesNotCollectOrDeploy(t *testing.T) {
+	topologyPath := "testdata/live.clab.yml"
+	topo, err := model.LoadLabTopology(topologyPath)
+	if err != nil {
+		t.Fatalf("LoadLabTopology() error = %v", err)
+	}
+	nodes := ribcompare.SupportedNodes(topo.Nodes)
+	expected := ribcompare.ExpectedForNodes(topo, nodes)
+	hashes, err := livesnapshot.InputHashes(topologyPath)
+	if err != nil {
+		t.Fatalf("InputHashes() error = %v", err)
+	}
+	snap := &livesnapshot.Snapshot{
+		Version:      livesnapshot.Version,
+		TopologyPath: topologyPath,
+		TopologyHash: hashes.TopologyHash,
+		ConfigHashes: hashes.ConfigHashes,
+		CollectedAt:  time.Now().UTC(),
+		Nodes:        map[string]livesnapshot.NodeSnapshot{},
+	}
+	for _, node := range topo.Nodes {
+		ns := livesnapshot.NodeSnapshot{Kind: node.Kind}
+		for _, route := range expected {
+			if route.Node != node.Name {
+				continue
+			}
+			if strings.EqualFold(route.Protocol, "bgp") {
+				ns.BGPRIB = append(ns.BGPRIB, route)
+			} else {
+				ns.RouteTable = append(ns.RouteTable, route)
+			}
+		}
+		snap.Nodes[node.Name] = ns
+	}
+	snapshotPath := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := livesnapshot.Save(snapshotPath, snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		return nil, errors.New("runner should not be called")
+	}}
+	opts := Options{
+		Topology: topologyPath,
+		Queries:  emptyQueriesFile(t),
+		Snapshot: snapshotPath,
+		Offline:  true,
+		CheckFIB: false,
+		Out:      ioDiscard{},
+	}
+	if err := Run(context.Background(), opts, runner); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("runner calls = %v, want none", runner.calls)
 	}
 }
 

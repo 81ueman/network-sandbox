@@ -2,6 +2,7 @@ package livecheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/fibcompare"
+	"github.com/81ueman/network-sandbox/hoyan/internal/livesnapshot"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
 )
@@ -18,6 +20,9 @@ import (
 type Options struct {
 	Topology       string
 	Queries        string
+	Snapshot       string
+	HashPolicy     HashPolicy
+	Offline        bool
 	Timeout        time.Duration
 	PollInterval   time.Duration
 	MaxPolls       int
@@ -31,6 +36,8 @@ type Options struct {
 }
 
 const DefaultMaxPolls = 5
+
+type HashPolicy string
 
 func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error) {
 	if opts.Topology == "" {
@@ -47,6 +54,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
+	}
+	if opts.HashPolicy == "" {
+		opts.HashPolicy = HashPolicy(livesnapshot.HashPolicyWarn)
 	}
 	compareOptions := opts.CompareOptions
 	if isZeroCompareOptions(compareOptions) {
@@ -67,6 +77,28 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	nodes := ribcompare.SupportedNodes(topo.Nodes)
 	expected := ribcompare.ExpectedForNodes(topo, nodes)
 	expectedBGP := ribcompare.BGPOnly(expected)
+
+	var snap *livesnapshot.Snapshot
+	if opts.Snapshot != "" {
+		snap, err = livesnapshot.Load(opts.Snapshot)
+		if err != nil {
+			return err
+		}
+		if err := checkSnapshotHashes(opts.Topology, snap, livesnapshot.HashPolicy(opts.HashPolicy), opts.Out); err != nil {
+			return err
+		}
+		if err := compareSnapshotRIBs(snap, expected, expectedBGP, compareOptions, opts.Out); err != nil {
+			return err
+		}
+		if opts.CheckFIB {
+			if err := compareSnapshotFIBs(snap, topo, opts.FIBOptions, opts.Out); err != nil {
+				return err
+			}
+		}
+		if opts.Offline {
+			return nil
+		}
+	}
 
 	if err := BuildLocalImages(ctx, runner, opts.Topology, opts.Out); err != nil {
 		return err
@@ -96,37 +128,39 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if err := ApplyNftablesPolicies(deadlineCtx, runner, topo, opts.Out); err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.Out, "waiting for BGP RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expectedBGP)))
-	actualBGP, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expectedBGP, opts.PollInterval, opts.MaxPolls, compareOptions)
-	if err != nil {
-		if len(actualBGP) > 0 {
-			for _, line := range ribcompare.FormatDiffs(result) {
-				fmt.Fprintln(opts.Out, line)
+	if snap == nil {
+		fmt.Fprintf(opts.Out, "waiting for BGP RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expectedBGP)))
+		actualBGP, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expectedBGP, opts.PollInterval, opts.MaxPolls, compareOptions)
+		if err != nil {
+			if len(actualBGP) > 0 {
+				for _, line := range ribcompare.FormatDiffs(result) {
+					fmt.Fprintln(opts.Out, line)
+				}
 			}
+			return err
 		}
-		return err
+		for _, line := range ribcompare.FormatDiffs(result) {
+			fmt.Fprintln(opts.Out, line)
+		}
+		if !result.OK {
+			return fmt.Errorf("live RIB comparison found diff(s)")
+		}
+		fmt.Fprintln(opts.Out, "live BGP RIBs converged")
+		fmt.Fprintf(opts.Out, "comparing live RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
+		actual, err := ribcompare.CollectWithRunner(deadlineCtx, runner, nodes)
+		if err != nil {
+			return err
+		}
+		result = ribcompare.CompareBgpRib(expected, actual, compareOptions)
+		for _, line := range ribcompare.FormatDiffs(result) {
+			fmt.Fprintln(opts.Out, line)
+		}
+		if !result.OK {
+			return fmt.Errorf("live RIB comparison found diff(s)")
+		}
+		fmt.Fprintln(opts.Out, "live RIBs match modeled paths")
 	}
-	for _, line := range ribcompare.FormatDiffs(result) {
-		fmt.Fprintln(opts.Out, line)
-	}
-	if !result.OK {
-		return fmt.Errorf("live RIB comparison found diff(s)")
-	}
-	fmt.Fprintln(opts.Out, "live BGP RIBs converged")
-	fmt.Fprintf(opts.Out, "comparing live RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
-	actual, err := ribcompare.CollectWithRunner(deadlineCtx, runner, nodes)
-	if err != nil {
-		return err
-	}
-	result = ribcompare.CompareBgpRib(expected, actual, compareOptions)
-	for _, line := range ribcompare.FormatDiffs(result) {
-		fmt.Fprintln(opts.Out, line)
-	}
-	if !result.OK {
-		return fmt.Errorf("live RIB comparison found diff(s)")
-	}
-	fmt.Fprintln(opts.Out, "live RIBs match modeled paths")
-	if opts.CheckFIB {
+	if opts.CheckFIB && snap == nil {
 		fibNodes := topo.Nodes
 		if opts.FIBOptions.AllowUnsupported {
 			fibNodes = fibcompare.SupportedNodes(fibNodes)
@@ -176,6 +210,80 @@ func BuildLocalImages(ctx context.Context, runner ribcompare.Runner, topologyPat
 	}
 	if _, err := runner.Run(ctx, "docker", "build", "-t", "hoyan-frr-nftables:10.6.1", contextDir); err != nil {
 		return fmt.Errorf("docker build hoyan-frr-nftables:10.6.1: %w", err)
+	}
+	return nil
+}
+
+func compareSnapshotRIBs(snap *livesnapshot.Snapshot, expected, expectedBGP []ribcompare.NormalizedRoute, compareOptions ribcompare.BgpRibCompareOptions, out io.Writer) error {
+	actualBGP := livesnapshot.BGPRoutes(snap)
+	fmt.Fprintf(out, "comparing snapshot BGP RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expectedBGP)))
+	result := ribcompare.CompareBgpRib(expectedBGP, actualBGP, compareOptions)
+	for _, line := range ribcompare.FormatDiffs(result) {
+		fmt.Fprintln(out, line)
+	}
+	if !result.OK {
+		return fmt.Errorf("snapshot BGP RIB comparison found diff(s)")
+	}
+	fmt.Fprintf(out, "comparing snapshot RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
+	result = ribcompare.CompareBgpRib(expected, livesnapshot.AllRIBRoutes(snap), compareOptions)
+	for _, line := range ribcompare.FormatDiffs(result) {
+		fmt.Fprintln(out, line)
+	}
+	if !result.OK {
+		return fmt.Errorf("snapshot RIB comparison found diff(s)")
+	}
+	fmt.Fprintln(out, "snapshot RIBs match modeled paths")
+	return nil
+}
+
+func compareSnapshotFIBs(snap *livesnapshot.Snapshot, topo *model.Topology, opts fibcompare.Options, out io.Writer) error {
+	fibNodes := topo.Nodes
+	if opts.AllowUnsupported {
+		fibNodes = fibcompare.SupportedNodes(fibNodes)
+	}
+	expected := fibcompare.AnalyzeComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, fibNodes), opts)
+	actual := fibcompare.AnalyzeComparableRoutes(topo, livesnapshot.FIBRoutes(snap), opts)
+	for _, line := range fibcompare.FormatWarnings(fibcompare.WarningDiagnostics(actual, opts)) {
+		fmt.Fprintln(out, line)
+	}
+	result := fibcompare.CompareFilterResults(expected, actual, opts)
+	for _, line := range fibcompare.FormatDiffs(result) {
+		fmt.Fprintln(out, line)
+	}
+	if !result.OK {
+		return fmt.Errorf("snapshot FIB comparison found diff(s)")
+	}
+	fmt.Fprintln(out, "snapshot FIBs match modeled forwarding entries")
+	return nil
+}
+
+func checkSnapshotHashes(topologyPath string, snap *livesnapshot.Snapshot, policy livesnapshot.HashPolicy, out io.Writer) error {
+	policy, ok := livesnapshot.ParseHashPolicy(string(policy))
+	if !ok {
+		return fmt.Errorf("snapshot hash policy must be one of warn, fail, or ignore")
+	}
+	if policy == livesnapshot.HashPolicyIgnore {
+		return nil
+	}
+	result, err := livesnapshot.CheckHashes(topologyPath, snap)
+	if err != nil {
+		return err
+	}
+	if len(result.Mismatches) == 0 && len(result.Missing) == 0 {
+		return nil
+	}
+	var lines []string
+	for _, mismatch := range result.Mismatches {
+		lines = append(lines, fmt.Sprintf("snapshot hash mismatch: %s snapshot=%s current=%s", mismatch.Path, mismatch.Want, mismatch.Got))
+	}
+	for _, missing := range result.Missing {
+		lines = append(lines, fmt.Sprintf("snapshot hash missing current input: %s", missing))
+	}
+	if policy == livesnapshot.HashPolicyFail {
+		return errors.New(strings.Join(lines, "; "))
+	}
+	for _, line := range lines {
+		fmt.Fprintf(out, "warning: %s\n", line)
 	}
 	return nil
 }
