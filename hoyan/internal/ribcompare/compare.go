@@ -21,6 +21,9 @@ func CompareBgpRib(expected []NormalizedBgpRoute, actual []NormalizedBgpRoute, o
 		a, aok := act[key]
 		switch {
 		case !eok:
+			if normalizeRoute(a).Protocol != "bgp" {
+				continue
+			}
 			if !opts.AllowExtraPrefixes {
 				result.UnexpectedPrefixes = append(result.UnexpectedPrefixes, key)
 			}

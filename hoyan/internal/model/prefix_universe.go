@@ -74,6 +74,11 @@ func CollectPrefixPredicateMetadata(topo *Topology, queries *Queries) []PrefixPr
 					add("route:"+node.Name, PredicateNLRI, ExactPrefixSet{Prefix: prefix})
 				}
 			}
+			for _, route := range node.Routes {
+				if !route.Prefix.IsZero() {
+					add(fmt.Sprintf("route-source:%s:%s", node.Name, route.Kind), PredicateNLRI, ExactPrefixSet{Prefix: route.Prefix})
+				}
+			}
 			for _, list := range node.PrefixLists {
 				for _, rule := range list.Rules {
 					if rule.Match != nil {

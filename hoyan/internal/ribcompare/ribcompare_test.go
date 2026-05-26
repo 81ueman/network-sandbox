@@ -37,6 +37,58 @@ func TestExpectedRoutesIncludesMultipleBgpPaths(t *testing.T) {
 	t.Fatalf("expected bj-edge1 route to hz customer host")
 }
 
+func TestExpectedRoutesIncludesStaticAndConnectedSources(t *testing.T) {
+	staticPrefix := model.MustPrefix("203.0.113.0/24")
+	topo := &model.Topology{
+		Nodes: []model.Node{{
+			Name:       "r1",
+			Kind:       model.KindFRR,
+			Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/30"}},
+			Routes:     []model.ConfiguredRoute{{Prefix: staticPrefix, Kind: model.RouteSourceStatic, NextHop: "192.0.2.2"}},
+		}, {
+			Name:       "r2",
+			Kind:       model.KindFRR,
+			Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.2/30"}},
+		}},
+		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1}},
+	}
+	routes := Expected(topo)
+	if routeByPrefixProtocol(routes, "192.0.2.0/30", "connected") == nil {
+		t.Fatalf("connected route missing from expected RIB routes: %#v", routes)
+	}
+	if routeByPrefixProtocol(routes, staticPrefix.String(), "static") == nil {
+		t.Fatalf("static route missing from expected RIB routes: %#v", routes)
+	}
+}
+
+func TestCollectIncludesInstalledStaticAndConnectedRoutes(t *testing.T) {
+	runner := runnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch cmd {
+		case "docker exec -i r1 vtysh -c show ip bgp json":
+			return []byte(`{}`), nil
+		case "docker exec -i r1 ip -j route show table main":
+			return []byte(`[
+			  {"dst":"192.0.2.0/30","dev":"eth1","protocol":"kernel"},
+			  {"dst":"203.0.113.0/24","gateway":"192.0.2.2","dev":"eth1","protocol":"static"}
+			]`), nil
+		default:
+			t.Fatalf("unexpected command: %s", cmd)
+			return nil, nil
+		}
+	})
+	routes, err := Collect(context.Background(), runner, []model.Node{{Name: "r1", Kind: model.KindFRR, ContainerName: "r1"}})
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if routeByPrefixProtocol(routes, "192.0.2.0/30", "connected") == nil {
+		t.Fatalf("connected route missing from collected routes: %#v", routes)
+	}
+	if routeByPrefixProtocol(routes, "203.0.113.0/24", "static") == nil {
+		t.Fatalf("static route missing from collected routes: %#v", routes)
+	}
+}
+
 func TestParseFRR(t *testing.T) {
 	data := []byte(`{
 	  "totalPrefixCounter": 1,
@@ -535,6 +587,15 @@ func pathWithPeer(p NormalizedBgpPath, peer string) NormalizedBgpPath {
 func routeByPrefix(routes []NormalizedBgpRoute, prefix string) *NormalizedBgpRoute {
 	for i := range routes {
 		if routes[i].Prefix == prefix {
+			return &routes[i]
+		}
+	}
+	return nil
+}
+
+func routeByPrefixProtocol(routes []NormalizedBgpRoute, prefix, protocol string) *NormalizedBgpRoute {
+	for i := range routes {
+		if routes[i].Prefix == prefix && normalizeRoute(routes[i]).Protocol == protocol {
 			return &routes[i]
 		}
 	}

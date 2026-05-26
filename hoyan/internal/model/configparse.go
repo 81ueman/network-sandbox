@@ -17,6 +17,8 @@ type ParsedConfig struct {
 	Loopback       string
 	Interfaces     []Interface
 	Prefixes       []string
+	Routes         []ConfiguredRoute
+	Redistribute   []BGPRedistribution
 	Neighbors      []BGPNeighbor
 	PrefixLists    []PrefixList
 	ASPathLists    []ASPathList
@@ -304,8 +306,16 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			if ok {
 				aclBindings = append(aclBindings, aclBinding{Name: fields[2], Interface: currentInterface, Stage: stage})
 			}
-		case len(fields) >= 4 && fields[0] == "ip" && fields[1] == "route" && strings.EqualFold(fields[3], "Null0"):
-			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[2])
+		case len(fields) >= 4 && fields[0] == "ip" && fields[1] == "route":
+			route, err := parseFRRLikeStaticRoute(kind, path, lineNo, line, fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, err
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, err.Error()))
+				continue
+			}
+			cfg.Routes = append(cfg.Routes, route)
 		case len(fields) >= 3 && fields[0] == "router" && fields[1] == "bgp":
 			asn, err := strconv.ParseUint(fields[2], 10, 32)
 			if err != nil {
@@ -330,8 +340,25 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 			}
 			n := getNeighbor(neighbors, fields[1])
 			n.RemoteAS = uint32(asn)
-		case inBGP && inAF && len(fields) >= 3 && fields[0] == "network":
+		case inBGP && inAF && len(fields) >= 2 && fields[0] == "network":
 			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[1])
+		case inBGP && inAF && len(fields) >= 2 && fields[0] == "aggregate-address":
+			route, err := parseAggregateRoute(kind, path, lineNo, line, fields[1])
+			if err != nil {
+				return ParseResult{}, err
+			}
+			cfg.Routes = append(cfg.Routes, route)
+			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[1])
+		case inBGP && inAF && len(fields) >= 2 && fields[0] == "redistribute":
+			redist, err := parseFRRLikeRedistribution(kind, path, lineNo, line, fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, err
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, err.Error()))
+				continue
+			}
+			cfg.Redistribute = append(cfg.Redistribute, redist)
 		case inBGP && inAF && len(fields) >= 3 && fields[0] == "neighbor" && fields[2] == "activate":
 			getNeighbor(neighbors, fields[1]).Activated = true
 		case inBGP && inAF && len(fields) >= 3 && fields[0] == "neighbor" && fields[2] == "next-hop-self":
@@ -423,6 +450,16 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 			iface := fieldAfter(fields, "interface")
 			addr := fields[len(fields)-1]
 			cfg.Interfaces = upsertInterface(cfg.Interfaces, Interface{Name: iface, Address: addr})
+		case containsSeq(fields, "static-routes", "route"):
+			route, err := parseSRLinuxStaticRoute(path, lineNo, line, fields)
+			if err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+				}
+				warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
+				continue
+			}
+			cfg.Routes = append(cfg.Routes, route)
 		case containsSeq(fields, "protocols", "bgp", "autonomous-system") && len(fields) > 0:
 			asn, err := strconv.ParseUint(fields[len(fields)-1], 10, 32)
 			if err != nil {
@@ -508,6 +545,105 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	cfg.RoutePolicies = sortedRoutePolicies(routePolicies)
 	cfg.Policies = boundACLPolicies(flattenSRLinuxACLs(srlACLs), aclBindings)
 	return ParseResult{Config: cfg, Warnings: warnings}, nil
+}
+
+func parseFRRLikeStaticRoute(kind DeviceKind, path string, lineNo int, raw string, fields []string) (ConfiguredRoute, error) {
+	if len(fields) != 4 {
+		return ConfiguredRoute{}, fmt.Errorf("unsupported %s static route statement", routeMapVendorName(kind))
+	}
+	prefix, err := ParsePrefix(fields[2])
+	if err != nil {
+		return ConfiguredRoute{}, err
+	}
+	route := ConfiguredRoute{
+		NetworkInstance: NetworkInstanceDefault,
+		AFI:             AFIIPv4,
+		Prefix:          prefix,
+		Kind:            RouteSourceStatic,
+		AdminDistance:   1,
+		Source:          PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
+	}
+	target := fields[3]
+	if strings.EqualFold(target, "Null0") {
+		route.Kind = RouteSourceBlackhole
+		route.Interface = target
+		return route, nil
+	}
+	if _, err := netip.ParseAddr(target); err == nil {
+		route.NextHop = target
+		return route, nil
+	}
+	route.Interface = target
+	return route, nil
+}
+
+func parseAggregateRoute(kind DeviceKind, path string, lineNo int, raw string, prefixText string) (ConfiguredRoute, error) {
+	prefix, err := ParsePrefix(prefixText)
+	if err != nil {
+		return ConfiguredRoute{}, err
+	}
+	return ConfiguredRoute{
+		NetworkInstance: NetworkInstanceDefault,
+		AFI:             AFIIPv4,
+		Prefix:          prefix,
+		Kind:            RouteSourceAggregate,
+		AdminDistance:   200,
+		Source:          PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
+	}, nil
+}
+
+func parseFRRLikeRedistribution(kind DeviceKind, path string, lineNo int, raw string, fields []string) (BGPRedistribution, error) {
+	redist := BGPRedistribution{Source: PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw}}
+	switch fields[1] {
+	case "connected":
+		redist.Kind = RouteSourceConnected
+	case "static":
+		redist.Kind = RouteSourceStatic
+	default:
+		return BGPRedistribution{}, fmt.Errorf("unsupported %s redistribute source %q", routeMapVendorName(kind), fields[1])
+	}
+	if len(fields) == 2 {
+		return redist, nil
+	}
+	if len(fields) == 4 && fields[2] == "route-map" {
+		redist.RouteMap = fields[3]
+		return redist, nil
+	}
+	return BGPRedistribution{}, fmt.Errorf("unsupported %s redistribute statement", routeMapVendorName(kind))
+}
+
+func parseSRLinuxStaticRoute(path string, lineNo int, raw string, fields []string) (ConfiguredRoute, error) {
+	prefixText := fieldAfter(fields, "route")
+	if prefixText == "" {
+		return ConfiguredRoute{}, fmt.Errorf("unsupported SR Linux static route statement")
+	}
+	prefix, err := ParsePrefix(prefixText)
+	if err != nil {
+		return ConfiguredRoute{}, err
+	}
+	route := ConfiguredRoute{
+		NetworkInstance: NetworkInstanceDefault,
+		AFI:             AFIIPv4,
+		Prefix:          prefix,
+		Kind:            RouteSourceStatic,
+		AdminDistance:   5,
+		Source:          PolicySource{Vendor: "srlinux", File: path, Line: lineNo, Raw: raw},
+	}
+	if nh := fieldAfter(fields, "next-hop"); nh != "" {
+		if _, err := netip.ParseAddr(nh); err == nil {
+			route.NextHop = nh
+			return route, nil
+		}
+	}
+	if iface := fieldAfter(fields, "interface"); iface != "" {
+		route.Interface = iface
+		return route, nil
+	}
+	if containsAnyField(fields, "blackhole") || containsAnyField(fields, "discard") {
+		route.Kind = RouteSourceBlackhole
+		return route, nil
+	}
+	return ConfiguredRoute{}, fmt.Errorf("unsupported SR Linux static route next-hop")
 }
 
 func parseSRLinuxPrefixSet(prefixLists map[string]*PrefixList, fields []string) error {

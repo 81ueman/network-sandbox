@@ -13,6 +13,9 @@ func normalizeRoute(r NormalizedBgpRoute) NormalizedBgpRoute {
 	if r.AFI == "" {
 		r.AFI = "ipv4"
 	}
+	if r.Protocol == "" {
+		r.Protocol = "bgp"
+	}
 	for i := range r.Paths {
 		r.Paths[i] = normalizePath(r.Paths[i])
 	}
@@ -29,6 +32,9 @@ func normalizePath(p NormalizedBgpPath) NormalizedBgpPath {
 
 func routeKey(r NormalizedBgpRoute) string {
 	r = normalizeRoute(r)
+	if r.Protocol != "" && r.Protocol != "bgp" {
+		return r.Node + "|" + r.NetworkInstance + "|" + r.AFI + "|" + r.Protocol + "|" + r.Prefix
+	}
 	return r.Node + "|" + r.NetworkInstance + "|" + r.AFI + "|" + r.Prefix
 }
 

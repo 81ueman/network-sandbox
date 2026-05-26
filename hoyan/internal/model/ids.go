@@ -8,11 +8,16 @@ type PolicyID string
 type RoutePolicyID string
 type PrefixListID string
 type DeviceKind string
+type NetworkInstanceID string
+type AFI string
 
 const (
 	KindFRR     DeviceKind = "frr"
 	KindCEOS    DeviceKind = "ceos"
 	KindSRLinux DeviceKind = "srlinux"
+
+	NetworkInstanceDefault NetworkInstanceID = "default"
+	AFIIPv4                AFI               = "ipv4"
 )
 
 type NextHop struct {

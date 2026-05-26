@@ -11,6 +11,7 @@ type NormalizedBgpRoute struct {
 	NetworkInstance string
 	AFI             string
 	Prefix          string
+	Protocol        string
 	Paths           []NormalizedBgpPath
 }
 

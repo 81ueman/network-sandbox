@@ -29,11 +29,23 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 		for _, rib := range graph.RIBTable(n.Name) {
 			for _, entry := range rib {
 				entry = entry.Normalize()
+				if entry.SourceKind != model.RouteSourceBGP {
+					continue
+				}
 				if entry.SelectedCond == nil || !entry.SelectedCond.Eval(ctx) || !behavior.RouteValidForRIB(n, entry) {
 					continue
 				}
-				addExpectedRoute(byRoute, idx, n.Name, entry.Prefix.String(), entry.NextHop, idx.PathCost(entry.Links))
+				addExpectedRoute(byRoute, idx, n.Name, entry.Prefix.String(), entry.NextHop, entry.RouteSource.Interface, entry.SourceKind, idx.PathCost(entry.Links))
 			}
+		}
+		for _, entry := range graph.FIB(n.Name) {
+			if entry.SourceKind == model.RouteSourceBGP {
+				continue
+			}
+			if entry.Condition == nil || !entry.Condition.Eval(ctx) {
+				continue
+			}
+			addExpectedRoute(byRoute, idx, n.Name, entry.Prefix.String(), entry.NextHop, entry.Interface, entry.SourceKind, entry.Path.Cost)
 		}
 	}
 	out := make([]NormalizedFIBRoute, 0, len(byRoute))
@@ -45,18 +57,20 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 	return out
 }
 
-func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.TopologyIndex, node, prefix, nextHop string, metric int) {
+func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.TopologyIndex, node, prefix, nextHop, iface string, source model.RouteSourceKind, metric int) {
 	route := NormalizedFIBRoute{
 		Node:      node,
 		VRF:       "default",
 		AFI:       "ipv4",
 		Prefix:    prefix,
-		Protocol:  expectedProtocol(nextHop),
+		Protocol:  expectedProtocol(source, nextHop),
 		Metric:    metric,
 		Installed: true,
 	}
 	if nextHop != "" {
 		route.NextHops = []NormalizedFIBNextHop{expectedNextHop(idx, node, nextHop)}
+	} else if iface != "" {
+		route.NextHops = []NormalizedFIBNextHop{{Interface: iface}}
 	}
 	key := routeKey(route)
 	existing := byRoute[key]
@@ -71,9 +85,12 @@ func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.Topology
 	byRoute[key] = existing
 }
 
-func expectedProtocol(nextHop string) string {
-	if nextHop == "" {
+func expectedProtocol(source model.RouteSourceKind, nextHop string) string {
+	switch source {
+	case model.RouteSourceConnected:
 		return "connected"
+	case model.RouteSourceStatic, model.RouteSourceBlackhole:
+		return "static"
 	}
 	return "bgp"
 }

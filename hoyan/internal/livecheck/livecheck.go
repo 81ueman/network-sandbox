@@ -95,7 +95,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if err := ApplyNftablesPolicies(deadlineCtx, runner, topo, opts.Out); err != nil {
 		return err
 	}
-	fmt.Fprintln(opts.Out, "waiting for BGP RIB routes")
+	fmt.Fprintln(opts.Out, "waiting for RIB routes")
 	actual, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expected, opts.PollInterval, opts.MaxPolls, compareOptions)
 	if err != nil {
 		if len(actual) > 0 {
@@ -109,9 +109,9 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		fmt.Fprintln(opts.Out, line)
 	}
 	if !result.OK {
-		return fmt.Errorf("live BGP RIB comparison found diff(s)")
+		return fmt.Errorf("live RIB comparison found diff(s)")
 	}
-	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
+	fmt.Fprintln(opts.Out, "live RIBs match modeled paths")
 	if opts.CheckFIB {
 		fibNodes := topo.Nodes
 		if opts.FIBOptions.AllowUnsupported {
@@ -226,7 +226,7 @@ func WaitForExpectedRoutes(ctx context.Context, runner ribcompare.Runner, nodes 
 	polls := 0
 	err := poll(ctx, interval, func() (bool, error) {
 		polls++
-		actual, err := ribcompare.CollectWithRunner(ctx, runner, nodes)
+		actual, err := collectExpectedRIBSources(ctx, runner, nodes, expected)
 		if err != nil {
 			lastErr = err
 			if maxPolls > 0 && polls >= maxPolls {
@@ -267,7 +267,7 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 	polls := 0
 	err := poll(ctx, interval, func() (bool, error) {
 		polls++
-		actual, err := ribcompare.CollectWithRunner(ctx, runner, nodes)
+		actual, err := collectExpectedRIBSources(ctx, runner, nodes, expected)
 		if err != nil {
 			lastErr = err
 			if maxPolls > 0 && polls >= maxPolls {
@@ -301,21 +301,38 @@ func WaitForMatchingRIBs(ctx context.Context, runner ribcompare.Runner, nodes []
 	return last, lastResult, nil
 }
 
+func collectExpectedRIBSources(ctx context.Context, runner ribcompare.Runner, nodes []model.Node, expected []ribcompare.NormalizedBgpRoute) ([]ribcompare.NormalizedBgpRoute, error) {
+	if expectedHasNonBGP(expected) {
+		return ribcompare.CollectWithRunner(ctx, runner, nodes)
+	}
+	return ribcompare.CollectBGPOnlyWithRunner(ctx, runner, nodes)
+}
+
+func expectedHasNonBGP(routes []ribcompare.NormalizedBgpRoute) bool {
+	for _, route := range routes {
+		protocol := strings.ToLower(strings.TrimSpace(route.Protocol))
+		if protocol != "" && protocol != "bgp" {
+			return true
+		}
+	}
+	return false
+}
+
 func convergenceError(lastErr error, seen, total int) error {
 	if lastErr != nil {
-		return fmt.Errorf("expected BGP routes did not converge; last collection error: %w", lastErr)
+		return fmt.Errorf("expected RIB routes did not converge; last collection error: %w", lastErr)
 	}
-	return fmt.Errorf("expected BGP routes did not converge: saw %d/%d expected routes", seen, total)
+	return fmt.Errorf("expected RIB routes did not converge: saw %d/%d expected routes", seen, total)
 }
 
 func ribMatchConvergenceError(lastErr error, seen, total, bestDiffCount int) error {
 	if lastErr != nil {
-		return fmt.Errorf("BGP RIBs did not converge to modeled paths; last collection error: %w", lastErr)
+		return fmt.Errorf("RIBs did not converge to modeled paths; last collection error: %w", lastErr)
 	}
 	if bestDiffCount < 0 {
-		return fmt.Errorf("BGP RIBs did not converge to modeled paths: saw %d/%d expected routes", seen, total)
+		return fmt.Errorf("RIBs did not converge to modeled paths: saw %d/%d expected routes", seen, total)
 	}
-	return fmt.Errorf("BGP RIBs did not converge to modeled paths: saw %d/%d expected routes, best diff count %d", seen, total, bestDiffCount)
+	return fmt.Errorf("RIBs did not converge to modeled paths: saw %d/%d expected routes, best diff count %d", seen, total, bestDiffCount)
 }
 
 func HasExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) bool {

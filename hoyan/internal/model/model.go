@@ -17,21 +17,23 @@ type Topology struct {
 }
 
 type Node struct {
-	Name           string          `yaml:"name"`
-	ContainerName  string          `yaml:"container_name"`
-	Kind           DeviceKind      `yaml:"kind"`
-	Role           string          `yaml:"role"`
-	ASN            uint32          `yaml:"asn"`
-	MgmtIPv4       string          `yaml:"mgmt_ipv4"`
-	Loopback       string          `yaml:"loopback"`
-	ConfigPath     string          `yaml:"config_path"`
-	Prefixes       []Prefix        `yaml:"prefixes"`
-	Interfaces     []Interface     `yaml:"interfaces"`
-	Neighbors      []BGPNeighbor   `yaml:"neighbors"`
-	PrefixLists    []PrefixList    `yaml:"prefix_lists"`
-	ASPathLists    []ASPathList    `yaml:"as_path_lists"`
-	CommunityLists []CommunityList `yaml:"community_lists"`
-	RoutePolicies  []RoutePolicy   `yaml:"route_policies"`
+	Name           string              `yaml:"name"`
+	ContainerName  string              `yaml:"container_name"`
+	Kind           DeviceKind          `yaml:"kind"`
+	Role           string              `yaml:"role"`
+	ASN            uint32              `yaml:"asn"`
+	MgmtIPv4       string              `yaml:"mgmt_ipv4"`
+	Loopback       string              `yaml:"loopback"`
+	ConfigPath     string              `yaml:"config_path"`
+	Prefixes       []Prefix            `yaml:"prefixes"`
+	Routes         []ConfiguredRoute   `yaml:"routes,omitempty"`
+	Interfaces     []Interface         `yaml:"interfaces"`
+	Neighbors      []BGPNeighbor       `yaml:"neighbors"`
+	Redistribute   []BGPRedistribution `yaml:"redistribute,omitempty"`
+	PrefixLists    []PrefixList        `yaml:"prefix_lists"`
+	ASPathLists    []ASPathList        `yaml:"as_path_lists"`
+	CommunityLists []CommunityList     `yaml:"community_lists"`
+	RoutePolicies  []RoutePolicy       `yaml:"route_policies"`
 }
 
 func (n Node) RuntimeName() string {
@@ -55,6 +57,35 @@ type Link struct {
 type Interface struct {
 	Name    string `yaml:"name"`
 	Address string `yaml:"address"`
+}
+
+type RouteSourceKind string
+
+const (
+	RouteSourceConnected RouteSourceKind = "connected"
+	RouteSourceStatic    RouteSourceKind = "static"
+	RouteSourceBGP       RouteSourceKind = "bgp"
+	RouteSourceAggregate RouteSourceKind = "aggregate"
+	RouteSourceBlackhole RouteSourceKind = "blackhole"
+)
+
+type ConfiguredRoute struct {
+	Node            string            `yaml:"node,omitempty" json:"node,omitempty"`
+	NetworkInstance NetworkInstanceID `yaml:"network_instance,omitempty" json:"network_instance,omitempty"`
+	AFI             AFI               `yaml:"afi,omitempty" json:"afi,omitempty"`
+	Prefix          Prefix            `yaml:"prefix" json:"prefix"`
+	NextHop         string            `yaml:"next_hop,omitempty" json:"next_hop,omitempty"`
+	Interface       string            `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Kind            RouteSourceKind   `yaml:"kind" json:"kind"`
+	AdminDistance   int               `yaml:"admin_distance,omitempty" json:"admin_distance,omitempty"`
+	Metric          int               `yaml:"metric,omitempty" json:"metric,omitempty"`
+	Source          PolicySource      `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+type BGPRedistribution struct {
+	Kind     RouteSourceKind `yaml:"kind" json:"kind"`
+	RouteMap string          `yaml:"route_map,omitempty" json:"route_map,omitempty"`
+	Source   PolicySource    `yaml:"source,omitempty" json:"source,omitempty"`
 }
 
 type BGPNeighbor struct {

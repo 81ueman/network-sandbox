@@ -41,32 +41,108 @@ func expected(topo *model.Topology, allowed map[string]bool, failures sim.Failur
 			continue
 		}
 		for prefix, rib := range g.RIBTable(n.Name) {
-			var paths []NormalizedBgpPath
+			pathsByProtocol := map[string][]NormalizedBgpPath{}
 			for _, route := range rib {
+				route = route.Normalize()
 				if route.Condition == nil || !route.Condition.Eval(ctx) {
 					continue
 				}
-				paths = append(paths, expectedPath(idx, n, route, ctx))
+				if !routeComparableInLiveRIB(idx, n.Name, route) {
+					continue
+				}
+				protocol := expectedRouteProtocol(route)
+				pathsByProtocol[protocol] = append(pathsByProtocol[protocol], expectedPath(idx, n, route, ctx))
 			}
-			if len(paths) == 0 {
-				continue
+			for _, protocol := range sortedProtocolKeys(pathsByProtocol) {
+				paths := pathsByProtocol[protocol]
+				if len(paths) == 0 {
+					continue
+				}
+				sortPaths(paths, DefaultBgpRibCompareOptions())
+				out = append(out, NormalizedBgpRoute{
+					Node:            n.Name,
+					NetworkInstance: "default",
+					AFI:             "ipv4",
+					Prefix:          prefix,
+					Protocol:        protocol,
+					Paths:           paths,
+				})
 			}
-			sortPaths(paths, DefaultBgpRibCompareOptions())
-			out = append(out, NormalizedBgpRoute{
-				Node:            n.Name,
-				NetworkInstance: "default",
-				AFI:             "ipv4",
-				Prefix:          prefix,
-				Paths:           paths,
-			})
 		}
 	}
 	sortRoutes(out)
 	return out
 }
 
+func sortedProtocolKeys(m map[string][]NormalizedBgpPath) []string {
+	order := []string{"bgp", "connected", "static"}
+	var out []string
+	seen := map[string]bool{}
+	for _, protocol := range order {
+		if _, ok := m[protocol]; ok {
+			out = append(out, protocol)
+			seen[protocol] = true
+		}
+	}
+	for protocol := range m {
+		if !seen[protocol] {
+			out = append(out, protocol)
+		}
+	}
+	return out
+}
+
+func expectedRouteProtocol(route sim.RIBEntry) string {
+	route = route.Normalize()
+	switch route.SourceKind {
+	case model.RouteSourceConnected:
+		return "connected"
+	case model.RouteSourceStatic, model.RouteSourceBlackhole:
+		return "static"
+	default:
+		return "bgp"
+	}
+}
+
+func routeComparableInLiveRIB(idx *model.TopologyIndex, node string, route sim.RIBEntry) bool {
+	route = route.Normalize()
+	switch route.SourceKind {
+	case model.RouteSourceBGP:
+		return true
+	case model.RouteSourceConnected:
+		iface := route.RouteSource.Interface
+		if iface == "" {
+			return false
+		}
+		for _, edge := range idx.Adj[model.NodeID(node)] {
+			linkIface := edge.Link.AIntf
+			if edge.Link.B == node {
+				linkIface = edge.Link.BIntf
+			}
+			n, ok := idx.Node(node)
+			if ok && model.EquivalentInterfaceName(n.Kind, linkIface, iface) {
+				return true
+			}
+		}
+		return false
+	case model.RouteSourceStatic:
+		return route.RouteSource.NextHop != ""
+	default:
+		return false
+	}
+}
+
 func expectedPath(idx *model.TopologyIndex, node model.Node, route sim.RIBEntry, ctx sim.FailureContext) NormalizedBgpPath {
 	route = route.Normalize()
+	if expectedRouteProtocol(route) != "bgp" {
+		return NormalizedBgpPath{
+			Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
+			Valid:     expectedRouteValid(node, route),
+			NextHop:   routeNextHopAddress(idx, node.Name, route),
+			Origin:    "igp",
+			LocalPref: 100,
+		}
+	}
 	return NormalizedBgpPath{
 		Best:      route.SelectedCond != nil && route.SelectedCond.Eval(ctx),
 		Valid:     expectedRouteValid(node, route),
