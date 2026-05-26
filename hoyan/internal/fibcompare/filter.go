@@ -83,7 +83,7 @@ func normalizeRouteNextHops(idx *model.TopologyIndex, route NormalizedFIBRoute) 
 			hop.Interface = alias
 			break
 		}
-		if node.Kind == model.KindSRLinux {
+		if canonicalProtocol(route.Protocol) == "connected" {
 			hop.Address = ""
 		}
 		out = append(out, hop)

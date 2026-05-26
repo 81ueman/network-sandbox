@@ -123,6 +123,47 @@ func TestParseSRLinuxRoutes(t *testing.T) {
 	}
 }
 
+func TestParseSRLinuxRouteDetailsNormalizesPeerGateway(t *testing.T) {
+	data := []byte(`{
+	  "instance": [{
+	    "Name": "default",
+	    "ip route": [{
+	      "Destination": "10.4.0.0/16",
+	      "ID": 0,
+	      "Route Type": "bgp",
+	      "Route Owner": "bgp_mgr",
+	      "Origin Network Instance": "default",
+	      "Metric": 0,
+	      "Preference": 170,
+	      "Active": true,
+	      "ip route nexthop": {
+	        "Next Hop Count": 1,
+	        "Next hops": "198.18.20.5 (indirect) resolved by route to 198.18.20.4/31 (local)\n  via 198.18.20.5 (direct) via [ethernet-1/4.0]"
+	      },
+	      "ip route backup nexthop": {
+	        "Backup Next Hop Count": 0,
+	        "Backup Next hops": ""
+	      }
+	    }]
+	  }]
+	}`)
+	routes, err := ParseSRLinuxRouteDetails("core-gz", data)
+	if err != nil {
+		t.Fatalf("ParseSRLinuxRouteDetails() error = %v", err)
+	}
+	route := routeByPrefix(routes, "10.4.0.0/16")
+	if route == nil {
+		t.Fatalf("routes = %#v", routes)
+	}
+	if route.Protocol != "bgp" || route.Preference != 170 {
+		t.Fatalf("route attrs = %#v", route)
+	}
+	want := []NormalizedFIBNextHop{{Address: "198.18.20.5", Interface: "ethernet-1/4.0"}}
+	if !reflect.DeepEqual(route.NextHops, want) {
+		t.Fatalf("next-hops = %#v, want %#v", route.NextHops, want)
+	}
+}
+
 func TestComparableRoutesIncludesConnectedClasses(t *testing.T) {
 	topo := &model.Topology{
 		Nodes: []model.Node{
@@ -148,6 +189,9 @@ func TestComparableRoutesIncludesConnectedClasses(t *testing.T) {
 	}
 	if route := routeByPrefix(filtered, "10.255.0.1/32"); route == nil || route.ConnectedClass != model.ConnectedRouteClassLoopback {
 		t.Fatalf("loopback route = %#v", route)
+	}
+	if route := routeByPrefix(filtered, "192.0.2.0/31"); route == nil || len(route.NextHops) != 1 || route.NextHops[0].Address != "" {
+		t.Fatalf("connected route next-hop should compare by interface only: %#v", route)
 	}
 }
 
@@ -234,8 +278,10 @@ func TestCollectAllSupportedKinds(t *testing.T) {
 			return []byte(`[]`), nil
 		case cmd == "docker exec -i ceos1 Cli -p 15 -c show ip route vrf default | json":
 			return []byte(`{"vrfs":{"default":{"routes":{"10.0.1.0/24":{"kernelProgrammed":true,"routeType":"eBGP","vias":[{"nexthopAddr":"192.0.2.2","interface":"Ethernet1"}]}}}}}`), nil
-		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'srl1' sr_cli"):
+		case cmd == "docker exec -i srl1 sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary":
 			return []byte(`{"instance":[{"ip route":[{"Prefix":"10.0.2.0/24","Route Type":"bgp","Active":"True","Next-hop (Type)":"192.0.2.3/31 (indirect/local)","Next-hop Interface":"ethernet-1/1.0 "}]}]}`), nil
+		case cmd == "docker exec -i srl1 sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast prefix 10.0.2.0/24 detail":
+			return []byte(`{"instance":[{"ip route":[{"Destination":"10.0.2.0/24","Route Type":"bgp","Active":true,"ip route nexthop":{"Next hops":"192.0.2.2 (indirect) resolved by route to 192.0.2.3/31 (local)\n  via 192.0.2.2 (direct) via [ethernet-1/1.0]"}}]}]}`), nil
 		default:
 			return nil, errors.New("unexpected command: " + cmd)
 		}
@@ -252,6 +298,56 @@ func TestCollectAllSupportedKinds(t *testing.T) {
 		if routeByPrefix(routes, prefix) == nil {
 			t.Fatalf("routes missing %s: %#v", prefix, routes)
 		}
+	}
+}
+
+func TestCollectSRLinuxUsesRouteDetailPeerGateway(t *testing.T) {
+	runner := fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch cmd {
+		case "docker exec -i srl1 sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary":
+			return []byte(`{"instance":[{"ip route":[
+			  {"Prefix":"10.4.0.0/16","Route Type":"bgp","Active":"True","Metric":0,"Pref":170,"Next-hop (Type)":"198.18.20.4/31 (indirect/local)","Next-hop Interface":"ethernet-1/4.0 "},
+			  {"Prefix":"198.18.20.4/31","Route Type":"local","Active":"True","Next-hop (Type)":"198.18.20.4 (direct)","Next-hop Interface":"ethernet-1/4.0 "}
+			]}]}`), nil
+		case "docker exec -i srl1 sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast prefix 10.4.0.0/16 detail":
+			return []byte(`{"instance":[{"ip route":[{"Destination":"10.4.0.0/16","Route Type":"bgp","Active":true,"Preference":170,"ip route nexthop":{"Next Hop Count":1,"Next hops":"198.18.20.5 (indirect) resolved by route to 198.18.20.4/31 (local)\n  via 198.18.20.5 (direct) via [ethernet-1/4.0]"}}]}]}`), nil
+		default:
+			return nil, errors.New("unexpected command: " + cmd)
+		}
+	}}
+	routes, err := Collect(context.Background(), runner, []model.Node{{Name: "core-gz", Kind: model.KindSRLinux, ContainerName: "srl1"}}, Options{})
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	route := routeByPrefix(routes, "10.4.0.0/16")
+	if route == nil {
+		t.Fatalf("routes = %#v", routes)
+	}
+	want := []NormalizedFIBNextHop{{Address: "198.18.20.5", Interface: "ethernet-1/4.0"}}
+	if !reflect.DeepEqual(route.NextHops, want) {
+		t.Fatalf("next-hops = %#v, want %#v", route.NextHops, want)
+	}
+}
+
+func TestCollectSRLinuxFallsBackToTTYWhenJSONIsEmpty(t *testing.T) {
+	runner := fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch {
+		case cmd == "docker exec -i srl1 sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary":
+			return []byte{}, nil
+		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'srl1' sr_cli --output-format json --pagination off -- 'show' 'network-instance' 'default' 'route-table' 'ipv4-unicast' 'summary'"):
+			return []byte(`{"instance":[{"ip route":[{"Prefix":"198.18.20.4/31","Route Type":"local","Active":"True","Next-hop (Type)":"198.18.20.4 (direct)","Next-hop Interface":"ethernet-1/4.0 "}]}]}`), nil
+		default:
+			return nil, errors.New("unexpected command: " + cmd)
+		}
+	}}
+	routes, err := Collect(context.Background(), runner, []model.Node{{Name: "core-gz", Kind: model.KindSRLinux, ContainerName: "srl1"}}, Options{})
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if routeByPrefix(routes, "198.18.20.4/31") == nil {
+		t.Fatalf("routes = %#v", routes)
 	}
 }
 
@@ -277,6 +373,32 @@ func TestComparableRoutesFiltersNonBGPAndUnsupportedNextHops(t *testing.T) {
 	}
 	if got, want := filtered[0].NextHops, []NormalizedFIBNextHop{{Address: "192.0.2.0", Interface: "eth1"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("next-hops = %#v, want %#v", got, want)
+	}
+}
+
+func TestComparableRoutesKeepsSRLinuxDetailNextHopAddress(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "core-gz", Kind: model.KindSRLinux, Interfaces: []model.Interface{{Name: "ethernet-1/4.0", Address: "198.18.20.4/31"}}},
+			{Name: "core-hz", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth3", Address: "198.18.20.5/31"}}},
+		},
+		Links: []model.Link{{Name: "gz-hz", A: "core-gz", B: "core-hz", AIntf: "e1-4", BIntf: "eth3"}},
+	}
+	routes := []NormalizedFIBRoute{{
+		Node:     "core-gz",
+		VRF:      "default",
+		AFI:      "ipv4",
+		Prefix:   "10.4.0.0/16",
+		Protocol: "bgp",
+		NextHops: []NormalizedFIBNextHop{{Address: "198.18.20.5", Interface: "ethernet-1/4.0"}},
+	}}
+	filtered := ComparableRoutes(topo, routes, Options{})
+	if len(filtered) != 1 {
+		t.Fatalf("filtered routes = %#v", filtered)
+	}
+	want := []NormalizedFIBNextHop{{Address: "198.18.20.5", Interface: "ethernet-1/4"}}
+	if !reflect.DeepEqual(filtered[0].NextHops, want) {
+		t.Fatalf("next-hops = %#v, want %#v", filtered[0].NextHops, want)
 	}
 }
 
