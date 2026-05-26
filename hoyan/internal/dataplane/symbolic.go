@@ -348,7 +348,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 		addUnreachableReason(reasons, SymbolicUnreachableReason{
 			Kind:    UnreachableNodeFailed,
 			Node:    entry.NextHop,
-			Cond:    failure.And(state.Cond, failure.Not(failure.NodeVar(entry.NextHop))),
+			Cond:    failure.And(state.Cond, candidate.Cond, failure.Not(failure.NodeVar(entry.NextHop))),
 			Path:    state.Path,
 			Message: "next-hop node is down",
 		})
@@ -369,7 +369,7 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 			Kind:    UnreachableLinkFailed,
 			Node:    state.Node,
 			Link:    link.Name,
-			Cond:    failure.And(state.Cond, failure.NodeVar(entry.NextHop), failure.Not(failure.LinkVar(link.Name))),
+			Cond:    failure.And(state.Cond, candidate.Cond, failure.NodeVar(entry.NextHop), failure.Not(e.linkUpCond(link))),
 			Path:    state.Path,
 			Message: "next-hop link is down",
 		})
