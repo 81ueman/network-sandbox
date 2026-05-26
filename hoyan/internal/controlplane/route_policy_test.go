@@ -66,3 +66,16 @@ func TestRoutePolicyNextHopPrefixListUsesResolvedAddress(t *testing.T) {
 		t.Fatalf("routePolicyRuleMatches() = false, want next-hop prefix-list to match resolved peer address")
 	}
 }
+
+func TestPrefixListRuleMatchesUsesNLRILengthSemantics(t *testing.T) {
+	rule := model.PrefixListRule{Seq: 10, Action: "permit", Prefix: "10.0.0.0/8", Ge: 16, Le: 24}
+	if !prefixListRuleMatches(rule, model.MustPrefix("10.4.0.0/16")) {
+		t.Fatalf("prefix-list range should match NLRI inside ge/le bounds")
+	}
+	if prefixListRuleMatches(rule, model.MustPrefix("10.4.1.10/32")) {
+		t.Fatalf("prefix-list range should reject NLRI longer than le")
+	}
+	if prefixListRuleMatches(rule, model.MustPrefix("10.0.0.0/8")) {
+		t.Fatalf("prefix-list range should reject NLRI shorter than ge")
+	}
+}

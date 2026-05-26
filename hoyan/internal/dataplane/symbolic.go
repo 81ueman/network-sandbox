@@ -572,7 +572,7 @@ func matchingFIBEntriesForPrefixSet(entries []FIBEntry, dst model.PrefixSet) []F
 	var out []FIBEntry
 	for _, entry := range entries {
 		entrySet := model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(entry.Prefix)}
-		if prefixSetsOverlap(entrySet, dst) {
+		if model.AddressSpaceOverlaps(entrySet, dst) {
 			out = append(out, entry)
 		}
 	}
@@ -606,7 +606,7 @@ func (e *Engine) originNodesForPrefixSet(dst model.PrefixSet) []string {
 	var out []string
 	for _, node := range e.idx.NodesByName {
 		for _, raw := range node.Prefixes {
-			if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
+			if !raw.IsZero() && model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: raw}, dst) {
 				out = append(out, node.Name)
 				break
 			}
@@ -614,13 +614,6 @@ func (e *Engine) originNodesForPrefixSet(dst model.PrefixSet) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func prefixSetsOverlap(a, b model.PrefixSet) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return a.Overlaps(b) || b.Overlaps(a)
 }
 
 func condOrTrue(cond failure.Cond) failure.Cond {

@@ -464,7 +464,7 @@ func modelPrefixUniverse(topo *model.Topology, graph *sim.Graph, request []model
 func collectPrefixClassRows(universe model.PrefixUniverse, filter model.PrefixSet) []prefixClassInspectRow {
 	var rows []prefixClassInspectRow
 	for _, class := range universe.Classes {
-		if filter != nil && !class.Space.Overlaps(filter) {
+		if filter != nil && !model.AddressSpaceOverlaps(class.Space, filter) {
 			continue
 		}
 		rows = append(rows, prefixClassInspectRow{
@@ -612,7 +612,7 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 func buildSymbolicRouteClassInspects(from, prefix string, universe model.PrefixUniverse, filter model.PrefixSet, result sim.SymbolicRouteReachabilityResult) []symbolicRouteInspect {
 	var out []symbolicRouteInspect
 	for _, class := range universe.Classes {
-		if filter != nil && !class.Space.Overlaps(filter) {
+		if filter != nil && !model.AddressSpaceOverlaps(class.Space, filter) {
 			continue
 		}
 		out = append(out, buildSymbolicRouteInspect(from, prefix, class, matchedPrefixPredicates(universe, class), result))

@@ -237,7 +237,7 @@ func classesForDestinationNode(topo *model.Topology, universe model.PrefixUniver
 
 func classesForAddr(universe model.PrefixUniverse, addr netip.Addr) []model.PrefixClassID {
 	for _, class := range universe.Classes {
-		if class.Space.ContainsAddr(addr) {
+		if model.AddressSpaceContains(class.Space, addr) {
 			return []model.PrefixClassID{class.ID}
 		}
 	}
