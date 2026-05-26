@@ -115,6 +115,47 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 	}
 }
 
+func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
+	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "containerlab deploy"):
+			return []byte("deployed"), nil
+		case strings.HasPrefix(cmd, "containerlab destroy"):
+			return []byte("destroyed"), nil
+		case strings.HasPrefix(cmd, "docker inspect"):
+			return []byte("true\n"), nil
+		case strings.Contains(cmd, "show ip bgp json"):
+			return []byte(`{"10.1.1.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"ip":""}]}]}`), nil
+		case strings.Contains(cmd, "ip -j route show table main"):
+			return []byte(`[
+			  {"dst":"10.1.1.10/32","protocol":"kernel"}
+			]`), nil
+		default:
+			return nil, errors.New("unexpected command: " + cmd)
+		}
+	}}
+	opts := Options{
+		Topology:     "testdata/live.clab.yml",
+		Queries:      emptyQueriesFile(t),
+		Timeout:      time.Second,
+		PollInterval: time.Millisecond,
+		CheckFIB:     true,
+	}
+	if err := Run(context.Background(), opts, runner); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	var collectedFIB bool
+	for _, call := range runner.calls {
+		if strings.Contains(call, "ip -j route show table main") {
+			collectedFIB = true
+		}
+	}
+	if !collectedFIB {
+		t.Fatalf("FIB collector was not called: %v", runner.calls)
+	}
+}
+
 func TestBuildLocalImagesSkipsExistingImage(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "images", "frr-nftables"), 0o755); err != nil {

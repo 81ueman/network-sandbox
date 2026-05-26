@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/81ueman/network-sandbox/hoyan/internal/fibcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/livecheck"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
@@ -74,6 +75,7 @@ func NewRootCommand() *cobra.Command {
 		NewVerifyCommand(),
 		NewLiveCheckCommand(),
 		NewRIBCompareCommand(),
+		NewFIBCompareCommand(),
 		NewRenderTopologyCommand(),
 		NewModelCommand(),
 	)
@@ -214,6 +216,8 @@ func NewLiveCheckCommand() *cobra.Command {
 				MaxPolls:      opts.maxPolls,
 				KeepOnFailure: opts.keepOnFailure,
 				SkipDestroy:   opts.skipDestroy,
+				CheckFIB:      opts.checkFIB && !opts.noCheckFIB,
+				FIBOptions:    fibcompare.Options{AllowUnsupported: opts.fibAllowUnsupported},
 				Out:           cmd.OutOrStdout(),
 			}, ribcompare.ExecRunner{})
 			if err != nil {
@@ -230,18 +234,24 @@ func NewLiveCheckCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.keepOnFailure, "keep-on-failure", false, "leave lab running when the check fails")
 	cmd.Flags().BoolVar(&opts.skipDestroy, "skip-destroy", false, "leave lab running after the check")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
+	cmd.Flags().BoolVar(&opts.checkFIB, "check-fib", true, "compare modeled FIB with live installed FIB after BGP convergence")
+	cmd.Flags().BoolVar(&opts.noCheckFIB, "no-check-fib", false, "skip modeled-vs-live installed FIB comparison")
+	cmd.Flags().BoolVar(&opts.fibAllowUnsupported, "fib-allow-unsupported", false, "skip nodes without a live FIB collector when FIB comparison is enabled")
 	return cmd
 }
 
 type liveCheckOptions struct {
-	topologyPath  string
-	queriesPath   string
-	strictConfig  bool
-	timeout       time.Duration
-	pollInterval  time.Duration
-	maxPolls      int
-	keepOnFailure bool
-	skipDestroy   bool
+	topologyPath        string
+	queriesPath         string
+	strictConfig        bool
+	timeout             time.Duration
+	pollInterval        time.Duration
+	maxPolls            int
+	keepOnFailure       bool
+	skipDestroy         bool
+	checkFIB            bool
+	noCheckFIB          bool
+	fibAllowUnsupported bool
 }
 
 func (o liveCheckOptions) validate() error {
@@ -303,6 +313,59 @@ func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) e
 		return ExitError{Code: 1, Err: fmt.Errorf("BGP RIB comparison found diff(s)")}
 	}
 	fmt.Fprintln(out, "BGP RIBs match expected modeled paths")
+	return nil
+}
+
+func NewFIBCompareCommand() *cobra.Command {
+	var opts fibCompareOptions
+	cmd := &cobra.Command{
+		Use:           "fib-compare",
+		Short:         "Compare modeled FIBs with live installed kernel FIBs",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			return runFIBCompare(cmd.Context(), opts, cmd.OutOrStdout())
+		},
+	}
+	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
+	cmd.Flags().BoolVar(&opts.allowUnsupported, "allow-unsupported", false, "skip nodes without a live FIB collector")
+	return cmd
+}
+
+type fibCompareOptions struct {
+	topologyPath     string
+	strictConfig     bool
+	allowUnsupported bool
+}
+
+func runFIBCompare(ctx context.Context, opts fibCompareOptions, out io.Writer) error {
+	topo, _, err := model.LoadLabTopologyWithOptions(opts.topologyPath, model.LoadLabTopologyOptions{StrictConfig: opts.strictConfig})
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	nodes := topo.Nodes
+	if opts.allowUnsupported {
+		nodes = fibcompare.SupportedNodes(nodes)
+	}
+	fibOpts := fibcompare.Options{AllowUnsupported: opts.allowUnsupported}
+	expected := fibcompare.ComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, nodes), fibOpts)
+	actual, err := fibcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes, fibOpts)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	actual = fibcompare.ComparableRoutes(topo, actual, fibOpts)
+	result := fibcompare.Compare(expected, actual)
+	for _, line := range fibcompare.FormatDiffs(result) {
+		fmt.Fprintln(out, line)
+	}
+	if !result.OK {
+		return ExitError{Code: 1, Err: fmt.Errorf("FIB comparison found diff(s)")}
+	}
+	fmt.Fprintln(out, "FIBs match expected modeled forwarding entries")
 	return nil
 }
 

@@ -1020,6 +1020,33 @@ func TestParseSRLinuxConfig(t *testing.T) {
 	}
 }
 
+func TestParseSRLinuxNextHopSelf(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "srl.cfg")
+	if err := os.WriteFile(path, []byte(`
+set / network-instance default protocols bgp autonomous-system 65100
+set / network-instance default protocols bgp group core peer-as 65100
+set / network-instance default protocols bgp group core afi-safi ipv4-unicast ipv4-unicast next-hop-self true
+set / network-instance default protocols bgp neighbor 198.18.20.8 peer-group core
+set / network-instance default protocols bgp neighbor 198.18.20.8 admin-state enable
+set / network-instance default protocols bgp neighbor 198.18.20.9 peer-group core
+set / network-instance default protocols bgp neighbor 198.18.20.9 afi-safi ipv4-unicast ipv4-unicast next-hop-self true
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg, err := ParseConfig("srlinux", path)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if len(cfg.Neighbors) != 2 {
+		t.Fatalf("neighbors = %#v", cfg.Neighbors)
+	}
+	for _, neighbor := range cfg.Neighbors {
+		if !neighbor.NextHopSelf {
+			t.Fatalf("neighbor %s NextHopSelf = false", neighbor.Address)
+		}
+	}
+}
+
 func routePolicyByName(policies []RoutePolicy, name string) *RoutePolicy {
 	for i := range policies {
 		if policies[i].Name == name {
