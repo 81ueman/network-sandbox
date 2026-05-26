@@ -55,12 +55,88 @@ func TestLiveCheckRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestVerifyStrictConfigRejectsUnsupportedStatements(t *testing.T) {
+	topologyPath, _ := writeUnsupportedConfigLab(t)
+	cmd := NewVerifyCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{"--topology", topologyPath, "--strict-config"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	for _, want := range []string{"unsupported config statements", "vendor=frr", "line=4", `raw="match source-protocol bgp"`, "reason=unsupported FRR route-map match statement"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%s", want, err.Error())
+		}
+	}
+}
+
+func TestLiveCheckStrictConfigRejectsUnsupportedStatementsBeforeDeploy(t *testing.T) {
+	topologyPath, _ := writeUnsupportedConfigLab(t)
+	cmd := NewLiveCheckCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{"--topology", topologyPath, "--strict-config"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported config statements") || !strings.Contains(err.Error(), "vendor=frr") {
+		t.Fatalf("error = %v, want strict config error", err)
+	}
+}
+
+func TestModelRIBStrictConfigRejectsUnsupportedStatements(t *testing.T) {
+	topologyPath, _ := writeUnsupportedConfigLab(t)
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{"--topology", topologyPath, "--strict-config"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported config statements") || !strings.Contains(err.Error(), `raw="match source-protocol bgp"`) {
+		t.Fatalf("error = %v, want strict config error", err)
+	}
+}
+
 func TestNormalizeLegacyLongFlags(t *testing.T) {
 	got := normalizeLegacyLongFlags([]string{"render-topology", "-suffix", "issue-38", "-output=out.yml", "-h", "--topology", "x.yml", "-1s"})
 	want := []string{"render-topology", "--suffix", "issue-38", "--output=out.yml", "-h", "--topology", "x.yml", "-1s"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("normalizeLegacyLongFlags() = %#v, want %#v", got, want)
 	}
+}
+
+func writeUnsupportedConfigLab(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "frr.conf")
+	if err := os.WriteFile(configPath, []byte(`
+hostname r1
+route-map RM permit 10
+ match source-protocol bgp
+ set local-preference 200
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	topologyPath := filepath.Join(dir, "lab.clab.yml")
+	if err := os.WriteFile(topologyPath, []byte(`name: strict-test
+topology:
+  nodes:
+    r1:
+      kind: linux
+      binds:
+        - frr.conf:/etc/frr/frr.conf
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(topology) error = %v", err)
+	}
+	return topologyPath, configPath
 }
 
 func TestRenderTopologyCommandAcceptsIsolationFlags(t *testing.T) {

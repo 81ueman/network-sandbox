@@ -34,16 +34,21 @@ type clabNode struct {
 	StartupConfig string   `yaml:"startup-config"`
 }
 
+type LoadLabTopologyOptions struct {
+	CollectWarnings bool
+	StrictConfig    bool
+}
+
 func LoadLabTopology(clabPath string) (*Topology, error) {
-	topo, _, err := loadLabTopology(clabPath, false)
+	topo, _, err := LoadLabTopologyWithOptions(clabPath, LoadLabTopologyOptions{})
 	return topo, err
 }
 
 func LoadLabTopologyWithWarnings(clabPath string) (*Topology, []UnsupportedStatement, error) {
-	return loadLabTopology(clabPath, true)
+	return LoadLabTopologyWithOptions(clabPath, LoadLabTopologyOptions{CollectWarnings: true})
 }
 
-func loadLabTopology(clabPath string, collectWarnings bool) (*Topology, []UnsupportedStatement, error) {
+func LoadLabTopologyWithOptions(clabPath string, opts LoadLabTopologyOptions) (*Topology, []UnsupportedStatement, error) {
 	data, err := os.ReadFile(clabPath)
 	if err != nil {
 		return nil, nil, err
@@ -55,6 +60,7 @@ func loadLabTopology(clabPath string, collectWarnings bool) (*Topology, []Unsupp
 	root := filepath.Dir(clabPath)
 	topo := &Topology{Name: raw.Name, ManagementSubnet: raw.Mgmt.IPv4Subnet}
 	var warnings []UnsupportedStatement
+	collectWarnings := opts.CollectWarnings || opts.StrictConfig
 	names := make([]string, 0, len(raw.Topology.Nodes))
 	for name := range raw.Topology.Nodes {
 		names = append(names, name)
@@ -118,6 +124,9 @@ func loadLabTopology(clabPath string, collectWarnings bool) (*Topology, []Unsupp
 				topo.Policies = append(topo.Policies, policy)
 			}
 		}
+	}
+	if opts.StrictConfig && len(warnings) > 0 {
+		return nil, warnings, UnsupportedConfigError{Warnings: warnings}
 	}
 	for i, link := range raw.Topology.Links {
 		if len(link.Endpoints) != 2 {
