@@ -256,7 +256,8 @@ currently use:
 ```bash
 docker exec -i <frr-node> ip -j route show table main
 docker exec -i <ceos-node> Cli -p 15 -c "show ip route vrf default | json"
-docker exec -it <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast summary
+docker exec -i <srlinux-node> sr_cli --output-format json --pagination off -- show network-instance default route-table ipv4-unicast prefix <prefix> detail
 ```
 
 `live-check` runs the same comparison after BGP RIB convergence by default:
@@ -271,16 +272,15 @@ control-plane/dataplane-only run.
 Limitations: the modeled side uses the no-failure installed FIB only, Linux
 kernel BGP routes are the FRR source of truth, cEOS compares programmed routes
 from EOS route JSON, SR Linux compares active route-table entries from
-`ipv4-unicast summary`, protocol/metric/preference fields are normalized for
-inspection but the first comparison target is protocol plus prefix plus
-next-hop address/interface set, default routes and unclassified host connected
-routes are out of scope, and hardware ASIC FIB or per-flow ECMP hashing is not
-verified. BGP routes whose live next-hop cannot be mapped to a topology
-data-plane interface are skipped from the strict set comparison for now; #97
-tracks making those unresolved or management-fallback routes explicit
-diagnostics. SR Linux next-hop addresses are compared by interface only for now
-because route-table summary output does not expose the peer gateway address
-consistently; #99 tracks strict SR Linux next-hop address normalization.
+`ipv4-unicast summary` and uses per-prefix `detail` output for SR Linux BGP and
+static next-hop peer gateway addresses. Protocol/metric/preference fields are
+normalized for inspection but the first comparison target is protocol plus
+prefix plus next-hop address/interface set, default routes and unclassified
+host connected routes are out of scope, and hardware ASIC FIB or per-flow ECMP
+hashing is not verified. BGP routes whose live next-hop cannot be mapped to a
+topology data-plane interface are skipped from the strict set comparison for
+now; #97 tracks making those unresolved or management-fallback routes explicit
+diagnostics.
 
 The live comparison reads BGP table state from FRR, cEOS, and SR Linux nodes,
 not kernel routes, installed route tables, or dataplane forwarding state. It
