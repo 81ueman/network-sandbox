@@ -82,19 +82,23 @@ type ribInspectRow struct {
 }
 
 type fibInspectRow struct {
-	Node           string   `json:"node"`
-	Prefix         string   `json:"prefix"`
-	SourceKind     string   `json:"source_kind,omitempty"`
-	ConnectedClass string   `json:"connected_class,omitempty"`
-	Interface      string   `json:"interface,omitempty"`
-	NextHop        string   `json:"next_hop_node,omitempty"`
-	Rank           int      `json:"rank"`
-	GroupID        string   `json:"group_id,omitempty"`
-	Equivalent     bool     `json:"equivalent"`
-	PathNodes      []string `json:"path_nodes,omitempty"`
-	PathLinks      []string `json:"path_links,omitempty"`
-	Cost           int      `json:"cost"`
-	Condition      string   `json:"condition,omitempty"`
+	Node             string   `json:"node"`
+	Prefix           string   `json:"prefix"`
+	SourceKind       string   `json:"source_kind,omitempty"`
+	ConnectedClass   string   `json:"connected_class,omitempty"`
+	Interface        string   `json:"interface,omitempty"`
+	NextHop          string   `json:"next_hop_node,omitempty"`
+	RawNextHop       string   `json:"raw_next_hop,omitempty"`
+	NextHopAddress   string   `json:"next_hop_addr,omitempty"`
+	ResolutionStatus string   `json:"resolution_status,omitempty"`
+	ResolutionReason string   `json:"resolution_reason,omitempty"`
+	Rank             int      `json:"rank"`
+	GroupID          string   `json:"group_id,omitempty"`
+	Equivalent       bool     `json:"equivalent"`
+	PathNodes        []string `json:"path_nodes,omitempty"`
+	PathLinks        []string `json:"path_links,omitempty"`
+	Cost             int      `json:"cost"`
+	Condition        string   `json:"condition,omitempty"`
 }
 
 type symbolicPacketInspect struct {
@@ -703,19 +707,23 @@ func collectFIBRows(graph *sim.Graph, nodes []string, prefix string) []fibInspec
 				continue
 			}
 			rows = append(rows, fibInspectRow{
-				Node:           node,
-				Prefix:         entry.Prefix.String(),
-				SourceKind:     string(entry.SourceKind),
-				ConnectedClass: string(entry.ConnectedClass),
-				Interface:      entry.Interface,
-				NextHop:        entry.NextHop,
-				Rank:           entry.Rank,
-				GroupID:        entry.GroupID,
-				Equivalent:     entry.Equivalent,
-				PathNodes:      append([]string(nil), entry.Path.Nodes...),
-				PathLinks:      append([]string(nil), entry.Path.Links...),
-				Cost:           entry.Path.Cost,
-				Condition:      condString(entry.Condition),
+				Node:             node,
+				Prefix:           entry.Prefix.String(),
+				SourceKind:       string(entry.SourceKind),
+				ConnectedClass:   string(entry.ConnectedClass),
+				Interface:        entry.Interface,
+				NextHop:          entry.NextHop,
+				RawNextHop:       entry.RawNextHop,
+				NextHopAddress:   entry.NextHopAddress,
+				ResolutionStatus: string(entry.ResolutionStatus),
+				ResolutionReason: entry.ResolutionReason,
+				Rank:             entry.Rank,
+				GroupID:          entry.GroupID,
+				Equivalent:       entry.Equivalent,
+				PathNodes:        append([]string(nil), entry.Path.Nodes...),
+				PathLinks:        append([]string(nil), entry.Path.Links...),
+				Cost:             entry.Path.Cost,
+				Condition:        condString(entry.Condition),
 			})
 		}
 	}
@@ -987,17 +995,20 @@ func formatBoolPtr(v *bool) string {
 func writeFIBTable(out io.Writer, rows []fibInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tRAW-NH\tNH-ADDR\tRESOLUTION\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
 	} else {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tCLASS\tNEXT-HOP\tRAW-NH\tNH-ADDR\tRESOLUTION\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
 	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
 			row.Node,
 			row.Prefix,
 			row.SourceKind,
 			row.ConnectedClass,
 			row.NextHop,
+			row.RawNextHop,
+			row.NextHopAddress,
+			row.ResolutionStatus,
 			row.Interface,
 			row.Rank,
 			row.GroupID,

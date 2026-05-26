@@ -61,12 +61,78 @@ func TestSymbolicNoNextHopAndMissingLinkReasonsUseSelectedCandidateCondition(t *
 
 	missingLinkEngine := selectedProblemCandidateEngine("orphan")
 	missingLink := missingLinkEngine.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
-	missingLinkReason := findReason(t, missingLink.UnreachableReasons, UnreachableLinkFailed, "src", "src-orphan", "next-hop link is down")
+	missingLinkReason := findReason(t, missingLink.UnreachableReasons, UnreachableNextHopNotAdjacent, "src", "src-orphan", "next-hop is not adjacent")
 	if !missingLinkReason.Cond.Eval(missingLinkEngine.FailureContext(failure.None())) {
-		t.Fatalf("missing-link reason should be true when the missing-link candidate is selected: %s", missingLinkReason.Cond)
+		t.Fatalf("not-adjacent reason should be true when the problem candidate is selected: %s", missingLinkReason.Cond)
 	}
 	if missingLinkReason.Cond.Eval(missingLinkEngine.FailureContext(failure.Links("prefer-problem"))) {
-		t.Fatalf("missing-link reason should be false when the missing-link candidate is not selected: %s", missingLinkReason.Cond)
+		t.Fatalf("not-adjacent reason should be false when the problem candidate is not selected: %s", missingLinkReason.Cond)
+	}
+}
+
+func TestRecursiveNextHopReasonsMatchConcretePacketReachable(t *testing.T) {
+	cases := []struct {
+		name      string
+		entry     FIBEntry
+		kind      SymbolicUnreachableReasonKind
+		message   string
+		wantIface string
+	}{
+		{
+			name: "raw address unresolved",
+			entry: FIBEntry{
+				Prefix:         model.MustPrefix("10.0.0.0/24").NetIP(),
+				RawNextHop:     "192.0.2.1",
+				NextHopAddress: "192.0.2.1",
+				Condition:      failure.True(),
+			},
+			kind:    UnreachableRecursiveNextHopUnresolved,
+			message: "recursive next-hop unresolved",
+		},
+		{
+			name: "management fallback",
+			entry: FIBEntry{
+				Prefix:           model.MustPrefix("10.0.0.0/24").NetIP(),
+				NextHop:          "dst",
+				Interface:        "eth0",
+				ResolutionStatus: NextHopResolutionManagementFallback,
+				Condition:        failure.True(),
+			},
+			kind:      UnreachableNextHopManagementFallback,
+			message:   "next-hop resolved via management interface",
+			wantIface: "eth0",
+		},
+		{
+			name: "non adjacent node",
+			entry: FIBEntry{
+				Prefix:    model.MustPrefix("10.0.0.0/24").NetIP(),
+				NextHop:   "orphan",
+				Condition: failure.True(),
+			},
+			kind:    UnreachableNextHopNotAdjacent,
+			message: "next-hop is not adjacent",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := recursiveProblemEngine(tt.entry)
+			_, reachable, concreteReason := engine.PacketReachable("src", "10.0.0.10", "icmp", failure.None())
+			if reachable || concreteReason != tt.message {
+				t.Fatalf("PacketReachable() = reachable %v reason %q, want unreachable %q", reachable, concreteReason, tt.message)
+			}
+			result := engine.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+			reason := findReason(t, result.UnreachableReasons, tt.kind, "src", reasonLink(tt.kind), tt.message)
+			if tt.wantIface != "" && reason.Interface != tt.wantIface {
+				t.Fatalf("reason interface = %q, want %q", reason.Interface, tt.wantIface)
+			}
+			if !reason.Cond.Eval(engine.FailureContext(failure.None())) {
+				t.Fatalf("symbolic reason should be true without failures: %s", reason.Cond)
+			}
+			if !hasMatchingTrueReason(engine, result.UnreachableReasons, failure.None(), concreteReason) {
+				t.Fatalf("no symbolic reason matched concrete reason %q\nreasons=%s", concreteReason, formatUnreachableReasons(result.UnreachableReasons))
+			}
+		})
 	}
 }
 
@@ -114,6 +180,28 @@ func selectedProblemCandidateEngine(problemNextHop string) *Engine {
 		},
 		"backup": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
 	})
+}
+
+func recursiveProblemEngine(entry FIBEntry) *Engine {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx := mustTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+			{Name: "orphan", Kind: model.KindFRR},
+		},
+		Links: []model.Link{},
+	})
+	return NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {entry},
+	})
+}
+
+func reasonLink(kind SymbolicUnreachableReasonKind) string {
+	if kind == UnreachableNextHopNotAdjacent {
+		return "src-orphan"
+	}
+	return ""
 }
 
 func findReason(t *testing.T, reasons []SymbolicUnreachableReason, kind SymbolicUnreachableReasonKind, node, link, message string) SymbolicUnreachableReason {

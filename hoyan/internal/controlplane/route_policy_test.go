@@ -93,6 +93,27 @@ func TestRoutePolicySetNextHopSelf(t *testing.T) {
 	}
 }
 
+func TestRoutePolicySetIPAddressNextHop(t *testing.T) {
+	node := model.Node{
+		Name: "local",
+		RoutePolicies: []model.RoutePolicy{{
+			Name: "SET-NH",
+			Rules: []model.RoutePolicyRule{{
+				Seq:        10,
+				Action:     "permit",
+				SetNextHop: "192.0.2.1",
+			}},
+		}},
+	}
+	decision := applyRoutePolicy(nil, node, "peer", "SET-NH", RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "local"})
+	if !decision.Accept {
+		t.Fatalf("decision rejected route: %#v", decision)
+	}
+	if decision.Route.NextHop != "192.0.2.1" || decision.Route.ForwardingNextHop.Node != "" || decision.Route.ForwardingNextHop.Addr != "192.0.2.1" {
+		t.Fatalf("route next-hop = %#v, want address-only recursive next-hop", decision.Route)
+	}
+}
+
 func TestPrefixListRuleMatchesUsesNLRILengthSemantics(t *testing.T) {
 	rule := model.PrefixListRule{Seq: 10, Action: "permit", Prefix: "10.0.0.0/8", Ge: 16, Le: 24}
 	if !prefixListRuleMatches(rule, model.MustPrefix("10.4.0.0/16")) {

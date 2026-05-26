@@ -52,11 +52,14 @@ func (b baseDeviceBehavior) ExportRoute(from model.Node, to model.Node, session 
 	}
 	if !isIBGP || session.NextHopSelf || out.NextHop == "" {
 		out.NextHop = from.Name
+		out.ForwardingNextHop.Addr = ""
 	}
 	out.LearnedIBGP = isIBGP
 	out.Attrs.ASPath = append([]uint32(nil), out.ASPath...)
 	out.Attrs.Communities = append([]string(nil), out.Communities...)
-	out.ForwardingNextHop.Node = out.NextHop
+	if out.ForwardingNextHop.Addr == "" {
+		out.ForwardingNextHop.Node = out.NextHop
+	}
 	out.Attrs.LearnedIBGP = out.LearnedIBGP
 
 	return BGPRouteDecision{Route: out.Normalize(), Accept: true}

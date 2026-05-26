@@ -126,6 +126,12 @@ func (e *Engine) packetReachableFrom(state packetReachableState) (Path, bool, st
 }
 
 func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[string]bool, packet controlplane.PacketMessage, currentNode model.Node, rule FIBEntry) (Path, bool, string) {
+	switch rule.effectiveResolutionStatus() {
+	case NextHopResolutionUnresolvedRecursive:
+		return state.full, false, "recursive next-hop unresolved"
+	case NextHopResolutionManagementFallback:
+		return state.full, false, "next-hop resolved via management interface"
+	}
 	if rule.NextHop == "" {
 		return state.full, false, "selected route has no next-hop"
 	}
@@ -133,7 +139,10 @@ func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[
 		return state.full, false, "next-hop node is down"
 	}
 	link, ok := e.idx.LinkBetween(state.current, rule.NextHop)
-	if !ok || state.ctx.LinkFailed(model.LinkID(link.Name)) {
+	if !ok {
+		return state.full, false, "next-hop is not adjacent"
+	}
+	if state.ctx.LinkFailed(model.LinkID(link.Name)) {
 		return state.full, false, "next-hop link is down"
 	}
 	packet.Spec.EgressInterface = interfaceOnLink(link, state.current)

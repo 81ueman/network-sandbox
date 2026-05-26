@@ -757,3 +757,28 @@ func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
 		t.Fatalf("generic equivalent routes should be marked equivalent: %#v", genericFIB["rx"])
 	}
 }
+
+func TestDeriveFIBMarksAddressOnlyNextHopUnresolved(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{{Name: "rx", Kind: model.KindFRR}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fib := map[string][]FIBEntry{}
+	NewEngine(idx, map[string]map[string][]controlplane.RIBEntry{
+		"rx": {prefix.String(): {{
+			Prefix:            prefix,
+			ForwardingNextHop: controlplane.RouteNextHop{Addr: "192.0.2.1"},
+			SelectedCond:      failure.True(),
+		}}},
+	}, fib).DeriveFIB()
+	if got := len(fib["rx"]); got != 1 {
+		t.Fatalf("FIB entries = %d, want 1", got)
+	}
+	entry := fib["rx"][0]
+	if entry.NextHop != "" || entry.NextHopAddress != "192.0.2.1" || entry.ResolutionStatus != NextHopResolutionUnresolvedRecursive {
+		t.Fatalf("FIB next-hop resolution = %#v, want unresolved address-only next-hop", entry)
+	}
+}
