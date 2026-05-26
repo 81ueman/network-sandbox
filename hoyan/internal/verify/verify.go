@@ -85,7 +85,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 
 func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyOptions) Report {
 	g := sim.NewGraph(topo)
-	universe, err := model.NewPrefixUniverse(topo, queries)
+	universe, err := prefixUniverseForGraph(topo, queries, g, nil)
 	if err != nil {
 		return Report{Results: []sim.Result{{
 			Name:      "prefix-universe",
@@ -190,6 +190,14 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 		report.Results = collapseResults(report.Results)
 	}
 	return report
+}
+
+func prefixUniverseForGraph(topo *model.Topology, queries *model.Queries, g *sim.Graph, extra []model.PrefixPredicate) (model.PrefixUniverse, error) {
+	predicates := model.CollectPrefixPredicateMetadata(topo, queries)
+	predicates = append(predicates, sim.CollectRIBPrefixPredicates(g)...)
+	predicates = append(predicates, sim.CollectFIBPrefixPredicates(g)...)
+	predicates = append(predicates, extra...)
+	return model.BuildPrefixUniverseFromPredicates(predicates)
 }
 
 func packetClasses(topo *model.Topology, universe model.PrefixUniverse, to string) []model.PrefixClassID {
