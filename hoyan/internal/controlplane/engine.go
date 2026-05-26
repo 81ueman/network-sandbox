@@ -3,6 +3,7 @@ package controlplane
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/failure"
@@ -10,12 +11,13 @@ import (
 )
 
 type RIBEntry struct {
-	NLRI              RouteNLRI
-	Attrs             BGPAttributes
-	Provenance        RouteProvenance
-	ForwardingNextHop RouteNextHop
-	SourceKind        model.RouteSourceKind
-	RouteSource       model.ConfiguredRoute
+	NLRI                  RouteNLRI
+	Attrs                 BGPAttributes
+	Provenance            RouteProvenance
+	ForwardingNextHop     RouteNextHop
+	SourceKind            model.RouteSourceKind
+	RouteSource           model.ConfiguredRoute
+	AggregateContributors []string
 
 	// Deprecated: use NLRI.Prefix. This compatibility field will be removed after callers migrate.
 	Prefix model.Prefix
@@ -189,6 +191,9 @@ func (e *Engine) Simulate() {
 			e.installConfiguredRoute(origin, route)
 		}
 		for _, route := range origin.Routes {
+			if route.Kind == model.RouteSourceAggregate {
+				continue
+			}
 			e.installConfiguredRoute(origin, route)
 		}
 		for _, prefix := range origin.Prefixes {
@@ -206,6 +211,14 @@ func (e *Engine) Simulate() {
 			e.walkBGP(route)
 		}
 		for _, route := range e.redistributedRoutes(origin) {
+			e.walkBGP(route)
+		}
+	}
+	e.SelectRoutes()
+	e.ConvergeAdvertisementConditions()
+	for _, origin := range e.idx.Topology.Nodes {
+		for _, route := range e.aggregateRoutes(origin) {
+			e.addRIB(origin.Name, route.Prefix, route)
 			e.walkBGP(route)
 		}
 	}
@@ -317,6 +330,82 @@ func (e *Engine) bgpRouteFromConfiguredRoute(node model.Node, route model.Config
 	return entry.Normalize()
 }
 
+func (e *Engine) aggregateRoutes(node model.Node) []RIBEntry {
+	var out []RIBEntry
+	for _, route := range node.Routes {
+		if route.Kind != model.RouteSourceAggregate || route.Prefix.IsZero() {
+			continue
+		}
+		route.Node = node.Name
+		if route.NetworkInstance == "" {
+			route.NetworkInstance = model.NetworkInstanceDefault
+		}
+		if route.AFI == "" {
+			route.AFI = model.AFIIPv4
+		}
+		if route.AdminDistance == 0 {
+			route.AdminDistance = 200
+		}
+		cond, contributors, ok := e.aggregateContributorCond(node.Name, route.Prefix)
+		if !ok {
+			continue
+		}
+		entry := RIBEntry{
+			NLRI:                  RouteNLRI{Prefix: route.Prefix},
+			Attrs:                 BGPAttributes{OriginCode: BGPOriginIGP, LocalPref: 100},
+			Provenance:            RouteProvenance{OriginNode: node.Name, PathNodes: []string{node.Name}},
+			SourceKind:            model.RouteSourceAggregate,
+			RouteSource:           route,
+			AggregateContributors: contributors,
+			BaseCond:              cond,
+			Condition:             cond,
+		}
+		out = append(out, entry.Normalize())
+	}
+	return out
+}
+
+func (e *Engine) aggregateContributorCond(node string, aggregate model.Prefix) (failure.Cond, []string, bool) {
+	var contributors []failure.Cond
+	contributorPrefixes := map[string]bool{}
+	for prefix, routes := range e.rib[node] {
+		candidate, err := model.ParsePrefix(prefix)
+		if err != nil || !isMoreSpecificWithin(candidate, aggregate) {
+			continue
+		}
+		for _, route := range routes {
+			route = route.Normalize()
+			if route.SourceKind == model.RouteSourceAggregate {
+				continue
+			}
+			cond := route.SelectedCond
+			if cond == nil {
+				cond = route.Condition
+			}
+			if cond != nil {
+				contributors = append(contributors, cond)
+				contributorPrefixes[candidate.String()] = true
+			}
+		}
+	}
+	if len(contributors) == 0 {
+		return failure.False(), nil, false
+	}
+	prefixes := make([]string, 0, len(contributorPrefixes))
+	for prefix := range contributorPrefixes {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	return failure.Or(contributors...), prefixes, true
+}
+
+func isMoreSpecificWithin(candidate, aggregate model.Prefix) bool {
+	if candidate.IsZero() || aggregate.IsZero() {
+		return false
+	}
+	return candidate.Bits() > aggregate.Bits() && aggregate.Contains(candidate.Addr())
+}
+
 func (e *Engine) configuredRouteNextHop(node string, route model.ConfiguredRoute) RouteNextHop {
 	if route.NextHop == "" {
 		return RouteNextHop{}
@@ -366,7 +455,7 @@ func (e *Engine) SelectRoutes() {
 
 func routeSelectionFamily(route RIBEntry) model.RouteSourceKind {
 	route = route.Normalize()
-	if route.SourceKind == model.RouteSourceBGP {
+	if route.SourceKind == model.RouteSourceBGP || route.SourceKind == model.RouteSourceAggregate {
 		return model.RouteSourceBGP
 	}
 	return ""
@@ -385,7 +474,7 @@ func (e *Engine) ApplyAdvertisementConditions() bool {
 				if len(routes[i].Nodes) > 1 {
 					if parent, ok := e.ParentRoute(routes[i]); ok {
 						parentSelected := parent.SelectedCond
-						if len(parent.Normalize().Nodes) == 1 && parent.SourceKind == model.RouteSourceBGP {
+						if len(parent.Normalize().Nodes) == 1 && (parent.SourceKind == model.RouteSourceBGP || parent.SourceKind == model.RouteSourceAggregate) {
 							parentSelected = parent.Condition
 						}
 						if parentSelected == nil {
@@ -470,7 +559,8 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		if !curBehavior.CheckControlEgress(curNode, exportMsg, e.idx.Topology.Policies) {
 			continue
 		}
-		exported := curBehavior.ExportRoute(curNode, nextNode, session, route)
+		routeForExport := e.applyAggregateSuppression(curNode, route)
+		exported := curBehavior.ExportRoute(curNode, nextNode, session, routeForExport)
 		if !exported.Accept {
 			continue
 		}
@@ -520,6 +610,25 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		}
 		e.walkBGP(entry)
 	}
+}
+
+func (e *Engine) applyAggregateSuppression(node model.Node, route RIBEntry) RIBEntry {
+	route = route.Normalize()
+	for _, aggregate := range node.Routes {
+		if aggregate.Kind != model.RouteSourceAggregate || !aggregate.SummaryOnly {
+			continue
+		}
+		if !isMoreSpecificWithin(route.Prefix, aggregate.Prefix) {
+			continue
+		}
+		cond, _, ok := e.aggregateContributorCond(node.Name, aggregate.Prefix)
+		if !ok {
+			continue
+		}
+		route.BaseCond = failure.And(route.BaseCond, failure.Not(cond))
+		route.Condition = failure.And(route.Condition, failure.Not(cond))
+	}
+	return route.Normalize()
 }
 
 func (e *Engine) bgpSession(a, b string) (model.BGPNeighbor, bool) {

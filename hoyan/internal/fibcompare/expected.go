@@ -29,7 +29,7 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 		for _, rib := range graph.RIBTable(n.Name) {
 			for _, entry := range rib {
 				entry = entry.Normalize()
-				if entry.SourceKind != model.RouteSourceBGP {
+				if entry.SourceKind != model.RouteSourceBGP && entry.SourceKind != model.RouteSourceAggregate {
 					continue
 				}
 				if entry.SelectedCond == nil || !entry.SelectedCond.Eval(ctx) || !behavior.RouteValidForRIB(n, entry) {
@@ -39,7 +39,7 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 			}
 		}
 		for _, entry := range graph.FIB(n.Name) {
-			if entry.SourceKind == model.RouteSourceBGP {
+			if entry.SourceKind == model.RouteSourceBGP || entry.SourceKind == model.RouteSourceAggregate {
 				continue
 			}
 			if entry.Condition == nil || !entry.Condition.Eval(ctx) {

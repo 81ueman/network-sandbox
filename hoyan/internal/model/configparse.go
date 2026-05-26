@@ -343,12 +343,15 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 		case inBGP && inAF && len(fields) >= 2 && fields[0] == "network":
 			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[1])
 		case inBGP && inAF && len(fields) >= 2 && fields[0] == "aggregate-address":
-			route, err := parseAggregateRoute(kind, path, lineNo, line, fields[1])
+			route, err := parseAggregateRoute(kind, path, lineNo, line, fields)
 			if err != nil {
-				return ParseResult{}, err
+				if !collectWarnings {
+					return ParseResult{}, err
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, err.Error()))
+				continue
 			}
 			cfg.Routes = append(cfg.Routes, route)
-			cfg.Prefixes = appendUnique(cfg.Prefixes, fields[1])
 		case inBGP && inAF && len(fields) >= 2 && fields[0] == "redistribute":
 			redist, err := parseFRRLikeRedistribution(kind, path, lineNo, line, fields)
 			if err != nil {
@@ -515,6 +518,12 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsSeq(fields, "next-hop-self"):
 			addr := fieldAfter(fields, "neighbor")
 			neighborNextHopSelf[addr] = true
+		case containsSeq(fields, "protocols", "bgp") && (containsAnyField(fields, "aggregate-address") || containsAnyField(fields, "aggregate-routes")):
+			err := fmt.Errorf("unsupported SR Linux BGP aggregate route statement")
+			if !collectWarnings {
+				return ParseResult{}, fmt.Errorf("%s: %w", line, err)
+			}
+			warnings = append(warnings, unsupportedStatement("srlinux", path, lineNo, line, err.Error()))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -577,19 +586,32 @@ func parseFRRLikeStaticRoute(kind DeviceKind, path string, lineNo int, raw strin
 	return route, nil
 }
 
-func parseAggregateRoute(kind DeviceKind, path string, lineNo int, raw string, prefixText string) (ConfiguredRoute, error) {
+func parseAggregateRoute(kind DeviceKind, path string, lineNo int, raw string, fields []string) (ConfiguredRoute, error) {
+	if len(fields) < 2 {
+		return ConfiguredRoute{}, fmt.Errorf("unsupported %s aggregate-address statement", routeMapVendorName(kind))
+	}
+	prefixText := fields[1]
 	prefix, err := ParsePrefix(prefixText)
 	if err != nil {
 		return ConfiguredRoute{}, err
 	}
-	return ConfiguredRoute{
+	route := ConfiguredRoute{
 		NetworkInstance: NetworkInstanceDefault,
 		AFI:             AFIIPv4,
 		Prefix:          prefix,
 		Kind:            RouteSourceAggregate,
 		AdminDistance:   200,
 		Source:          PolicySource{Vendor: string(kind), File: path, Line: lineNo, Raw: raw},
-	}, nil
+	}
+	for _, opt := range fields[2:] {
+		switch opt {
+		case "summary-only":
+			route.SummaryOnly = true
+		default:
+			return ConfiguredRoute{}, fmt.Errorf("unsupported %s aggregate-address option %q", routeMapVendorName(kind), opt)
+		}
+	}
+	return route, nil
 }
 
 func parseFRRLikeRedistribution(kind DeviceKind, path string, lineNo int, raw string, fields []string) (BGPRedistribution, error) {
