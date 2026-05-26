@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/81ueman/network-sandbox/hoyan/internal/fibcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/ribcompare"
 )
@@ -22,6 +23,8 @@ type Options struct {
 	MaxPolls       int
 	StrictConfig   bool
 	CompareOptions ribcompare.BgpRibCompareOptions
+	CheckFIB       bool
+	FIBOptions     fibcompare.Options
 	KeepOnFailure  bool
 	SkipDestroy    bool
 	Out            io.Writer
@@ -106,6 +109,26 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 		return fmt.Errorf("live BGP RIB comparison found diff(s)")
 	}
 	fmt.Fprintln(opts.Out, "live BGP RIBs match modeled paths")
+	if opts.CheckFIB {
+		fibNodes := topo.Nodes
+		if opts.FIBOptions.AllowUnsupported {
+			fibNodes = fibcompare.SupportedNodes(fibNodes)
+		}
+		expectedFIB := fibcompare.ComparableRoutes(topo, fibcompare.ExpectedForNodes(topo, fibNodes), opts.FIBOptions)
+		actualFIB, err := fibcompare.Collect(deadlineCtx, runner, fibNodes, opts.FIBOptions)
+		if err != nil {
+			return err
+		}
+		actualFIB = fibcompare.ComparableRoutes(topo, actualFIB, opts.FIBOptions)
+		fibResult := fibcompare.Compare(expectedFIB, actualFIB)
+		for _, line := range fibcompare.FormatDiffs(fibResult) {
+			fmt.Fprintln(opts.Out, line)
+		}
+		if !fibResult.OK {
+			return fmt.Errorf("live FIB comparison found diff(s)")
+		}
+		fmt.Fprintln(opts.Out, "live FIBs match modeled forwarding entries")
+	}
 	if err := RunDataplaneChecks(deadlineCtx, runner, topo, queries, opts.Out); err != nil {
 		return err
 	}

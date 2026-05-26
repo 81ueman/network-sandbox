@@ -371,9 +371,11 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 	groupAS := map[string]uint32{}
 	groupImportPolicy := map[string]string{}
 	groupExportPolicy := map[string]string{}
+	groupNextHopSelf := map[string]bool{}
 	neighborGroup := map[string]string{}
 	neighborImportPolicy := map[string]string{}
 	neighborExportPolicy := map[string]string{}
+	neighborNextHopSelf := map[string]bool{}
 	prefixLists := map[string]*PrefixList{}
 	routePolicies := map[string]*RoutePolicy{}
 	srlACLs := map[string]map[int]*Policy{}
@@ -452,6 +454,9 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 			} else {
 				groupExportPolicy[group] = policy
 			}
+		case containsSeq(fields, "protocols", "bgp", "group") && containsSeq(fields, "next-hop-self"):
+			group := fieldAfter(fields, "group")
+			groupNextHopSelf[group] = true
 		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsSeq(fields, "peer-group"):
 			addr := fieldAfter(fields, "neighbor")
 			neighborGroup[addr] = fields[len(fields)-1]
@@ -470,6 +475,9 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 			} else {
 				neighborExportPolicy[addr] = policy
 			}
+		case containsSeq(fields, "protocols", "bgp", "neighbor") && containsSeq(fields, "next-hop-self"):
+			addr := fieldAfter(fields, "neighbor")
+			neighborNextHopSelf[addr] = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -482,12 +490,16 @@ func parseSRLinux(path, text string, collectWarnings bool) (ParseResult, error) 
 			Activated:    true,
 			ImportPolicy: groupImportPolicy[group],
 			ExportPolicy: groupExportPolicy[group],
+			NextHopSelf:  groupNextHopSelf[group],
 		}
 		if policy := neighborImportPolicy[addr]; policy != "" {
 			neighbor.ImportPolicy = policy
 		}
 		if policy := neighborExportPolicy[addr]; policy != "" {
 			neighbor.ExportPolicy = policy
+		}
+		if neighborNextHopSelf[addr] {
+			neighbor.NextHopSelf = true
 		}
 		cfg.Neighbors = append(cfg.Neighbors, neighbor)
 	}

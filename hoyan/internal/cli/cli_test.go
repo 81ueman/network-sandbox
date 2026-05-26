@@ -20,7 +20,7 @@ func TestRootHelpListsSubcommands(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	help := out.String()
-	for _, want := range []string{"verify", "live-check", "rib-compare", "render-topology", "model"} {
+	for _, want := range []string{"verify", "live-check", "rib-compare", "fib-compare", "render-topology", "model"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help output missing %q:\n%s", want, help)
 		}
@@ -52,6 +52,17 @@ func TestLiveCheckRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+func TestLiveCheckFIBCompareDefaultsOn(t *testing.T) {
+	cmd := NewLiveCheckCommand()
+	flag := cmd.Flags().Lookup("check-fib")
+	if flag == nil || flag.DefValue != "true" {
+		t.Fatalf("--check-fib default = %v, want true", flag)
+	}
+	if cmd.Flags().Lookup("no-check-fib") == nil {
+		t.Fatalf("--no-check-fib flag missing")
 	}
 }
 
