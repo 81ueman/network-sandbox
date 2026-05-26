@@ -14,6 +14,47 @@ pipelines made of ingress policy, route selector, and egress policy. BGP route
 updates populate an extended RIB with topology conditions, and the FIB is
 derived from the ranked RIB rules.
 
+## Scenario Labs
+
+Hoyan can run one top-level compatibility lab or scenario labs under
+`labs/<name>/`. A scenario lab contains:
+
+```text
+labs/<name>/
+  hoyan.clab.yml
+  configs/
+  intent/queries.yml
+  lab.yml
+  README.md
+```
+
+`lab.yml` documents the lab name, description, NOS mix, supported checks, and
+features under test. The initial scenario set is:
+
+- `labs/base-wan`: standard multi-region WAN with FRR, cEOS, and SR Linux.
+- `labs/acl-semantics`: ACL permit/deny/default-action and packet class checks.
+- `labs/recursive-nexthop`: recursive BGP next-hop and RIB/FIB diagnostics.
+
+Each scenario topology also uses a unique containerlab `name:` and management
+network, so parallel scenario deploys do not reuse the same `clab-...` container
+names or Docker network.
+
+Use `--lab` to select a scenario. When `--lab` is set, commands default to
+`<lab>/hoyan.clab.yml` and, for query-aware commands, `<lab>/intent/queries.yml`.
+Explicit `--topology` or `--queries` flags still override those defaults.
+
+```bash
+go run ./cmd/hoyan labs list
+go run ./cmd/hoyan labs describe base-wan
+go run ./cmd/hoyan labs live-check
+go run ./cmd/hoyan labs live-check base-wan recursive-nexthop
+go run ./cmd/hoyan verify --lab labs/base-wan
+go run ./cmd/hoyan live-check --lab labs/base-wan
+go run ./cmd/hoyan rib-compare --lab labs/recursive-nexthop
+go run ./cmd/hoyan fib-compare --lab labs/recursive-nexthop
+go run ./cmd/hoyan model packet-classes --lab labs/acl-semantics --prefix 10.4.0.0/16
+```
+
 ## Verify
 
 ```bash

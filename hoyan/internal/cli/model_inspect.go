@@ -22,6 +22,7 @@ const (
 )
 
 type modelInspectOptions struct {
+	labPath          string
 	topologyPath     string
 	queriesPath      string
 	node             string
@@ -207,9 +208,13 @@ func NewModelPrefixClassesCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			return runModelPrefixClasses(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix overlap filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
@@ -230,9 +235,13 @@ func NewModelPacketClassesCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, &opts.queriesPath); err != nil {
+				return err
+			}
 			return runModelPacketClasses(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML for packet predicates")
@@ -258,6 +267,9 @@ func NewModelRIBCommand() *cobra.Command {
 			if len(args) == 1 {
 				opts.protocol = args[0]
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			return runModelRIB(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
@@ -275,6 +287,9 @@ func NewModelFIBCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
 			}
 			return runModelFIB(cmd.Context(), opts, cmd.OutOrStdout())
 		},
@@ -294,9 +309,13 @@ func NewModelSymbolicPacketCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			return runModelSymbolicPacket(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
@@ -319,9 +338,13 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			return runModelSymbolicRoute(cmd.Context(), opts, cmd.OutOrStdout())
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
@@ -333,6 +356,7 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 }
 
 func addModelCommonFlags(cmd *cobra.Command, opts *modelInspectOptions) {
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().StringVar(&opts.node, "node", "", "node name filter")

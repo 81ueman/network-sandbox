@@ -20,10 +20,86 @@ func TestRootHelpListsSubcommands(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	help := out.String()
-	for _, want := range []string{"verify", "live-check", "rib-compare", "fib-compare", "render-topology", "model"} {
+	for _, want := range []string{"verify", "live-check", "rib-compare", "fib-compare", "render-topology", "labs", "model"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help output missing %q:\n%s", want, help)
 		}
+	}
+}
+
+func TestLabFlagResolvesDefaultInputs(t *testing.T) {
+	dir := t.TempDir()
+	labDir := filepath.Join(dir, "labs", "base-wan")
+	if err := os.MkdirAll(filepath.Join(labDir, "intent"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(labDir, "lab.yml"), []byte("name: base-wan\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lab.yml) error = %v", err)
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	cmd := NewVerifyCommand()
+	cmd.SetArgs([]string{"--lab", "base-wan"})
+	if err := cmd.ParseFlags([]string{"--lab", "base-wan"}); err != nil {
+		t.Fatalf("ParseFlags() error = %v", err)
+	}
+	topology := defaultTopologyPath
+	queries := defaultQueriesPath
+	if err := resolveLabInputs(cmd, "base-wan", &topology, &queries); err != nil {
+		t.Fatalf("resolveLabInputs() error = %v", err)
+	}
+	if want := filepath.Join("labs", "base-wan", "hoyan.clab.yml"); topology != want {
+		t.Fatalf("topology = %q, want %q", topology, want)
+	}
+	if want := filepath.Join("labs", "base-wan", "intent", "queries.yml"); queries != want {
+		t.Fatalf("queries = %q, want %q", queries, want)
+	}
+}
+
+func TestLabFlagKeepsExplicitTopology(t *testing.T) {
+	dir := t.TempDir()
+	labDir := filepath.Join(dir, "labs", "base-wan")
+	if err := os.MkdirAll(labDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	cmd := NewVerifyCommand()
+	if err := cmd.ParseFlags([]string{"--lab", "base-wan", "--topology", "custom.yml"}); err != nil {
+		t.Fatalf("ParseFlags() error = %v", err)
+	}
+	topology := "custom.yml"
+	queries := defaultQueriesPath
+	if err := resolveLabInputs(cmd, "base-wan", &topology, &queries); err != nil {
+		t.Fatalf("resolveLabInputs() error = %v", err)
+	}
+	if topology != "custom.yml" {
+		t.Fatalf("topology = %q, want explicit custom.yml", topology)
+	}
+	if want := filepath.Join("labs", "base-wan", "intent", "queries.yml"); queries != want {
+		t.Fatalf("queries = %q, want %q", queries, want)
 	}
 }
 
@@ -39,6 +115,21 @@ func TestModelHelpListsPacketClasses(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "packet-classes") {
 		t.Fatalf("help output missing packet-classes:\n%s", out.String())
+	}
+}
+
+func TestLabsHelpListsLiveCheck(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewLabsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "live-check") {
+		t.Fatalf("help output missing live-check:\n%s", out.String())
 	}
 }
 
@@ -90,6 +181,41 @@ func TestFIBCompareUnresolvedPolicyFlagDefault(t *testing.T) {
 	flag := cmd.Flags().Lookup("unresolved-policy")
 	if flag == nil || flag.DefValue != "warn" {
 		t.Fatalf("--unresolved-policy default = %v, want warn", flag)
+	}
+}
+
+func TestSelectedLabDescriptorsDefaultsToAllLabsSorted(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"z-lab", "a-lab"} {
+		labDir := filepath.Join(dir, "labs", name)
+		if err := os.MkdirAll(labDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(labDir, "lab.yml"), []byte("name: "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(lab.yml) error = %v", err)
+		}
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	labs, err := selectedLabDescriptors(nil)
+	if err != nil {
+		t.Fatalf("selectedLabDescriptors() error = %v", err)
+	}
+	got := []string{labs[0].Name, labs[1].Name}
+	want := []string{"a-lab", "z-lab"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("labs = %v, want %v", got, want)
 	}
 }
 
