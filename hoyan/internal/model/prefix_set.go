@@ -7,8 +7,14 @@ import (
 )
 
 type PrefixSet interface {
+	// ContainsPrefix reports whether a route prefix/NLRI matches this predicate.
+	// PrefixRangeSet applies its ge/le prefix-length constraints here.
 	ContainsPrefix(prefix Prefix) bool
+	// ContainsAddr reports whether a packet address is inside this set's address
+	// space. PrefixRangeSet ge/le constraints are not applied to addresses.
 	ContainsAddr(addr netip.Addr) bool
+	// Overlaps reports address-space overlap. Use NLRIPredicateOverlaps when
+	// comparing route prefix/NLRI predicates with ge/le semantics.
 	Overlaps(other PrefixSet) bool
 	String() string
 }
@@ -24,7 +30,7 @@ func (AnyPrefixSet) ContainsAddr(addr netip.Addr) bool {
 }
 
 func (AnyPrefixSet) Overlaps(other PrefixSet) bool {
-	return other != nil
+	return AddressSpaceOverlaps(AnyPrefixSet{}, other)
 }
 
 func (AnyPrefixSet) String() string {
@@ -44,10 +50,7 @@ func (s ExactPrefixSet) ContainsAddr(addr netip.Addr) bool {
 }
 
 func (s ExactPrefixSet) Overlaps(other PrefixSet) bool {
-	if other == nil {
-		return false
-	}
-	return prefixesOverlapWith(other, s.Prefix)
+	return AddressSpaceOverlaps(s, other)
 }
 
 func (s ExactPrefixSet) String() string {
@@ -71,24 +74,11 @@ func (s PrefixRangeSet) ContainsAddr(addr netip.Addr) bool {
 	if !addr.IsValid() || s.Base.IsZero() || addr.BitLen() != s.Base.Addr().BitLen() {
 		return false
 	}
-	bits := addr.BitLen()
-	return s.Base.Contains(addr) && bits >= s.MinLen && bits <= s.MaxLen
+	return s.Base.Contains(addr)
 }
 
 func (s PrefixRangeSet) Overlaps(other PrefixSet) bool {
-	if other == nil {
-		return false
-	}
-	switch o := other.(type) {
-	case AnyPrefixSet:
-		return true
-	case ExactPrefixSet:
-		return s.ContainsPrefix(o.Prefix)
-	case PrefixRangeSet:
-		return prefixRangeSetsOverlap(s, o)
-	default:
-		return prefixesOverlapWith(other, s.Base)
-	}
+	return AddressSpaceOverlaps(s, other)
 }
 
 func (s PrefixRangeSet) String() string {
@@ -125,15 +115,7 @@ func (s UnionPrefixSet) ContainsAddr(addr netip.Addr) bool {
 }
 
 func (s UnionPrefixSet) Overlaps(other PrefixSet) bool {
-	if other == nil {
-		return false
-	}
-	for _, set := range s.Sets {
-		if set != nil && set.Overlaps(other) {
-			return true
-		}
-	}
-	return false
+	return AddressSpaceOverlaps(s, other)
 }
 
 func (s UnionPrefixSet) String() string {
@@ -174,17 +156,126 @@ func NewPrefixSet(prefix string, ge, le int) (PrefixSet, error) {
 	return PrefixRangeSet{Base: base, MinLen: minLen, MaxLen: maxLen}, nil
 }
 
-func prefixesOverlapWith(set PrefixSet, prefix Prefix) bool {
-	if set.ContainsPrefix(prefix) {
+func AddressSpaceContains(set PrefixSet, addr netip.Addr) bool {
+	return set != nil && set.ContainsAddr(addr)
+}
+
+func MatchesNLRI(set PrefixSet, prefix Prefix) bool {
+	return set != nil && set.ContainsPrefix(prefix)
+}
+
+func AddressSpaceOverlaps(a, b PrefixSet) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	switch aa := a.(type) {
+	case AnyPrefixSet:
 		return true
+	case ExactPrefixSet:
+		return prefixAddressSpaceOverlaps(b, aa.Prefix)
+	case PrefixRangeSet:
+		return prefixAddressSpaceOverlaps(b, aa.Base)
+	case UnionPrefixSet:
+		for _, child := range aa.Sets {
+			if AddressSpaceOverlaps(child, b) {
+				return true
+			}
+		}
+		return false
+	default:
+		return b.ContainsAddr(firstAddressForSet(a))
 	}
-	if r, ok := set.(PrefixRangeSet); ok {
-		return r.Base.Overlaps(prefix)
+}
+
+func NLRIPredicateOverlaps(a, b PrefixSet) bool {
+	if a == nil || b == nil {
+		return false
 	}
-	if e, ok := set.(ExactPrefixSet); ok {
-		return e.Prefix.Overlaps(prefix)
+	switch aa := a.(type) {
+	case AnyPrefixSet:
+		return true
+	case ExactPrefixSet:
+		return b.ContainsPrefix(aa.Prefix)
+	case PrefixRangeSet:
+		switch bb := b.(type) {
+		case AnyPrefixSet:
+			return true
+		case ExactPrefixSet:
+			return aa.ContainsPrefix(bb.Prefix)
+		case PrefixRangeSet:
+			return prefixRangeSetsOverlap(aa, bb)
+		case UnionPrefixSet:
+			return NLRIPredicateOverlaps(bb, aa)
+		default:
+			return b.ContainsPrefix(aa.Base)
+		}
+	case UnionPrefixSet:
+		for _, child := range aa.Sets {
+			if NLRIPredicateOverlaps(child, b) {
+				return true
+			}
+		}
+		return false
+	default:
+		return b.ContainsPrefix(firstPrefixForSet(a))
 	}
-	return set.ContainsAddr(prefix.Addr())
+}
+
+func prefixAddressSpaceOverlaps(set PrefixSet, prefix Prefix) bool {
+	if prefix.IsZero() {
+		return false
+	}
+	switch s := set.(type) {
+	case AnyPrefixSet:
+		return true
+	case ExactPrefixSet:
+		return s.Prefix.Overlaps(prefix)
+	case PrefixRangeSet:
+		return s.Base.Overlaps(prefix)
+	case UnionPrefixSet:
+		for _, child := range s.Sets {
+			if prefixAddressSpaceOverlaps(child, prefix) {
+				return true
+			}
+		}
+		return false
+	default:
+		return set.ContainsAddr(prefix.Addr())
+	}
+}
+
+func firstAddressForSet(set PrefixSet) netip.Addr {
+	switch s := set.(type) {
+	case ExactPrefixSet:
+		return s.Prefix.Addr()
+	case PrefixRangeSet:
+		return s.Base.Addr()
+	case UnionPrefixSet:
+		for _, child := range s.Sets {
+			addr := firstAddressForSet(child)
+			if addr.IsValid() {
+				return addr
+			}
+		}
+	}
+	return netip.Addr{}
+}
+
+func firstPrefixForSet(set PrefixSet) Prefix {
+	switch s := set.(type) {
+	case ExactPrefixSet:
+		return s.Prefix
+	case PrefixRangeSet:
+		return s.Base
+	case UnionPrefixSet:
+		for _, child := range s.Sets {
+			prefix := firstPrefixForSet(child)
+			if !prefix.IsZero() {
+				return prefix
+			}
+		}
+	}
+	return Prefix{}
 }
 
 func prefixRangeSetsOverlap(a, b PrefixRangeSet) bool {

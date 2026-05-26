@@ -136,7 +136,7 @@ func prefixListRuleMatches(rule model.PrefixListRule, want model.Prefix) bool {
 			return false
 		}
 	}
-	return match.ContainsPrefix(want)
+	return model.MatchesNLRI(match, want)
 }
 
 func asPathListPermits(node model.Node, name string, asPath []uint32) bool {

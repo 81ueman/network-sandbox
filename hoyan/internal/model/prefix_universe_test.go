@@ -135,6 +135,39 @@ func TestBuildPrefixUniverseRangeAndSpecificPredicateMatches(t *testing.T) {
 	}
 }
 
+func TestPrefixUniverseSeparatesAddressSpaceAndNLRIPredicateKinds(t *testing.T) {
+	rangeSet, err := NewPrefixSet("10.0.0.0/8", 16, 24)
+	if err != nil {
+		t.Fatalf("NewPrefixSet() error = %v", err)
+	}
+	packetHost := ExactPrefixSet{Prefix: MustPrefix("10.4.1.10/32")}
+	universe, err := BuildPrefixUniverseFromPredicates([]PrefixPredicate{
+		{ID: 0, Source: "prefix-list:PL:10", Kind: PredicateNLRI, Set: rangeSet},
+		{ID: 1, Source: "query-packet:packet", Kind: PredicateAddressSpace, Set: packetHost},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverseFromPredicates() error = %v", err)
+	}
+	id, ok := universe.ClassForPrefix(MustPrefix("10.4.1.10/32"))
+	if !ok {
+		t.Fatalf("ClassForPrefix() did not find packet host class")
+	}
+	if got, want := universe.PredicatesForClass(id), []PrefixPredicateID{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PredicatesForClass(packet host) = %#v, want %#v", got, want)
+	}
+	foundRangeClass := false
+	for _, class := range universe.Classes {
+		matches := universe.PredicatesForClass(class.ID)
+		if containsPrefixPredicateID(matches, 0) && !containsPrefixPredicateID(matches, 1) {
+			foundRangeClass = true
+			break
+		}
+	}
+	if !foundRangeClass {
+		t.Fatalf("universe classes = %#v, want at least one class matching only the NLRI range predicate", universe.Classes)
+	}
+}
+
 func TestBuildPrefixUniverseRejectsIPv6Explicitly(t *testing.T) {
 	_, err := BuildPrefixUniverse([]PrefixSet{
 		ExactPrefixSet{Prefix: MustPrefix("2001:db8::/32")},
@@ -142,6 +175,15 @@ func TestBuildPrefixUniverseRejectsIPv6Explicitly(t *testing.T) {
 	if err == nil {
 		t.Fatalf("BuildPrefixUniverse() error = nil, want IPv4-only error")
 	}
+}
+
+func containsPrefixPredicateID(ids []PrefixPredicateID, want PrefixPredicateID) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCollectPrefixPredicateMetadataSources(t *testing.T) {

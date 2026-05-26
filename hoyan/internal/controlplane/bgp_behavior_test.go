@@ -49,6 +49,29 @@ func TestInterfaceMatchesAliases(t *testing.T) {
 	}
 }
 
+func TestPolicyDecisionDstPrefixUsesAddressSpaceSemantics(t *testing.T) {
+	decision := policyDecision(
+		"r1",
+		"",
+		"eth1",
+		model.PacketSpec{DstSet: model.PrefixRangeSet{Base: model.MustPrefix("10.0.0.0/8"), MinLen: 16, MaxLen: 24}, Protocol: "tcp"},
+		"data",
+		"egress",
+		[]model.Policy{{
+			Name:      "deny-aggregate",
+			Node:      "r1",
+			Action:    "deny",
+			Plane:     "data",
+			Stage:     "egress",
+			Protocol:  "tcp",
+			DstPrefix: model.MustPrefix("10.4.0.0/16"),
+		}},
+	)
+	if !decision.Denied {
+		t.Fatalf("policyDecision() did not match overlapping packet destination address space")
+	}
+}
+
 func TestBaseBGPExportRoute(t *testing.T) {
 	behavior := NewGenericBehavior("generic")
 	ebgpFrom := model.Node{Name: "r1", ASN: 65001}

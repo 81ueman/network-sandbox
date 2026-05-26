@@ -186,7 +186,7 @@ func (e *Engine) originatesPrefixSet(node string, dst model.PrefixSet) bool {
 		return false
 	}
 	for _, raw := range n.Prefixes {
-		if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
+		if !raw.IsZero() && model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: raw}, dst) {
 			return true
 		}
 	}
@@ -199,7 +199,7 @@ func (e *Engine) hasOriginForPrefixSet(dst model.PrefixSet) bool {
 	}
 	for _, node := range e.idx.NodesByName {
 		for _, raw := range node.Prefixes {
-			if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
+			if !raw.IsZero() && model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: raw}, dst) {
 				return true
 			}
 		}

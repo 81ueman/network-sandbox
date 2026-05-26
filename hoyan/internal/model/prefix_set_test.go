@@ -37,6 +37,16 @@ func TestPrefixRangeSetContainsPrefixByContainmentAndLength(t *testing.T) {
 	}
 }
 
+func TestPrefixRangeSetContainsAddrIgnoresPrefixLengthBounds(t *testing.T) {
+	set := PrefixRangeSet{Base: MustPrefix("10.0.0.0/8"), MinLen: 16, MaxLen: 24}
+	if !set.ContainsAddr(netip.MustParseAddr("10.4.1.10")) {
+		t.Fatalf("range set should contain packet address inside base prefix")
+	}
+	if set.ContainsAddr(netip.MustParseAddr("192.0.2.10")) {
+		t.Fatalf("range set should reject packet address outside base prefix")
+	}
+}
+
 func TestNewPrefixSetBuildsExactAnyAndRangeSets(t *testing.T) {
 	exact, err := NewPrefixSet("10.0.0.0/24", 0, 0)
 	if err != nil {
@@ -70,5 +80,24 @@ func TestPrefixSetOverlaps(t *testing.T) {
 	}
 	if a.Overlaps(c) || c.Overlaps(a) {
 		t.Fatalf("disjoint prefix sets should not overlap")
+	}
+}
+
+func TestPrefixSetAddressSpaceAndNLRIPredicateOverlapDiffer(t *testing.T) {
+	ranged := PrefixRangeSet{Base: MustPrefix("10.0.0.0/8"), MinLen: 16, MaxLen: 24}
+	base := ExactPrefixSet{Prefix: MustPrefix("10.0.0.0/8")}
+	packetHost := ExactPrefixSet{Prefix: MustPrefix("10.4.1.10/32")}
+
+	if !AddressSpaceOverlaps(ranged, base) {
+		t.Fatalf("address-space overlap should ignore ge/le bounds")
+	}
+	if NLRIPredicateOverlaps(ranged, base) {
+		t.Fatalf("NLRI predicate overlap should reject prefixes shorter than ge")
+	}
+	if !AddressSpaceOverlaps(ranged, packetHost) {
+		t.Fatalf("address-space overlap should include host inside range base")
+	}
+	if NLRIPredicateOverlaps(ranged, packetHost) {
+		t.Fatalf("NLRI predicate overlap should reject host prefix longer than le")
 	}
 }

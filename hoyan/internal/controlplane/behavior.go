@@ -131,7 +131,7 @@ func policyDecision(node, peer, iface string, spec model.PacketSpec, plane, stag
 			continue
 		}
 		if !pol.SrcPrefix.IsZero() {
-			if spec.SrcSet == nil || !(model.ExactPrefixSet{Prefix: pol.SrcPrefix}).Overlaps(spec.SrcSet) {
+			if spec.SrcSet == nil || !model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: pol.SrcPrefix}, spec.SrcSet) {
 				continue
 			}
 		}
@@ -143,7 +143,7 @@ func policyDecision(node, peer, iface string, spec model.PacketSpec, plane, stag
 		}
 		if !pol.DstPrefix.IsZero() {
 			if spec.DstSet != nil {
-				if !(model.ExactPrefixSet{Prefix: pol.DstPrefix}).Overlaps(spec.DstSet) {
+				if !model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: pol.DstPrefix}, spec.DstSet) {
 					continue
 				}
 			} else {
