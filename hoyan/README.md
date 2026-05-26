@@ -47,6 +47,8 @@ To verify by prefix equivalence class, enable PrefixUniverse expansion:
 ```bash
 go run ./cmd/hoyan verify --prefix-classes
 go run ./cmd/hoyan verify --prefix-classes --no-collapse
+go run ./cmd/hoyan verify --prefix-classes --show-prefix-universe-stats
+go run ./cmd/hoyan verify --prefix-classes --max-prefix-classes 10000
 go run ./cmd/hoyan verify --prefix-classes --format json
 ```
 
@@ -55,20 +57,27 @@ prefix-list and policy predicates, query destinations, and modeled RIB/FIB
 prefixes. Route, packet, and failure checks are expanded across matching
 classes. The default output collapses classes with identical reachability,
 expected result, counterexample, reason, and symbolic conditions; `--no-collapse`
-prints each class result separately. JSON output includes `class_id` or
-`class_ids`, `space` or `spaces`, `matched_predicates`, `reachable_condition`,
-and `unreachable_condition`.
+prints each class result separately.
+
+`--format json` emits a structured report object with `results`. Each result
+has common `name`, `type`, and `metadata` fields, then stores query-specific
+payload under `route`, `packet`, or `failure`. Prefix class information is kept
+separately under `prefix_class`, so route, packet, failure, and prefix-class
+semantics can evolve without overloading a single flat result object.
 
 Data-plane policies are parsed from the device startup configs.
 Linux/FRR data-plane ACLs are stored as nftables rulesets under
 `configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
 `hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
 
-The normal build uses a small solver for failure sets. The legacy
-`FailureProblem` path still passes already-enumerated bad combinations to the
-backend; that mode does not encode reachability itself. Packet reachability can
-also be converted to a symbolic BoolExpr goal (`NOT(reachable)`) and solved by
-the symbolic backend without first materializing every bad combo. With Z3:
+Failure search in the normal verifier path is symbolic-only. Route, packet,
+prefix-set, and prefix-class targets must implement `sim.SymbolicTarget`, and
+the verifier builds a symbolic `NOT(reachable)` goal for the solver instead of
+falling back to pre-enumerated forbidden failure combinations. The legacy
+enumerated `FailureProblem` helper remains as a small test/parity oracle for
+solver regression coverage, not as the verify-time fallback. JSON verify output
+for results that run failure search includes a `solver` trace with backend,
+candidate element count, and maximum failure budget. With Z3:
 
 ```bash
 go run -tags z3 ./cmd/hoyan verify
@@ -121,6 +130,12 @@ Packet and failure queries can specify either a single destination port with
 `dst_port: 80` or a set of ports with `dst_ports: [80, 443]`; multi-port
 queries are expanded into one result per port and therefore one packet class
 per port boundary.
+Add `--summary` to `model prefix-classes` to print PrefixUniverse build
+statistics, including predicate count, unique predicate count, class count,
+build duration, max CIDRs per class, and predicate source categories. Use
+`--max-prefix-classes` with either `verify --prefix-classes` or
+`model prefix-classes` to fail early when class expansion exceeds the requested
+guard.
 `model symbolic-route --prefix` uses the same request-aware PrefixUniverse and
 emits one symbolic route result per matching class, including `class_id`,
 `space`, and reachable/unreachable conditions. JSON output still includes

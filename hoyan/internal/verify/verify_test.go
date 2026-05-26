@@ -24,12 +24,12 @@ func TestRunBundledQueries(t *testing.T) {
 	for _, result := range report.Results {
 		switch result.Name {
 		case "bj-client-to-hz-http-denied", "bj-client-to-hz-http-denied-live-linux-acl", "sh-client-to-hz-http-denied-live-ceos", "gz-client-to-hz-http-denied-live-srlinux":
-			if result.Reachable {
+			if result.Metadata.Reachable {
 				t.Fatalf("%s should be denied", result.Name)
 			}
 		case "bj-client-to-hz-https-allowed-linux-acl", "sh-client-to-hz-https-allowed-ceos", "gz-client-to-hz-https-allowed-srlinux":
-			if !result.Reachable {
-				t.Fatalf("%s should be allowed: %s", result.Name, result.Reason)
+			if !result.Metadata.Reachable {
+				t.Fatalf("%s should be allowed: %s", result.Name, result.Metadata.Reason)
 			}
 		}
 	}
@@ -50,18 +50,18 @@ func TestRunWithOptionsExpandsPrefixClasses(t *testing.T) {
 	}
 	var foundRouteClass, foundPacketClass, foundFailureClass bool
 	for _, result := range report.Results {
-		if len(result.PrefixClassIDs) == 0 || len(result.PrefixSpaces) == 0 || len(result.MatchedPredicates) == 0 {
+		if result.PrefixClass == nil || len(result.PrefixClass.ClassIDs) == 0 || len(result.PrefixClass.Spaces) == 0 || len(result.PrefixClass.MatchedPredicates) == 0 {
 			t.Fatalf("result missing prefix-class metadata: %#v", result)
 		}
-		if result.ReachableCondition == "" || result.UnreachableCondition == "" {
+		if result.ReachableCondition() == "" || result.UnreachableCondition() == "" {
 			t.Fatalf("result missing symbolic conditions: %#v", result)
 		}
-		switch result.QueryType {
-		case "route":
+		switch result.Type {
+		case QueryTypeRoute:
 			foundRouteClass = true
-		case "packet":
+		case QueryTypePacket:
 			foundPacketClass = true
-		case "failure":
+		case QueryTypeFailure:
 			foundFailureClass = true
 		}
 	}
@@ -85,7 +85,7 @@ func TestRunWithOptionsCollapsesEquivalentPrefixClassResults(t *testing.T) {
 		t.Fatalf("collapsed results = %d, raw results = %d; want fewer collapsed results", len(collapsed.Results), len(raw.Results))
 	}
 	for _, result := range collapsed.Results {
-		if len(result.PrefixClassIDs) == 0 {
+		if result.PrefixClass == nil || len(result.PrefixClass.ClassIDs) == 0 {
 			t.Fatalf("collapsed result missing class list: %#v", result)
 		}
 	}
@@ -137,29 +137,31 @@ func TestRouteCheckPrefixClassesEvaluateClassSpace(t *testing.T) {
 	var routedClass, unroutedClass *model.PrefixClassID
 	for i := range report.Results {
 		result := report.Results[i]
-		if result.QueryType != "route" {
+		if result.Type != QueryTypeRoute {
 			continue
 		}
-		if result.ReachableCondition == "" || result.UnreachableCondition == "" {
+		if result.ReachableCondition() == "" || result.UnreachableCondition() == "" {
 			t.Fatalf("route class result missing symbolic conditions: %#v", result)
 		}
-		if strings.Contains(result.PrefixSpace, "10.0.1.0/24") {
-			if !result.Reachable {
+		if result.PrefixClass != nil && strings.Contains(result.PrefixClass.Space, "10.0.1.0/24") {
+			if !result.Metadata.Reachable {
 				t.Fatalf("route class for advertised /24 should be reachable: %#v", result)
 			}
-			if len(result.Counterexample) == 0 || result.Counterexample[0] != "src-dst" {
-				t.Fatalf("reachable class counterexample = %v, want src-dst", result.Counterexample)
+			if counterexample := result.Counterexample(); len(counterexample) == 0 || counterexample[0] != "src-dst" {
+				t.Fatalf("reachable class counterexample = %v, want src-dst", counterexample)
 			}
-			routedClass = result.PrefixClassID
+			routedClass = result.PrefixClass.ClassID
 			continue
 		}
-		if result.Reachable {
+		if result.Metadata.Reachable {
 			t.Fatalf("non-advertised class should be unreachable: %#v", result)
 		}
-		if len(result.Counterexample) != 0 {
+		if len(result.Counterexample()) != 0 {
 			t.Fatalf("unreachable class should not get a resilience counterexample: %#v", result)
 		}
-		unroutedClass = result.PrefixClassID
+		if result.PrefixClass != nil {
+			unroutedClass = result.PrefixClass.ClassID
+		}
 	}
 	if routedClass == nil || unroutedClass == nil || *routedClass == *unroutedClass {
 		t.Fatalf("did not find distinct reachable/unreachable route classes: %#v", report.Results)

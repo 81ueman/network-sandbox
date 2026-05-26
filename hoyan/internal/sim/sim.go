@@ -42,23 +42,6 @@ type Graph struct {
 	fib       map[string][]FIBEntry
 }
 
-type Result struct {
-	Name                 string                `json:"name"`
-	QueryType            string                `json:"query_type,omitempty"`
-	Reachable            bool                  `json:"reachable"`
-	Expected             bool                  `json:"expected"`
-	Path                 Path                  `json:"path,omitempty"`
-	Counterexample       []string              `json:"counterexample,omitempty"`
-	Reason               string                `json:"reason,omitempty"`
-	PrefixClassID        *model.PrefixClassID  `json:"class_id,omitempty"`
-	PrefixClassIDs       []model.PrefixClassID `json:"class_ids,omitempty"`
-	PrefixSpace          string                `json:"space,omitempty"`
-	PrefixSpaces         []string              `json:"spaces,omitempty"`
-	MatchedPredicates    []string              `json:"matched_predicates,omitempty"`
-	ReachableCondition   string                `json:"reachable_condition,omitempty"`
-	UnreachableCondition string                `json:"unreachable_condition,omitempty"`
-}
-
 func NoFailures() FailureSet { return failure.None() }
 func LinkFailures(names ...model.LinkID) FailureSet {
 	return failure.Links(names...)
@@ -228,29 +211,59 @@ func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int
 }
 
 func (g *Graph) FindBreakingFailuresWithOptions(from string, target Target, opts FailureSearchOptions) ([]solver.FailureElement, bool) {
-	if opts.MaxFailures < 0 {
-		return nil, false
-	}
-	elements := g.failureElements(opts)
-	if len(elements) == 0 {
-		return nil, false
-	}
-	if problem, ok := g.symbolicFailureProblem(from, target, opts, elements); ok {
-		if ans, ok := solveSymbolicFailureProblem(problem); ok {
-			return ans, true
-		}
-		return nil, false
-	}
-	forbidden := g.enumerateForbiddenFailures(from, target, opts, elements)
-	ans, ok := solveEnumeratedFailureProblem(solver.FailureProblem{
-		Elements:    elements,
-		MaxFailures: opts.MaxFailures,
-		Forbidden:   forbidden,
-	})
+	symbolicTarget, ok := target.(SymbolicTarget)
 	if !ok {
 		return nil, false
 	}
-	return ans, true
+	result, err := g.FindBreakingFailuresSymbolic(from, symbolicTarget, opts)
+	if err != nil || !result.Sat {
+		return nil, false
+	}
+	return result.Failures, true
+}
+
+type FailureSearchResult struct {
+	Sat      bool
+	Failures []solver.FailureElement
+	Solver   SolverTrace
+}
+
+type SolverTrace struct {
+	Backend     string `json:"backend,omitempty"`
+	Elements    int    `json:"elements"`
+	MaxFailures int    `json:"max_failures"`
+}
+
+func (g *Graph) FindBreakingFailuresSymbolic(from string, target SymbolicTarget, opts FailureSearchOptions) (FailureSearchResult, error) {
+	trace := SolverTrace{
+		MaxFailures: opts.MaxFailures,
+	}
+	if opts.MaxFailures < 0 {
+		return FailureSearchResult{Solver: trace}, fmt.Errorf("max failures must be non-negative")
+	}
+	elements := g.failureElements(opts)
+	trace.Elements = len(elements)
+	if len(elements) == 0 {
+		return FailureSearchResult{Solver: trace}, fmt.Errorf("failure search has no candidate failure elements")
+	}
+	problem := g.symbolicFailureProblem(from, target, opts, elements)
+	ans, err := solveSymbolicFailureProblem(problem)
+	if ans.Backend != "" {
+		trace.Backend = ans.Backend
+	}
+	result := FailureSearchResult{Sat: ans.Sat, Failures: ans.Failures, Solver: trace}
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (g *Graph) FindBreakingFailuresTargetSymbolic(from string, target Target, opts FailureSearchOptions) (FailureSearchResult, error) {
+	symbolicTarget, ok := target.(SymbolicTarget)
+	if !ok {
+		return FailureSearchResult{}, fmt.Errorf("failure search target %T does not implement sim.SymbolicTarget", target)
+	}
+	return g.FindBreakingFailuresSymbolic(from, symbolicTarget, opts)
 }
 
 func (g *Graph) failureElements(opts FailureSearchOptions) []solver.FailureElement {
@@ -260,72 +273,40 @@ func (g *Graph) failureElements(opts FailureSearchOptions) []solver.FailureEleme
 	return failure.SearchElements(g.topo, opts)
 }
 
-func (g *Graph) enumerateForbiddenFailures(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) [][]solver.FailureElement {
-	var forbidden [][]solver.FailureElement
-	for k := 0; k <= opts.MaxFailures; k++ {
-		failure.FindElementCombo(elements, k, 0, nil, func(combo []solver.FailureElement) bool {
-			if !target.Reachable(g, from, FailureSetFromElements(combo)) {
-				forbidden = append(forbidden, append([]solver.FailureElement(nil), combo...))
-			}
-			return false
-		})
-	}
-	return forbidden
-}
-
-func solveEnumeratedFailureProblem(problem solver.FailureProblem) ([]solver.FailureElement, bool) {
-	ans, err := solver.DefaultBackend().Solve(problem)
-	if err != nil || !ans.Sat {
-		return nil, false
-	}
-	return ans.Failures, true
-}
-
-func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureSearchOptions, elements []solver.FailureElement) (solver.SymbolicFailureProblem, bool) {
-	var goal failure.Cond
-	switch t := target.(type) {
-	case PacketTarget:
-		result := g.SymbolicPacketReachabilitySpec(from, t.To, t.Spec())
-		goal = result.Unreachable
-	case PacketPrefixTarget:
-		result := g.SymbolicPacketReachabilityForPrefixSetSpec(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Spec())
-		goal = result.Unreachable
-	case PacketClassTarget:
-		result := t.symbolicReachability(g, from)
-		goal = result.Unreachable
-	case PrefixTarget:
-		result := g.SymbolicRouteReachability(from, string(t))
-		goal = result.Unreachable
-	case RoutePrefixSetTarget:
-		result := g.SymbolicRouteReachabilityForPrefixSet(from, t.Space)
-		goal = result.Unreachable
-	case RouteClassTarget:
-		result := t.symbolicReachability(g, from)
-		goal = result.Unreachable
-	default:
-		return solver.SymbolicFailureProblem{}, false
-	}
+func (g *Graph) symbolicFailureProblem(from string, target SymbolicTarget, opts FailureSearchOptions, elements []solver.FailureElement) solver.SymbolicFailureProblem {
+	result := target.SymbolicResult(g, from)
 	return solver.SymbolicFailureProblem{
 		Elements:    elements,
 		MaxFailures: opts.MaxFailures,
-		Goal:        failure.BoolExpr(goal),
-	}, true
+		Goal:        failure.BoolExpr(result.Unreachable),
+	}
 }
 
-func solveSymbolicFailureProblem(problem solver.SymbolicFailureProblem) ([]solver.FailureElement, bool) {
+func solveSymbolicFailureProblem(problem solver.SymbolicFailureProblem) (solver.Answer, error) {
 	backend, ok := solver.DefaultBackend().(solver.SymbolicBackend)
 	if !ok {
-		return nil, false
+		return solver.Answer{}, fmt.Errorf("solver backend does not support symbolic failure problems")
 	}
 	ans, err := backend.SolveSymbolic(problem)
-	if err != nil || !ans.Sat {
-		return nil, false
+	if err != nil {
+		return ans, err
 	}
-	return ans.Failures, true
+	return ans, nil
 }
 
 type Target interface {
 	Reachable(g *Graph, from string, failures FailureSet) bool
+}
+
+type SymbolicTarget interface {
+	Target
+	SymbolicResult(g *Graph, from string) SymbolicTargetResult
+}
+
+type SymbolicTargetResult struct {
+	Reachable   failure.Cond
+	Unreachable failure.Cond
+	Reason      string
 }
 
 type PrefixTarget string
@@ -335,6 +316,11 @@ func (t PrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool
 	return ok
 }
 
+func (t PrefixTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := g.SymbolicRouteReachability(from, string(t))
+	return routeSymbolicTargetResult(result)
+}
+
 type RoutePrefixSetTarget struct {
 	Space model.PrefixSet
 }
@@ -342,6 +328,11 @@ type RoutePrefixSetTarget struct {
 func (t RoutePrefixSetTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
 	_, ok := g.RouteReachableForPrefixSet(from, t.Space, failures)
 	return ok
+}
+
+func (t RoutePrefixSetTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := g.SymbolicRouteReachabilityForPrefixSet(from, t.Space)
+	return routeSymbolicTargetResult(result)
 }
 
 type RouteClassTarget struct {
@@ -358,6 +349,11 @@ func (t RouteClassTarget) symbolicReachability(g *Graph, from string) SymbolicRo
 	return g.SymbolicRouteReachabilityForClass(from, t.Universe, t.ClassID)
 }
 
+func (t RouteClassTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := t.symbolicReachability(g, from)
+	return routeSymbolicTargetResult(result)
+}
+
 type PacketTarget struct {
 	To       string
 	Protocol string
@@ -371,6 +367,11 @@ func (t PacketTarget) Reachable(g *Graph, from string, failures FailureSet) bool
 
 func (t PacketTarget) Spec() model.PacketSpec {
 	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
+}
+
+func (t PacketTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := g.SymbolicPacketReachabilitySpec(from, t.To, t.Spec())
+	return packetSymbolicTargetResult(result)
 }
 
 type PacketPrefixTarget struct {
@@ -389,6 +390,11 @@ func (t PacketPrefixTarget) Reachable(g *Graph, from string, failures FailureSet
 
 func (t PacketPrefixTarget) Spec() model.PacketSpec {
 	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
+}
+
+func (t PacketPrefixTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := g.SymbolicPacketReachabilityForPrefixSetSpec(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Spec())
+	return packetSymbolicTargetResult(result)
 }
 
 type PacketClassTarget struct {
@@ -420,6 +426,11 @@ func (t PacketClassTarget) symbolicReachability(g *Graph, from string) SymbolicR
 	}
 }
 
+func (t PacketClassTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := t.symbolicReachability(g, from)
+	return packetSymbolicTargetResult(result)
+}
+
 type HeaderPacketClassTarget struct {
 	Class model.PacketClass
 }
@@ -435,6 +446,27 @@ func (t HeaderPacketClassTarget) Spec() model.PacketSpec {
 
 func (t HeaderPacketClassTarget) symbolicReachability(g *Graph, from string) SymbolicReachabilityResult {
 	return g.SymbolicPacketReachabilityForPacketClass(from, t.Class)
+}
+
+func (t HeaderPacketClassTarget) SymbolicResult(g *Graph, from string) SymbolicTargetResult {
+	result := t.symbolicReachability(g, from)
+	return packetSymbolicTargetResult(result)
+}
+
+func packetSymbolicTargetResult(result SymbolicReachabilityResult) SymbolicTargetResult {
+	return SymbolicTargetResult{
+		Reachable:   result.Reachable,
+		Unreachable: result.Unreachable,
+		Reason:      result.Reason,
+	}
+}
+
+func routeSymbolicTargetResult(result SymbolicRouteReachabilityResult) SymbolicTargetResult {
+	return SymbolicTargetResult{
+		Reachable:   result.Reachable,
+		Unreachable: result.Unreachable,
+		Reason:      result.Reason,
+	}
 }
 
 func FormatPath(p Path) string {

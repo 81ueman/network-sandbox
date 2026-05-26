@@ -11,13 +11,10 @@ import (
 	"github.com/81ueman/network-sandbox/hoyan/internal/solver"
 )
 
-type Report struct {
-	Results []sim.Result
-}
-
 type VerifyOptions struct {
 	UsePrefixUniverse         bool
 	CollapseEquivalentResults bool
+	MaxPrefixClasses          int
 }
 
 func Run(topo *model.Topology, queries *model.Queries) Report {
@@ -36,10 +33,10 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 	report := Report{}
 	for _, q := range queries.RouteChecks {
 		path, reachable := g.RouteReachable(q.From, q.Prefix.String(), sim.NoFailures())
-		result := sim.Result{Name: q.Name, QueryType: "route", Reachable: reachable, Expected: true, Path: path}
-		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-			result.Counterexample = formatFailureElements(cut)
-			result.Reason = "reachable now but not resilient to requested failure budget"
+		result := NewRouteResult(q.Name, reachable, true, path, "")
+		if cut, ok := findBreakingFailures(g, q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+			result.SetCounterexample(formatFailureElements(cut))
+			result.Metadata.Reason = "reachable now but not resilient to requested failure budget"
 		}
 		report.Results = append(report.Results, result)
 	}
@@ -52,11 +49,12 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 			if q.ExpectReachable != nil {
 				expected = *q.ExpectReachable
 			}
-			result := sim.Result{Name: queryResultName(q.Name, port, len(ports)), QueryType: "packet", Reachable: reachable, Expected: expected, Path: path, Reason: reason}
+			result := NewPacketResult(queryResultName(q.Name, port, len(ports)), reachable, expected, path, reason)
 			if expected && reachable {
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: port}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-					result.Counterexample = formatFailureElements(cut)
-					result.Reason = "reachable now but not resilient to requested failure budget"
+				target := sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: port}
+				if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+					result.SetCounterexample(formatFailureElements(cut))
+					result.Metadata.Reason = "reachable now but not resilient to requested failure budget"
 				}
 			}
 			report.Results = append(report.Results, result)
@@ -65,7 +63,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 	for _, q := range queries.FailureChecks {
 		ports := q.DstPortValues()
 		for _, port := range ports {
-			var target sim.Target
+			var target sim.SymbolicTarget
 			if !q.Prefix.IsZero() {
 				target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol, DstPort: port}
 			} else {
@@ -75,13 +73,11 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 			if q.ExpectReachable != nil {
 				expected = *q.ExpectReachable
 			}
-			result := sim.Result{Name: queryResultName(q.Name, port, len(ports)), QueryType: "failure", Expected: expected}
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-				result.Reachable = false
-				result.Counterexample = formatFailureElements(cut)
-				result.Reason = "counterexample within failure budget"
-			} else {
-				result.Reachable = true
+			result := NewFailureResult(queryResultName(q.Name, port, len(ports)), true, expected, "")
+			if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+				result.Metadata.Reachable = false
+				result.SetCounterexample(formatFailureElements(cut))
+				result.Metadata.Reason = "counterexample within failure budget"
 			}
 			report.Results = append(report.Results, result)
 		}
@@ -93,14 +89,14 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 	g := sim.NewGraph(topo)
 	universe, err := prefixUniverseForGraph(topo, queries, g, nil)
 	if err != nil {
-		return Report{Results: []sim.Result{{
-			Name:      "prefix-universe",
-			QueryType: "setup",
-			Expected:  true,
-			Reason:    err.Error(),
-		}}}
+		return Report{Results: []Result{NewSetupResult("prefix-universe", true, err.Error())}}
 	}
-	report := Report{}
+	if err := checkPrefixClassLimit(universe, opts.MaxPrefixClasses); err != nil {
+		stats := universe.Stats
+		return Report{Stats: &stats, Results: []Result{NewSetupResult("prefix-universe", true, err.Error())}}
+	}
+	stats := universe.Stats
+	report := Report{Stats: &stats}
 	for _, q := range queries.RouteChecks {
 		classes := universe.ClassesMatching(model.ExactPrefixSet{Prefix: q.Prefix})
 		for _, classID := range classes {
@@ -110,21 +106,13 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 			}
 			symbolic := g.SymbolicRouteReachabilityForPrefixSet(q.From, class.Space)
 			path, reachable := g.RouteReachableForPrefixSet(q.From, class.Space, sim.NoFailures())
-			result := classResult(universe, class, sim.Result{
-				Name:                 q.Name,
-				QueryType:            "route",
-				Reachable:            reachable,
-				Expected:             true,
-				Path:                 path,
-				ReachableCondition:   symbolic.Reachable.String(),
-				UnreachableCondition: symbolic.Unreachable.String(),
-				Reason:               symbolic.Reason,
-			})
+			result := classResult(universe, class, NewRouteResult(q.Name, reachable, true, path, symbolic.Reason))
+			result.SetConditions(symbolic.Reachable.String(), symbolic.Unreachable.String())
 			if reachable {
 				target := sim.RouteClassTarget{Universe: universe, ClassID: classID}
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-					result.Counterexample = formatFailureElements(cut)
-					result.Reason = "reachable now but not resilient to requested failure budget"
+				if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+					result.SetCounterexample(formatFailureElements(cut))
+					result.Metadata.Reason = "reachable now but not resilient to requested failure budget"
 				}
 			}
 			report.Results = append(report.Results, result)
@@ -145,20 +133,13 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 				}
 				symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, spec)
 				reachable := symbolic.Reachable.Eval(g.FailureContext(sim.NoFailures()))
-				result := classResult(universe, class, sim.Result{
-					Name:                 queryResultName(q.Name, port, len(ports)),
-					QueryType:            "packet",
-					Reachable:            reachable,
-					Expected:             expected,
-					ReachableCondition:   symbolic.Reachable.String(),
-					UnreachableCondition: symbolic.Unreachable.String(),
-					Reason:               symbolic.Reason,
-				})
+				result := classResult(universe, class, NewPacketResult(queryResultName(q.Name, port, len(ports)), reachable, expected, sim.Path{}, symbolic.Reason))
+				result.SetConditions(symbolic.Reachable.String(), symbolic.Unreachable.String())
 				if expected && reachable {
 					target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: port}
-					if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-						result.Counterexample = formatFailureElements(cut)
-						result.Reason = "reachable now but not resilient to requested failure budget"
+					if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+						result.SetCounterexample(formatFailureElements(cut))
+						result.Metadata.Reason = "reachable now but not resilient to requested failure budget"
 					}
 				}
 				report.Results = append(report.Results, result)
@@ -179,20 +160,12 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 				}
 				target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: port}
 				symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, target.Spec())
-				result := classResult(universe, class, sim.Result{
-					Name:                 queryResultName(q.Name, port, len(ports)),
-					QueryType:            "failure",
-					Expected:             expected,
-					ReachableCondition:   symbolic.Reachable.String(),
-					UnreachableCondition: symbolic.Unreachable.String(),
-					Reason:               symbolic.Reason,
-				})
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-					result.Reachable = false
-					result.Counterexample = formatFailureElements(cut)
-					result.Reason = "counterexample within failure budget"
-				} else {
-					result.Reachable = true
+				result := classResult(universe, class, NewFailureResult(queryResultName(q.Name, port, len(ports)), true, expected, symbolic.Reason))
+				result.SetConditions(symbolic.Reachable.String(), symbolic.Unreachable.String())
+				if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
+					result.Metadata.Reachable = false
+					result.SetCounterexample(formatFailureElements(cut))
+					result.Metadata.Reason = "counterexample within failure budget"
 				}
 				report.Results = append(report.Results, result)
 			}
@@ -217,6 +190,13 @@ func prefixUniverseForGraph(topo *model.Topology, queries *model.Queries, g *sim
 	predicates = append(predicates, sim.CollectFIBPrefixPredicates(g)...)
 	predicates = append(predicates, extra...)
 	return model.BuildPrefixUniverseFromPredicates(predicates)
+}
+
+func checkPrefixClassLimit(universe model.PrefixUniverse, maxClasses int) error {
+	if maxClasses <= 0 || universe.Stats.ClassCount <= maxClasses {
+		return nil
+	}
+	return fmt.Errorf("prefix universe class count %d exceeds --max-prefix-classes %d", universe.Stats.ClassCount, maxClasses)
 }
 
 func packetClasses(topo *model.Topology, universe model.PrefixUniverse, to string) []model.PrefixClassID {
@@ -272,13 +252,15 @@ func prefixClass(universe model.PrefixUniverse, id model.PrefixClassID) (model.P
 	return model.PrefixClass{}, false
 }
 
-func classResult(universe model.PrefixUniverse, class model.PrefixClass, result sim.Result) sim.Result {
+func classResult(universe model.PrefixUniverse, class model.PrefixClass, result Result) Result {
 	id := class.ID
-	result.PrefixClassID = &id
-	result.PrefixClassIDs = []model.PrefixClassID{id}
-	result.PrefixSpace = class.Space.String()
-	result.PrefixSpaces = []string{class.Space.String()}
-	result.MatchedPredicates = matchedPredicates(universe, class)
+	result.PrefixClass = &PrefixClassMetadata{
+		ClassID:           &id,
+		ClassIDs:          []model.PrefixClassID{id},
+		Space:             class.Space.String(),
+		Spaces:            []string{class.Space.String()},
+		MatchedPredicates: matchedPredicates(universe, class),
+	}
 	return result
 }
 
@@ -302,9 +284,9 @@ func matchedPredicates(universe model.PrefixUniverse, class model.PrefixClass) [
 	return out
 }
 
-func collapseResults(results []sim.Result) []sim.Result {
+func collapseResults(results []Result) []Result {
 	type aggregate struct {
-		result sim.Result
+		result Result
 		seen   map[string]bool
 	}
 	groups := map[string]*aggregate{}
@@ -314,52 +296,54 @@ func collapseResults(results []sim.Result) []sim.Result {
 		group, ok := groups[key]
 		if !ok {
 			cp := result
-			cp.PrefixClassID = nil
-			cp.PrefixClassIDs = nil
-			cp.PrefixSpace = ""
-			cp.PrefixSpaces = nil
-			cp.MatchedPredicates = nil
+			cp.PrefixClass = &PrefixClassMetadata{}
 			group = &aggregate{result: cp, seen: map[string]bool{}}
 			groups[key] = group
 			order = append(order, key)
 		}
-		if result.PrefixClassID != nil {
-			classKey := fmt.Sprintf("%d", *result.PrefixClassID)
+		if result.PrefixClass != nil && result.PrefixClass.ClassID != nil {
+			classKey := fmt.Sprintf("%d", *result.PrefixClass.ClassID)
 			if !group.seen[classKey] {
 				group.seen[classKey] = true
-				group.result.PrefixClassIDs = append(group.result.PrefixClassIDs, *result.PrefixClassID)
+				group.result.PrefixClass.ClassIDs = append(group.result.PrefixClass.ClassIDs, *result.PrefixClass.ClassID)
 			}
 		}
-		if result.PrefixSpace != "" && !containsString(group.result.PrefixSpaces, result.PrefixSpace) {
-			group.result.PrefixSpaces = append(group.result.PrefixSpaces, result.PrefixSpace)
-		}
-		for _, predicate := range result.MatchedPredicates {
-			if !containsString(group.result.MatchedPredicates, predicate) {
-				group.result.MatchedPredicates = append(group.result.MatchedPredicates, predicate)
+		if result.PrefixClass != nil {
+			if result.PrefixClass.Space != "" && !containsString(group.result.PrefixClass.Spaces, result.PrefixClass.Space) {
+				group.result.PrefixClass.Spaces = append(group.result.PrefixClass.Spaces, result.PrefixClass.Space)
+			}
+			for _, predicate := range result.PrefixClass.MatchedPredicates {
+				if !containsString(group.result.PrefixClass.MatchedPredicates, predicate) {
+					group.result.PrefixClass.MatchedPredicates = append(group.result.PrefixClass.MatchedPredicates, predicate)
+				}
 			}
 		}
 	}
-	out := make([]sim.Result, 0, len(order))
+	out := make([]Result, 0, len(order))
 	for _, key := range order {
 		result := groups[key].result
-		sort.Slice(result.PrefixClassIDs, func(i, j int) bool { return result.PrefixClassIDs[i] < result.PrefixClassIDs[j] })
-		sort.Strings(result.PrefixSpaces)
-		sort.Strings(result.MatchedPredicates)
+		if result.PrefixClass != nil {
+			sort.Slice(result.PrefixClass.ClassIDs, func(i, j int) bool {
+				return result.PrefixClass.ClassIDs[i] < result.PrefixClass.ClassIDs[j]
+			})
+			sort.Strings(result.PrefixClass.Spaces)
+			sort.Strings(result.PrefixClass.MatchedPredicates)
+		}
 		out = append(out, result)
 	}
 	return out
 }
 
-func collapseKey(result sim.Result) string {
+func collapseKey(result Result) string {
 	return strings.Join([]string{
 		result.Name,
-		result.QueryType,
-		fmt.Sprint(result.Reachable),
-		fmt.Sprint(result.Expected),
-		strings.Join(result.Counterexample, ","),
-		result.Reason,
-		result.ReachableCondition,
-		result.UnreachableCondition,
+		string(result.Type),
+		fmt.Sprint(result.Metadata.Reachable),
+		fmt.Sprint(result.Metadata.Expected),
+		strings.Join(result.Counterexample(), ","),
+		result.Metadata.Reason,
+		result.ReachableCondition(),
+		result.UnreachableCondition(),
 	}, "\x00")
 }
 
@@ -380,6 +364,26 @@ func failureSearchOptions(maxFailures int, domain model.FailureDomain) sim.Failu
 	}
 }
 
+func findBreakingFailures(g *sim.Graph, from string, target sim.SymbolicTarget, opts sim.FailureSearchOptions, result *Result) ([]solver.FailureElement, bool) {
+	search, err := g.FindBreakingFailuresSymbolic(from, target, opts)
+	result.Solver = &search.Solver
+	if err != nil {
+		result.Metadata.Reason = appendReason(result.Metadata.Reason, "failure search error: "+err.Error())
+		return nil, false
+	}
+	if !search.Sat {
+		return nil, false
+	}
+	return search.Failures, true
+}
+
+func appendReason(existing, extra string) string {
+	if existing == "" {
+		return extra
+	}
+	return existing + "; " + extra
+}
+
 func formatFailureElements(elements []solver.FailureElement) []string {
 	out := make([]string, 0, len(elements))
 	for _, element := range elements {
@@ -394,7 +398,7 @@ func formatFailureElements(elements []solver.FailureElement) []string {
 
 func (r Report) OK() bool {
 	for _, result := range r.Results {
-		if result.Reachable != result.Expected {
+		if result.Metadata.Reachable != result.Metadata.Expected {
 			return false
 		}
 	}

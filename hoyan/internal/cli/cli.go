@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,18 +104,22 @@ func NewVerifyCommand() *cobra.Command {
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML")
 	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
 	cmd.Flags().BoolVar(&opts.prefixClasses, "prefix-classes", false, "expand verification by PrefixUniverse prefix classes")
+	cmd.Flags().IntVar(&opts.maxPrefixClasses, "max-prefix-classes", 10000, "maximum PrefixUniverse classes before failing; 0 disables the guard")
+	cmd.Flags().BoolVar(&opts.showPrefixUniverseStats, "show-prefix-universe-stats", false, "show PrefixUniverse build statistics with --prefix-classes")
 	cmd.Flags().BoolVar(&opts.noCollapse, "no-collapse", false, "show raw prefix-class results instead of collapsed equivalent groups")
 	cmd.Flags().StringVar(&opts.format, "format", "table", "output format: table or json")
 	return cmd
 }
 
 type verifyOptions struct {
-	topologyPath  string
-	queriesPath   string
-	strictConfig  bool
-	prefixClasses bool
-	noCollapse    bool
-	format        string
+	topologyPath            string
+	queriesPath             string
+	strictConfig            bool
+	prefixClasses           bool
+	maxPrefixClasses        int
+	showPrefixUniverseStats bool
+	noCollapse              bool
+	format                  string
 }
 
 func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) error {
@@ -135,13 +140,18 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	verifyOpts := verify.VerifyOptions{
 		UsePrefixUniverse:         opts.prefixClasses,
 		CollapseEquivalentResults: opts.prefixClasses && !opts.noCollapse,
+		MaxPrefixClasses:          opts.maxPrefixClasses,
 	}
 	report := verify.RunWithOptions(topo, queries, verifyOpts)
 	if opts.format == "json" {
 		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(report.Results); err != nil {
+		jsonReport := report
+		if !opts.showPrefixUniverseStats {
+			jsonReport.Stats = nil
+		}
+		if err := enc.Encode(jsonReport); err != nil {
 			return err
 		}
 		if !report.OK() {
@@ -152,37 +162,62 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	if opts.format != "" && opts.format != "table" {
 		return fmt.Errorf("unsupported --format %q", opts.format)
 	}
+	if opts.showPrefixUniverseStats && opts.prefixClasses && report.Stats != nil {
+		writePrefixUniverseStats(out, *report.Stats)
+	}
 	for _, result := range report.Results {
 		status := "PASS"
-		if result.Reachable != result.Expected {
+		if result.Metadata.Reachable != result.Metadata.Expected {
 			status = "FAIL"
 		}
-		fmt.Fprintf(out, "[%s] %s reachable=%v expected=%v\n", status, result.Name, result.Reachable, result.Expected)
-		if len(result.PrefixClassIDs) > 0 {
-			fmt.Fprintf(out, "  classes: %s\n", formatClassIDs(result.PrefixClassIDs))
+		fmt.Fprintf(out, "[%s] %s reachable=%v expected=%v\n", status, result.Name, result.Metadata.Reachable, result.Metadata.Expected)
+		if result.PrefixClass != nil && len(result.PrefixClass.ClassIDs) > 0 {
+			fmt.Fprintf(out, "  classes: %s\n", formatClassIDs(result.PrefixClass.ClassIDs))
 		}
-		if len(result.PrefixSpaces) > 0 {
-			fmt.Fprintf(out, "  spaces: %s\n", strings.Join(result.PrefixSpaces, ", "))
-		} else if result.PrefixSpace != "" {
-			fmt.Fprintf(out, "  space: %s\n", result.PrefixSpace)
+		if result.PrefixClass != nil && len(result.PrefixClass.Spaces) > 0 {
+			fmt.Fprintf(out, "  spaces: %s\n", strings.Join(result.PrefixClass.Spaces, ", "))
+		} else if result.PrefixClass != nil && result.PrefixClass.Space != "" {
+			fmt.Fprintf(out, "  space: %s\n", result.PrefixClass.Space)
 		}
-		if len(result.MatchedPredicates) > 0 {
-			fmt.Fprintf(out, "  matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
+		if result.PrefixClass != nil && len(result.PrefixClass.MatchedPredicates) > 0 {
+			fmt.Fprintf(out, "  matched predicates: %s\n", strings.Join(result.PrefixClass.MatchedPredicates, ", "))
 		}
-		if len(result.Path.Nodes) > 0 {
-			fmt.Fprintf(out, "  path: %s\n", sim.FormatPath(result.Path))
+		if path := result.Path(); len(path.Nodes) > 0 {
+			fmt.Fprintf(out, "  path: %s\n", sim.FormatPath(path))
 		}
-		if len(result.Counterexample) > 0 {
-			fmt.Fprintf(out, "  counterexample: %s\n", strings.Join(result.Counterexample, ", "))
+		if counterexample := result.Counterexample(); len(counterexample) > 0 {
+			fmt.Fprintf(out, "  counterexample: %s\n", strings.Join(counterexample, ", "))
 		}
-		if result.Reason != "" {
-			fmt.Fprintf(out, "  reason: %s\n", result.Reason)
+		if result.Metadata.Reason != "" {
+			fmt.Fprintf(out, "  reason: %s\n", result.Metadata.Reason)
 		}
 	}
 	if !report.OK() {
 		return ExitError{Code: 1, Err: fmt.Errorf("verification failed")}
 	}
 	return nil
+}
+
+func writePrefixUniverseStats(out io.Writer, stats model.PrefixUniverseStats) {
+	fmt.Fprintf(out, "predicates=%d unique=%d classes=%d build=%s max_class_cidrs=%d\n",
+		stats.PredicateCount,
+		stats.UniquePredicateCount,
+		stats.ClassCount,
+		stats.BuildDuration,
+		stats.MaxClassCIDRs,
+	)
+	if len(stats.PredicateSources) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "sources:")
+	categories := make([]string, 0, len(stats.PredicateSources))
+	for category := range stats.PredicateSources {
+		categories = append(categories, category)
+	}
+	sort.Strings(categories)
+	for _, category := range categories {
+		fmt.Fprintf(out, "  %s: %d\n", category, stats.PredicateSources[category])
+	}
 }
 
 func formatClassIDs(ids []model.PrefixClassID) string {

@@ -208,7 +208,7 @@ topology:
 	}
 }
 
-func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
+func TestVerifyCommandOutputsStructuredPrefixClassJSON(t *testing.T) {
 	var out bytes.Buffer
 	cmd := NewVerifyCommand()
 	cmd.SetOut(&out)
@@ -223,22 +223,38 @@ func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	var rows []map[string]any
-	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+	var report struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
 	}
-	if len(rows) <= 13 {
-		t.Fatalf("rows = %d, want class-expanded results", len(rows))
+	if len(report.Results) <= 13 {
+		t.Fatalf("structured results = %d, want class-expanded results", len(report.Results))
 	}
-	first := rows[0]
-	for _, key := range []string{"class_id", "space", "matched_predicates", "reachable_condition", "unreachable_condition"} {
-		if _, ok := first[key]; !ok {
-			t.Fatalf("verify JSON missing %q: %#v", key, first)
-		}
+	required := map[string]string{
+		"route":   "route",
+		"packet":  "packet",
+		"failure": "failure",
 	}
 	var foundRIB, foundFIB bool
-	for _, row := range rows {
-		predicates, _ := row["matched_predicates"].([]any)
+	for _, row := range report.Results {
+		typ, _ := row["type"].(string)
+		nested := required[typ]
+		if nested == "" {
+			continue
+		}
+		if _, ok := row["metadata"].(map[string]any); !ok {
+			t.Fatalf("%s result missing metadata: %#v", typ, row)
+		}
+		if _, ok := row[nested].(map[string]any); !ok {
+			t.Fatalf("%s result missing nested payload %q: %#v", typ, nested, row)
+		}
+		if prefixClass, ok := row["prefix_class"].(map[string]any); !ok || prefixClass["matched_predicates"] == nil {
+			t.Fatalf("%s result missing prefix_class metadata: %#v", typ, row)
+		}
+		prefixClass := row["prefix_class"].(map[string]any)
+		predicates, _ := prefixClass["matched_predicates"].([]any)
 		for _, raw := range predicates {
 			source, _ := raw.(string)
 			if strings.HasPrefix(source, "rib:") {
@@ -248,9 +264,78 @@ func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
 				foundFIB = true
 			}
 		}
+		delete(required, typ)
+	}
+	if len(required) != 0 {
+		t.Fatalf("structured JSON missing query types: %#v", required)
 	}
 	if !foundRIB || !foundFIB {
 		t.Fatalf("verify JSON missing RIB/FIB predicates: rib=%v fib=%v", foundRIB, foundFIB)
+	}
+	var foundSolver bool
+	for _, row := range report.Results {
+		rawSolver, ok := row["solver"].(map[string]any)
+		if !ok {
+			continue
+		}
+		foundSolver = true
+		if _, ok := rawSolver["mode"]; ok {
+			t.Fatalf("verify JSON solver trace should not include redundant mode: %#v", rawSolver)
+		}
+		if _, ok := rawSolver["used_symbolic"]; ok {
+			t.Fatalf("verify JSON solver trace should not include redundant used_symbolic: %#v", rawSolver)
+		}
+		if rawSolver["backend"] == "" || rawSolver["elements"] == nil || rawSolver["max_failures"] == nil {
+			t.Fatalf("verify JSON solver trace incomplete: %#v", rawSolver)
+		}
+	}
+	if !foundSolver {
+		t.Fatalf("verify JSON missing solver trace in failure-search results")
+	}
+}
+
+func TestVerifyCommandPrefixClassThresholdFails(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewVerifyCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--max-prefix-classes", "1",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	got := out.String() + err.Error()
+	for _, want := range []string{"prefix universe class count", "exceeds --max-prefix-classes 1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("threshold output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestVerifyCommandShowsPrefixUniverseStats(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewVerifyCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--show-prefix-universe-stats",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"predicates=", "unique=", "classes=", "build=", "sources:", "  route:", "  prefix-list:", "  rib:", "  fib:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stats output missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -281,18 +366,21 @@ func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
 	if err := rawCmd.Execute(); err != nil {
 		t.Fatalf("raw Execute() error = %v", err)
 	}
-	var collapsedRows, rawRows []map[string]any
-	if err := json.Unmarshal(collapsed.Bytes(), &collapsedRows); err != nil {
+	var collapsedReport, rawReport struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal(collapsed.Bytes(), &collapsedReport); err != nil {
 		t.Fatalf("collapsed json.Unmarshal() error = %v\n%s", err, collapsed.String())
 	}
-	if err := json.Unmarshal(raw.Bytes(), &rawRows); err != nil {
+	if err := json.Unmarshal(raw.Bytes(), &rawReport); err != nil {
 		t.Fatalf("raw json.Unmarshal() error = %v\n%s", err, raw.String())
 	}
-	if len(collapsedRows) >= len(rawRows) {
-		t.Fatalf("collapsed rows = %d, raw rows = %d; want fewer collapsed rows", len(collapsedRows), len(rawRows))
+	if len(collapsedReport.Results) >= len(rawReport.Results) {
+		t.Fatalf("collapsed rows = %d, raw rows = %d; want fewer collapsed rows", len(collapsedReport.Results), len(rawReport.Results))
 	}
-	if _, ok := collapsedRows[0]["class_ids"]; !ok {
-		t.Fatalf("collapsed JSON missing class_ids: %#v", collapsedRows[0])
+	prefixClass, ok := collapsedReport.Results[0]["prefix_class"].(map[string]any)
+	if !ok || prefixClass["class_ids"] == nil {
+		t.Fatalf("collapsed JSON missing prefix_class.class_ids: %#v", collapsedReport.Results[0])
 	}
 }
 
@@ -493,6 +581,44 @@ func TestModelPrefixClassesCommandShowsPredicatesWhenRequested(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestModelPrefixClassesCommandSummary(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--prefix", "10.4.0.0/16",
+		"--summary",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"predicates=", "unique=", "classes=", "sources:", "CLASS", "SPACE"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestModelPrefixClassesCommandThresholdFails(t *testing.T) {
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--max-prefix-classes", "1",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	if !strings.Contains(err.Error(), "prefix universe class count") || !strings.Contains(err.Error(), "exceeds --max-prefix-classes 1") {
+		t.Fatalf("error = %v, want threshold error", err)
 	}
 }
 

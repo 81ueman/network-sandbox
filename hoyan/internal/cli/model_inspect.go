@@ -22,18 +22,20 @@ const (
 )
 
 type modelInspectOptions struct {
-	topologyPath string
-	queriesPath  string
-	node         string
-	prefix       string
-	format       string
-	from         string
-	to           string
-	protocol     string
-	dstPort      int
-	strictConfig bool
-	showCond     bool
-	showPreds    bool
+	topologyPath     string
+	queriesPath      string
+	node             string
+	prefix           string
+	format           string
+	from             string
+	to               string
+	protocol         string
+	dstPort          int
+	strictConfig     bool
+	showCond         bool
+	showPreds        bool
+	summary          bool
+	maxPrefixClasses int
 }
 
 type prefixClassInspectRow struct {
@@ -193,6 +195,8 @@ func NewModelPrefixClassesCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix overlap filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	cmd.Flags().BoolVar(&opts.showPreds, "show-predicates", false, "show matched prefix predicates in table output")
+	cmd.Flags().BoolVar(&opts.summary, "summary", false, "show PrefixUniverse build statistics before table output")
+	cmd.Flags().IntVar(&opts.maxPrefixClasses, "max-prefix-classes", 10000, "maximum PrefixUniverse classes before failing; 0 disables the guard")
 	return cmd
 }
 
@@ -383,11 +387,26 @@ func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.W
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
+	if opts.maxPrefixClasses > 0 && universe.Stats.ClassCount > opts.maxPrefixClasses {
+		return ExitError{Code: 2, Err: fmt.Errorf("prefix universe class count %d exceeds --max-prefix-classes %d", universe.Stats.ClassCount, opts.maxPrefixClasses)}
+	}
 	rows := collectPrefixClassRows(universe, filter)
 	switch opts.format {
 	case modelFormatTable:
+		if opts.summary {
+			writePrefixUniverseStats(out, universe.Stats)
+		}
 		return writePrefixClassTable(out, rows, opts.showPreds)
 	case modelFormatJSON:
+		if opts.summary {
+			return writeJSON(out, struct {
+				Stats   model.PrefixUniverseStats `json:"prefix_universe_stats"`
+				Classes []prefixClassInspectRow   `json:"classes"`
+			}{
+				Stats:   universe.Stats,
+				Classes: rows,
+			})
+		}
 		return writeJSON(out, rows)
 	default:
 		return ExitError{Code: 2, Err: fmt.Errorf("--format must be %q or %q", modelFormatTable, modelFormatJSON)}
