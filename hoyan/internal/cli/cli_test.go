@@ -27,6 +27,21 @@ func TestRootHelpListsSubcommands(t *testing.T) {
 	}
 }
 
+func TestModelHelpListsPacketClasses(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "packet-classes") {
+		t.Fatalf("help output missing packet-classes:\n%s", out.String())
+	}
+}
+
 func TestLiveCheckRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name string

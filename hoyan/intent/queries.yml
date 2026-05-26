@@ -41,6 +41,14 @@ packet_checks:
     live_probe: false
     expect_reachable: true
     max_failures: 0
+  - name: bj-client-to-hz-tcp-service-ports-allowed
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: tcp
+    dst_ports: [443, 8443]
+    live_probe: false
+    expect_reachable: true
+    max_failures: 0
   - name: sh-client-to-hz-http-denied-live-ceos
     from: cust-sh
     to: 10.4.1.10

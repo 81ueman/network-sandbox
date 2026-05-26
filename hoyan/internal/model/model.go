@@ -186,10 +186,15 @@ type PacketCheck struct {
 	To              string        `yaml:"to"`
 	Protocol        string        `yaml:"protocol"`
 	DstPort         int           `yaml:"dst_port,omitempty"`
+	DstPorts        []int         `yaml:"dst_ports,omitempty"`
 	LiveProbe       *bool         `yaml:"live_probe,omitempty"`
 	ExpectReachable *bool         `yaml:"expect_reachable"`
 	MaxFailures     int           `yaml:"max_failures"`
 	FailureDomain   FailureDomain `yaml:"failure_domain"`
+}
+
+func (c PacketCheck) DstPortValues() []int {
+	return normalizedQueryPorts(c.DstPort, c.DstPorts)
 }
 
 type FailureCheck struct {
@@ -199,9 +204,34 @@ type FailureCheck struct {
 	Prefix          Prefix        `yaml:"prefix"`
 	Protocol        string        `yaml:"protocol"`
 	DstPort         int           `yaml:"dst_port,omitempty"`
+	DstPorts        []int         `yaml:"dst_ports,omitempty"`
 	ExpectReachable *bool         `yaml:"expect_reachable"`
 	MaxFailures     int           `yaml:"max_failures"`
 	FailureDomain   FailureDomain `yaml:"failure_domain"`
+}
+
+func (c FailureCheck) DstPortValues() []int {
+	return normalizedQueryPorts(c.DstPort, c.DstPorts)
+}
+
+func normalizedQueryPorts(single int, many []int) []int {
+	seen := map[int]bool{}
+	var out []int
+	add := func(port int) {
+		if port <= 0 || port > 65535 || seen[port] {
+			return
+		}
+		seen[port] = true
+		out = append(out, port)
+	}
+	add(single)
+	for _, port := range many {
+		add(port)
+	}
+	if len(out) == 0 {
+		return []int{0}
+	}
+	return out
 }
 
 func LoadQueries(path string) (*Queries, error) {

@@ -88,6 +88,8 @@ go run ./cmd/hoyan model fib --node bj-edge1
 go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16 --show-predicates
+go run ./cmd/hoyan model packet-classes --prefix 10.4.0.0/16 --show-predicates
+go run ./cmd/hoyan model packet-classes --queries intent/queries.yml --prefix 10.4.0.0/16 --show-predicates
 go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protocol tcp
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --show-conditions
@@ -106,6 +108,19 @@ modeled RIB/FIB prefixes, and an optional `--prefix` request predicate.
 Matched predicates are hidden in table output by default; add
 `--show-predicates` to `model prefix-classes` or `model symbolic-route` when
 you need to see which predicates matched each class.
+The `packet-classes` view builds HeaderSpace classes over only the header
+dimensions that have predicate boundaries: destination prefix class, protocol,
+source/destination port, and ingress/egress interface. This keeps packet
+predicate inspection tied to PrefixUniverse without creating unused cross
+products. Add `--show-predicates` to see the ACL or request predicates that
+matched each packet class.
+The view also reads `--queries` and includes `PacketCheck` and `FailureCheck`
+protocol, destination port, and destination predicates, so query-only packet
+classes are visible even when no device ACL distinguishes them.
+Packet and failure queries can specify either a single destination port with
+`dst_port: 80` or a set of ports with `dst_ports: [80, 443]`; multi-port
+queries are expanded into one result per port and therefore one packet class
+per port boundary.
 `model symbolic-route --prefix` uses the same request-aware PrefixUniverse and
 emits one symbolic route result per matching class, including `class_id`,
 `space`, and reachable/unreachable conditions. JSON output still includes

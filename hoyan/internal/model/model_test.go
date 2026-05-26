@@ -48,6 +48,12 @@ route_checks:
       exclude_nodes: [client1]
       include_links: [core1-core2]
       exclude_links: [edge-client1]
+packet_checks:
+  - name: multi-port
+    from: src
+    to: 10.0.0.10
+    protocol: tcp
+    dst_ports: [80, 443]
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -66,6 +72,9 @@ route_checks:
 		!reflect.DeepEqual(got.IncludeLinks, []string{"core1-core2"}) ||
 		!reflect.DeepEqual(got.ExcludeLinks, []string{"edge-client1"}) {
 		t.Fatalf("FailureDomain = %#v", got)
+	}
+	if ports := queries.PacketChecks[0].DstPortValues(); !reflect.DeepEqual(ports, []int{80, 443}) {
+		t.Fatalf("DstPortValues() = %#v, want [80 443]", ports)
 	}
 }
 

@@ -573,6 +573,26 @@ func egressACLDenyEngine(policyInterface, policyProtocol string) *Engine {
 	})
 }
 
+func TestSymbolicPacketReachabilityForPacketClassMatchesRepresentativeSpec(t *testing.T) {
+	engine := egressACLDenyEngine("eth2", "tcp")
+	pfx := model.MustPrefix("10.0.0.0/24")
+	class := model.PacketClass{
+		ID:            0,
+		PrefixClassID: 0,
+		DstSet:        model.ExactPrefixSet{Prefix: pfx},
+		Protocol:      "tcp",
+		DstPort:       model.ExactPort(80),
+	}
+	classResult := engine.SymbolicPacketReachabilityForPacketClass("src", class)
+	specResult := engine.SymbolicPacketReachabilityForPrefixSetSpec("src", class.DstSet, class.Spec())
+	if classResult.Reachable.String() != specResult.Reachable.String() {
+		t.Fatalf("reachable = %s, want %s", classResult.Reachable.String(), specResult.Reachable.String())
+	}
+	if classResult.Unreachable.String() != specResult.Unreachable.String() {
+		t.Fatalf("unreachable = %s, want %s", classResult.Unreachable.String(), specResult.Unreachable.String())
+	}
+}
+
 func mustTopologyIndex(topo *model.Topology) *model.TopologyIndex {
 	idx, err := model.BuildTopologyIndex(topo)
 	if err != nil {

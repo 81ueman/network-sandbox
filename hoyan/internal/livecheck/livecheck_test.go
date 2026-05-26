@@ -218,7 +218,7 @@ func TestRunDataplaneChecksProbesICMPAndTCP(t *testing.T) {
 	}
 	queries := &model.Queries{PacketChecks: []model.PacketCheck{
 		{Name: "icmp-ok", From: "dst", To: "10.0.0.10", Protocol: "icmp", ExpectReachable: &reachable},
-		{Name: "tcp-ok", From: "dst", To: "10.0.0.10", Protocol: "tcp", DstPort: 80, ExpectReachable: &reachable},
+		{Name: "tcp-ok", From: "dst", To: "10.0.0.10", Protocol: "tcp", DstPorts: []int{80, 443}, ExpectReachable: &reachable},
 	}}
 	runner := &fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
 		cmd := name + " " + strings.Join(args, " ")

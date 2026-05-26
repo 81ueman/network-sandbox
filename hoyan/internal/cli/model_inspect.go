@@ -23,6 +23,7 @@ const (
 
 type modelInspectOptions struct {
 	topologyPath string
+	queriesPath  string
 	node         string
 	prefix       string
 	format       string
@@ -38,6 +39,18 @@ type modelInspectOptions struct {
 type prefixClassInspectRow struct {
 	ClassID           model.PrefixClassID `json:"class_id"`
 	Space             string              `json:"space"`
+	MatchedPredicates []string            `json:"matched_predicates,omitempty"`
+}
+
+type packetClassInspectRow struct {
+	ClassID           model.PacketClassID `json:"class_id"`
+	PrefixClassID     model.PrefixClassID `json:"prefix_class_id"`
+	Space             string              `json:"space"`
+	Protocol          string              `json:"protocol,omitempty"`
+	SrcPort           string              `json:"src_port,omitempty"`
+	DstPort           string              `json:"dst_port,omitempty"`
+	IngressInterface  string              `json:"ingress_interface,omitempty"`
+	EgressInterface   string              `json:"egress_interface,omitempty"`
 	MatchedPredicates []string            `json:"matched_predicates,omitempty"`
 }
 
@@ -158,7 +171,7 @@ func NewModelCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand(), NewModelSymbolicRouteCommand(), NewModelPrefixClassesCommand())
+	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand(), NewModelSymbolicRouteCommand(), NewModelPrefixClassesCommand(), NewModelPacketClassesCommand())
 	return cmd
 }
 
@@ -180,6 +193,31 @@ func NewModelPrefixClassesCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix overlap filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	cmd.Flags().BoolVar(&opts.showPreds, "show-predicates", false, "show matched prefix predicates in table output")
+	return cmd
+}
+
+func NewModelPacketClassesCommand() *cobra.Command {
+	var opts modelInspectOptions
+	cmd := &cobra.Command{
+		Use:           "packet-classes",
+		Short:         "Inspect HeaderSpace packet classes",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			return runModelPacketClasses(cmd.Context(), opts, cmd.OutOrStdout())
+		},
+	}
+	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().BoolVar(&opts.strictConfig, "strict-config", false, "fail on unsupported config parser statements")
+	addQueriesFlag(cmd, &opts.queriesPath, "query YAML for packet predicates")
+	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "destination prefix overlap filter")
+	cmd.Flags().StringVar(&opts.protocol, "protocol", "", "protocol filter")
+	cmd.Flags().IntVar(&opts.dstPort, "dst-port", 0, "destination transport port filter")
+	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
+	cmd.Flags().BoolVar(&opts.showPreds, "show-predicates", false, "show matched header predicates in table output")
 	return cmd
 }
 
@@ -356,6 +394,41 @@ func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.W
 	}
 }
 
+func runModelPacketClasses(_ context.Context, opts modelInspectOptions, out io.Writer) error {
+	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	queries, err := model.LoadQueries(opts.queriesPath)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	var filter model.PrefixSet
+	var request []model.PrefixPredicate
+	if opts.prefix != "" {
+		prefix, err := model.ParsePrefix(opts.prefix)
+		if err != nil {
+			return ExitError{Code: 2, Err: fmt.Errorf("--prefix %q: %w", opts.prefix, err)}
+		}
+		filter = model.ExactPrefixSet{Prefix: prefix}
+		request = append(request, model.PrefixPredicate{Source: "request:packet-classes:" + prefix.String(), Set: filter})
+	}
+	universe, err := modelPrefixUniverseWithQueries(topo, queries, graph, request)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	headerSpace := model.NewHeaderSpace(topo, queries, universe)
+	rows := collectPacketClassRows(headerSpace, filter, opts.protocol, opts.dstPort)
+	switch opts.format {
+	case modelFormatTable:
+		return writePacketClassTable(out, rows, opts.showPreds)
+	case modelFormatJSON:
+		return writeJSON(out, rows)
+	default:
+		return ExitError{Code: 2, Err: fmt.Errorf("--format must be %q or %q", modelFormatTable, modelFormatJSON)}
+	}
+}
+
 func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.Writer) error {
 	if opts.from == "" {
 		return ExitError{Code: 2, Err: fmt.Errorf("--from is required")}
@@ -461,7 +534,11 @@ func canonicalPrefix(raw string) (string, error) {
 }
 
 func modelPrefixUniverse(topo *model.Topology, graph *sim.Graph, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
-	predicates := model.CollectPrefixPredicateMetadata(topo, nil)
+	return modelPrefixUniverseWithQueries(topo, nil, graph, request)
+}
+
+func modelPrefixUniverseWithQueries(topo *model.Topology, queries *model.Queries, graph *sim.Graph, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
+	predicates := model.CollectPrefixPredicateMetadata(topo, queries)
 	predicates = append(predicates, sim.CollectRIBPrefixPredicates(graph)...)
 	predicates = append(predicates, sim.CollectFIBPrefixPredicates(graph)...)
 	predicates = append(predicates, request...)
@@ -478,6 +555,34 @@ func collectPrefixClassRows(universe model.PrefixUniverse, filter model.PrefixSe
 			ClassID:           class.ID,
 			Space:             class.Space.String(),
 			MatchedPredicates: matchedPrefixPredicates(universe, class),
+		})
+	}
+	return rows
+}
+
+func collectPacketClassRows(headerSpace model.HeaderSpace, filter model.PrefixSet, protocol string, dstPort int) []packetClassInspectRow {
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	var rows []packetClassInspectRow
+	for _, class := range headerSpace.Classes {
+		if filter != nil && !model.AddressSpaceOverlaps(class.DstSet, filter) {
+			continue
+		}
+		if protocol != "" && class.Protocol != "" && class.Protocol != protocol {
+			continue
+		}
+		if dstPort > 0 && class.DstPort != nil && !class.DstPort.Contains(dstPort) {
+			continue
+		}
+		rows = append(rows, packetClassInspectRow{
+			ClassID:           class.ID,
+			PrefixClassID:     class.PrefixClassID,
+			Space:             prefixSetString(class.DstSet),
+			Protocol:          class.Protocol,
+			SrcPort:           portSetInspectString(class.SrcPort),
+			DstPort:           portSetInspectString(class.DstPort),
+			IngressInterface:  class.IngressInterface,
+			EgressInterface:   class.EgressInterface,
+			MatchedPredicates: matchedHeaderPredicates(headerSpace, class),
 		})
 	}
 	return rows
@@ -668,6 +773,25 @@ func matchedPrefixPredicates(universe model.PrefixUniverse, class model.PrefixCl
 	return out
 }
 
+func matchedHeaderPredicates(headerSpace model.HeaderSpace, class model.PacketClass) []string {
+	byID := map[model.HeaderPredicateID]string{}
+	for _, predicate := range headerSpace.Predicates {
+		byID[predicate.ID] = predicate.Source
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(class.MatchingPredicates))
+	for _, id := range class.MatchingPredicates {
+		source := byID[id]
+		if source == "" || seen[source] {
+			continue
+		}
+		seen[source] = true
+		out = append(out, source)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow, showPreds bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showPreds {
@@ -679,6 +803,32 @@ func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow, showPred
 		fmt.Fprintf(tw, "pc-%d\t%s",
 			row.ClassID,
 			row.Space,
+		)
+		if showPreds {
+			fmt.Fprintf(tw, "\t%s", strings.Join(row.MatchedPredicates, ","))
+		}
+		fmt.Fprintln(tw)
+	}
+	return tw.Flush()
+}
+
+func writePacketClassTable(out io.Writer, rows []packetClassInspectRow, showPreds bool) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if showPreds {
+		fmt.Fprintln(tw, "CLASS\tPREFIX-CLASS\tSPACE\tPROTOCOL\tSRC-PORT\tDST-PORT\tINGRESS\tEGRESS\tMATCHED-PREDICATES")
+	} else {
+		fmt.Fprintln(tw, "CLASS\tPREFIX-CLASS\tSPACE\tPROTOCOL\tSRC-PORT\tDST-PORT\tINGRESS\tEGRESS")
+	}
+	for _, row := range rows {
+		fmt.Fprintf(tw, "pkt-%d\tpc-%d\t%s\t%s\t%s\t%s\t%s\t%s",
+			row.ClassID,
+			row.PrefixClassID,
+			row.Space,
+			row.Protocol,
+			row.SrcPort,
+			row.DstPort,
+			row.IngressInterface,
+			row.EgressInterface,
 		)
 		if showPreds {
 			fmt.Fprintf(tw, "\t%s", strings.Join(row.MatchedPredicates, ","))
@@ -914,6 +1064,20 @@ func condString(cond failure.Cond) string {
 		return ""
 	}
 	return cond.String()
+}
+
+func prefixSetString(set model.PrefixSet) string {
+	if set == nil {
+		return ""
+	}
+	return set.String()
+}
+
+func portSetInspectString(set model.PortSet) string {
+	if set == nil {
+		return "any"
+	}
+	return set.String()
 }
 
 func formatASPath(path []uint32) string {

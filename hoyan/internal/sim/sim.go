@@ -192,6 +192,10 @@ func (g *Graph) SymbolicPacketReachabilityForClass(from string, universe model.P
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForClass(from, universe, classID, protocol)
 }
 
+func (g *Graph) SymbolicPacketReachabilityForPacketClass(from string, class model.PacketClass) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForPacketClass(from, class)
+}
+
 func (g *Graph) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachability(from, prefix)
 }
@@ -414,6 +418,23 @@ func (t PacketClassTarget) symbolicReachability(g *Graph, from string) SymbolicR
 		Unreachable: True(),
 		Reason:      "prefix class not found",
 	}
+}
+
+type HeaderPacketClassTarget struct {
+	Class model.PacketClass
+}
+
+func (t HeaderPacketClassTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	result := t.symbolicReachability(g, from)
+	return result.Reachable.Eval(g.FailureContext(failures))
+}
+
+func (t HeaderPacketClassTarget) Spec() model.PacketSpec {
+	return t.Class.Spec()
+}
+
+func (t HeaderPacketClassTarget) symbolicReachability(g *Graph, from string) SymbolicReachabilityResult {
+	return g.SymbolicPacketReachabilityForPacketClass(from, t.Class)
 }
 
 func FormatPath(p Path) string {

@@ -44,41 +44,47 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 		report.Results = append(report.Results, result)
 	}
 	for _, q := range queries.PacketChecks {
-		spec := model.PacketSpec{Protocol: q.Protocol, DstPort: model.ExactPort(q.DstPort)}
-		path, reachable, reason := g.PacketReachableSpec(q.From, q.To, spec, sim.NoFailures())
-		expected := true
-		if q.ExpectReachable != nil {
-			expected = *q.ExpectReachable
-		}
-		result := sim.Result{Name: q.Name, QueryType: "packet", Reachable: reachable, Expected: expected, Path: path, Reason: reason}
-		if expected && reachable {
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-				result.Counterexample = formatFailureElements(cut)
-				result.Reason = "reachable now but not resilient to requested failure budget"
+		ports := q.DstPortValues()
+		for _, port := range ports {
+			spec := model.PacketSpec{Protocol: q.Protocol, DstPort: model.ExactPort(port)}
+			path, reachable, reason := g.PacketReachableSpec(q.From, q.To, spec, sim.NoFailures())
+			expected := true
+			if q.ExpectReachable != nil {
+				expected = *q.ExpectReachable
 			}
+			result := sim.Result{Name: queryResultName(q.Name, port, len(ports)), QueryType: "packet", Reachable: reachable, Expected: expected, Path: path, Reason: reason}
+			if expected && reachable {
+				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: port}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+					result.Counterexample = formatFailureElements(cut)
+					result.Reason = "reachable now but not resilient to requested failure budget"
+				}
+			}
+			report.Results = append(report.Results, result)
 		}
-		report.Results = append(report.Results, result)
 	}
 	for _, q := range queries.FailureChecks {
-		var target sim.Target
-		if !q.Prefix.IsZero() {
-			target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol, DstPort: q.DstPort}
-		} else {
-			target = sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}
+		ports := q.DstPortValues()
+		for _, port := range ports {
+			var target sim.Target
+			if !q.Prefix.IsZero() {
+				target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol, DstPort: port}
+			} else {
+				target = sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: port}
+			}
+			expected := true
+			if q.ExpectReachable != nil {
+				expected = *q.ExpectReachable
+			}
+			result := sim.Result{Name: queryResultName(q.Name, port, len(ports)), QueryType: "failure", Expected: expected}
+			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+				result.Reachable = false
+				result.Counterexample = formatFailureElements(cut)
+				result.Reason = "counterexample within failure budget"
+			} else {
+				result.Reachable = true
+			}
+			report.Results = append(report.Results, result)
 		}
-		expected := true
-		if q.ExpectReachable != nil {
-			expected = *q.ExpectReachable
-		}
-		result := sim.Result{Name: q.Name, QueryType: "failure", Expected: expected}
-		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-			result.Reachable = false
-			result.Counterexample = formatFailureElements(cut)
-			result.Reason = "counterexample within failure budget"
-		} else {
-			result.Reachable = true
-		}
-		report.Results = append(report.Results, result)
 	}
 	return report
 }
@@ -125,35 +131,38 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 		}
 	}
 	for _, q := range queries.PacketChecks {
-		spec := model.PacketSpec{Protocol: q.Protocol, DstPort: model.ExactPort(q.DstPort)}
 		expected := true
 		if q.ExpectReachable != nil {
 			expected = *q.ExpectReachable
 		}
-		for _, classID := range packetClasses(topo, universe, q.To) {
-			class, ok := prefixClass(universe, classID)
-			if !ok {
-				continue
-			}
-			symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, spec)
-			reachable := symbolic.Reachable.Eval(g.FailureContext(sim.NoFailures()))
-			result := classResult(universe, class, sim.Result{
-				Name:                 q.Name,
-				QueryType:            "packet",
-				Reachable:            reachable,
-				Expected:             expected,
-				ReachableCondition:   symbolic.Reachable.String(),
-				UnreachableCondition: symbolic.Unreachable.String(),
-				Reason:               symbolic.Reason,
-			})
-			if expected && reachable {
-				target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: q.DstPort}
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-					result.Counterexample = formatFailureElements(cut)
-					result.Reason = "reachable now but not resilient to requested failure budget"
+		ports := q.DstPortValues()
+		for _, port := range ports {
+			spec := model.PacketSpec{Protocol: q.Protocol, DstPort: model.ExactPort(port)}
+			for _, classID := range packetClasses(topo, universe, q.To) {
+				class, ok := prefixClass(universe, classID)
+				if !ok {
+					continue
 				}
+				symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, spec)
+				reachable := symbolic.Reachable.Eval(g.FailureContext(sim.NoFailures()))
+				result := classResult(universe, class, sim.Result{
+					Name:                 queryResultName(q.Name, port, len(ports)),
+					QueryType:            "packet",
+					Reachable:            reachable,
+					Expected:             expected,
+					ReachableCondition:   symbolic.Reachable.String(),
+					UnreachableCondition: symbolic.Unreachable.String(),
+					Reason:               symbolic.Reason,
+				})
+				if expected && reachable {
+					target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: port}
+					if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+						result.Counterexample = formatFailureElements(cut)
+						result.Reason = "reachable now but not resilient to requested failure budget"
+					}
+				}
+				report.Results = append(report.Results, result)
 			}
-			report.Results = append(report.Results, result)
 		}
 	}
 	for _, q := range queries.FailureChecks {
@@ -161,35 +170,45 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 		if q.ExpectReachable != nil {
 			expected = *q.ExpectReachable
 		}
-		for _, classID := range failureClasses(topo, universe, q) {
-			class, ok := prefixClass(universe, classID)
-			if !ok {
-				continue
+		ports := q.DstPortValues()
+		for _, port := range ports {
+			for _, classID := range failureClasses(topo, universe, q) {
+				class, ok := prefixClass(universe, classID)
+				if !ok {
+					continue
+				}
+				target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: port}
+				symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, target.Spec())
+				result := classResult(universe, class, sim.Result{
+					Name:                 queryResultName(q.Name, port, len(ports)),
+					QueryType:            "failure",
+					Expected:             expected,
+					ReachableCondition:   symbolic.Reachable.String(),
+					UnreachableCondition: symbolic.Unreachable.String(),
+					Reason:               symbolic.Reason,
+				})
+				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+					result.Reachable = false
+					result.Counterexample = formatFailureElements(cut)
+					result.Reason = "counterexample within failure budget"
+				} else {
+					result.Reachable = true
+				}
+				report.Results = append(report.Results, result)
 			}
-			target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: q.DstPort}
-			symbolic := g.SymbolicPacketReachabilityForPrefixSetSpec(q.From, class.Space, target.Spec())
-			result := classResult(universe, class, sim.Result{
-				Name:                 q.Name,
-				QueryType:            "failure",
-				Expected:             expected,
-				ReachableCondition:   symbolic.Reachable.String(),
-				UnreachableCondition: symbolic.Unreachable.String(),
-				Reason:               symbolic.Reason,
-			})
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-				result.Reachable = false
-				result.Counterexample = formatFailureElements(cut)
-				result.Reason = "counterexample within failure budget"
-			} else {
-				result.Reachable = true
-			}
-			report.Results = append(report.Results, result)
 		}
 	}
 	if opts.CollapseEquivalentResults {
 		report.Results = collapseResults(report.Results)
 	}
 	return report
+}
+
+func queryResultName(name string, port int, portCount int) string {
+	if portCount <= 1 || port <= 0 {
+		return name
+	}
+	return fmt.Sprintf("%s:dst-port-%d", name, port)
 }
 
 func prefixUniverseForGraph(topo *model.Topology, queries *model.Queries, g *sim.Graph, extra []model.PrefixPredicate) (model.PrefixUniverse, error) {
