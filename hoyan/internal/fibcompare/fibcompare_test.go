@@ -16,13 +16,14 @@ func TestParseLinuxIPRoute(t *testing.T) {
 	  {"dst":"10.0.0.10","gateway":"192.0.2.9","dev":"eth9","protocol":"bgp"},
 	  {"dst":"10.0.1.0/24","protocol":"bgp","metric":30,"nexthops":[{"gateway":"192.0.2.1","dev":"eth1","weight":1},{"gateway":"192.0.2.2","dev":"eth2","weight":1}]},
 	  {"dst":"default","gateway":"198.51.100.1","dev":"eth0","protocol":"static","metric":100},
+	  {"type":"blackhole","dst":"203.0.113.0/24","protocol":"static","metric":10},
 	  {"dst":"2001:db8::/64","dev":"eth3","protocol":"kernel"}
 	]`)
 	routes, err := ParseLinuxIPRoute("r1", data)
 	if err != nil {
 		t.Fatalf("ParseLinuxIPRoute() error = %v", err)
 	}
-	if len(routes) != 4 {
+	if len(routes) != 5 {
 		t.Fatalf("routes = %#v", routes)
 	}
 	if host := routeByPrefix(routes, "10.0.0.10/32"); host == nil {
@@ -37,6 +38,9 @@ func TestParseLinuxIPRoute(t *testing.T) {
 	}
 	if def := routeByPrefix(routes, "0.0.0.0/0"); def == nil || def.Protocol != "static" || def.Metric != 100 {
 		t.Fatalf("default route = %#v", def)
+	}
+	if blackhole := routeByPrefix(routes, "203.0.113.0/24"); blackhole == nil || blackhole.Protocol != "blackhole" || len(blackhole.NextHops) != 0 {
+		t.Fatalf("blackhole route = %#v", blackhole)
 	}
 }
 
@@ -66,6 +70,11 @@ func TestParseCEOSRoutes(t *testing.T) {
 	      "kernelProgrammed": true,
 	      "routeType": "connected",
 	      "vias": [{"interface":"Ethernet2"}]
+	    },
+	    "203.0.113.0/24": {
+	      "kernelProgrammed": true,
+	      "routeType": "static",
+	      "vias": [{"interface":"Null0"}]
 	    }
 	  }}}
 	}`)
@@ -87,6 +96,10 @@ func TestParseCEOSRoutes(t *testing.T) {
 	if connected == nil || connected.Protocol != "connected" {
 		t.Fatalf("connected route = %#v", connected)
 	}
+	blackhole := routeByPrefix(routes, "203.0.113.0/24")
+	if blackhole == nil || blackhole.Protocol != "blackhole" || len(blackhole.NextHops) != 0 {
+		t.Fatalf("blackhole route = %#v", blackhole)
+	}
 }
 
 func TestParseSRLinuxRoutes(t *testing.T) {
@@ -96,6 +109,7 @@ func TestParseSRLinuxRoutes(t *testing.T) {
 	    "ip route": [
 	      {"Prefix":"10.0.0.0/24","Route Type":"bgp","Active":"True","Metric":0,"Pref":170,"Next-hop (Type)":"192.0.2.1/31 (indirect/local)","Next-hop Interface":"ethernet-1/1.0 "},
 	      {"Prefix":"198.51.100.0/31","Route Type":"local","Active":"True","Metric":0,"Pref":0,"Next-hop (Type)":"198.51.100.1 (direct)","Next-hop Interface":"ethernet-1/2.0 "},
+	      {"Prefix":"198.51.100.0/24","Route Type":"blackhole","Active":"True","Metric":0,"Pref":1,"Next-hop (Type)":"None"},
 	      {"Prefix":"203.0.113.0/24","Route Type":"bgp","Active":"False","Next-hop (Type)":"192.0.2.2/31 (indirect/local)","Next-hop Interface":"ethernet-1/3.0 "}
 	    ]
 	  }]
@@ -120,6 +134,10 @@ func TestParseSRLinuxRoutes(t *testing.T) {
 	connected := routeByPrefix(routes, "198.51.100.0/31")
 	if connected == nil || connected.Protocol != "connected" {
 		t.Fatalf("connected route = %#v", connected)
+	}
+	blackhole := routeByPrefix(routes, "198.51.100.0/24")
+	if blackhole == nil || blackhole.Protocol != "blackhole" || len(blackhole.NextHops) != 0 {
+		t.Fatalf("blackhole route = %#v", blackhole)
 	}
 }
 
@@ -175,6 +193,26 @@ func TestExpectedForNodesNormalizesModeledFIB(t *testing.T) {
 	wantHop := NormalizedFIBNextHop{Address: "192.0.2.0", Interface: "eth1"}
 	if !reflect.DeepEqual(route.NextHops, []NormalizedFIBNextHop{wantHop}) || route.Protocol != "bgp" || route.Metric != 7 {
 		t.Fatalf("route = %#v", route)
+	}
+}
+
+func TestExpectedForNodesKeepsLocalBlackholeAndSuppressesSamePrefixBGPFIB(t *testing.T) {
+	prefix := model.MustPrefix("203.0.113.0/24")
+	topo := &model.Topology{Nodes: []model.Node{{
+		Name:     "r1",
+		Kind:     model.KindFRR,
+		ASN:      65000,
+		Prefixes: []model.Prefix{prefix},
+		Routes:   []model.ConfiguredRoute{{Prefix: prefix, Kind: model.RouteSourceBlackhole, Interface: "Null0"}},
+	}}}
+	routes := ExpectedForNodes(topo, topo.Nodes)
+	if route := routeByPrefix(routes, prefix.String()); route == nil || route.Protocol != "blackhole" || len(route.NextHops) != 0 {
+		t.Fatalf("blackhole FIB route = %#v in %#v", route, routes)
+	}
+	for _, route := range routes {
+		if route.Prefix == prefix.String() && route.Protocol == "bgp" {
+			t.Fatalf("same-prefix BGP route should not be expected in local FIB: %#v", routes)
+		}
 	}
 }
 

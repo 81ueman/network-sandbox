@@ -39,12 +39,16 @@ func TestExpectedRoutesIncludesMultipleBgpPaths(t *testing.T) {
 
 func TestExpectedRoutesIncludesStaticAndConnectedSources(t *testing.T) {
 	staticPrefix := model.MustPrefix("203.0.113.0/24")
+	blackholePrefix := model.MustPrefix("198.51.100.0/24")
 	topo := &model.Topology{
 		Nodes: []model.Node{{
 			Name:       "r1",
 			Kind:       model.KindFRR,
 			Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/30"}},
-			Routes:     []model.ConfiguredRoute{{Prefix: staticPrefix, Kind: model.RouteSourceStatic, NextHop: "192.0.2.2"}},
+			Routes: []model.ConfiguredRoute{
+				{Prefix: staticPrefix, Kind: model.RouteSourceStatic, NextHop: "192.0.2.2"},
+				{Prefix: blackholePrefix, Kind: model.RouteSourceBlackhole, Interface: "Null0"},
+			},
 		}, {
 			Name:       "r2",
 			Kind:       model.KindFRR,
@@ -58,6 +62,27 @@ func TestExpectedRoutesIncludesStaticAndConnectedSources(t *testing.T) {
 	}
 	if routeByPrefixProtocol(routes, staticPrefix.String(), "static") == nil {
 		t.Fatalf("static route missing from expected RIB routes: %#v", routes)
+	}
+	if routeByPrefixProtocol(routes, blackholePrefix.String(), "blackhole") == nil {
+		t.Fatalf("blackhole route missing from expected RIB routes: %#v", routes)
+	}
+}
+
+func TestExpectedRoutesKeepsBGPNetworkAndLocalBlackholeSeparate(t *testing.T) {
+	prefix := model.MustPrefix("203.0.113.0/24")
+	topo := &model.Topology{Nodes: []model.Node{{
+		Name:     "r1",
+		Kind:     model.KindFRR,
+		ASN:      65000,
+		Prefixes: []model.Prefix{prefix},
+		Routes:   []model.ConfiguredRoute{{Prefix: prefix, Kind: model.RouteSourceBlackhole, Interface: "Null0"}},
+	}}}
+	routes := Expected(topo)
+	if routeByPrefixProtocol(routes, prefix.String(), "bgp") == nil {
+		t.Fatalf("BGP network route missing: %#v", routes)
+	}
+	if routeByPrefixProtocol(routes, prefix.String(), "blackhole") == nil {
+		t.Fatalf("local blackhole route missing: %#v", routes)
 	}
 }
 
@@ -121,6 +146,7 @@ func TestParseFRRRouteTableStaticAndConnected(t *testing.T) {
 	data := []byte(`{
 	  "192.0.2.0/30":[{"protocol":"connected","interfaceName":"eth1"}],
 	  "203.0.113.0/24":[{"protocol":"static","nexthops":[{"ip":"192.0.2.2","interfaceName":"eth1"}]}],
+	  "198.51.100.0/24":[{"protocol":"static","nexthops":[{"blackhole":true,"unreachable":true}]}],
 	  "10.0.0.0/24":[{"protocol":"bgp","nexthops":[{"ip":"198.51.100.1"}]}]
 	}`)
 	routes, err := ParseFRRRouteTable("r1", data)
@@ -134,6 +160,10 @@ func TestParseFRRRouteTableStaticAndConnected(t *testing.T) {
 	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
 		t.Fatalf("static route = %#v", static)
 	}
+	blackhole := routeByPrefixProtocol(routes, "198.51.100.0/24", "blackhole")
+	if blackhole == nil || len(blackhole.Paths) != 1 || blackhole.Paths[0].NextHop != "" {
+		t.Fatalf("blackhole route = %#v", blackhole)
+	}
 	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
 		t.Fatalf("BGP route table entry should be excluded: %#v", routes)
 	}
@@ -144,6 +174,7 @@ func TestParseCEOSRouteTableStaticAndConnected(t *testing.T) {
 	  "vrfs":{"default":{"routes":{
 	    "192.0.2.0/30":{"routeType":"connected","vias":[{"interface":"Ethernet1"}]},
 	    "203.0.113.0/24":{"routeType":"static","vias":[{"nexthopAddr":"192.0.2.2","interface":"Ethernet1"}]},
+	    "198.51.100.0/24":{"routeType":"static","vias":[{"interface":"Null0"}]},
 	    "10.0.0.0/24":{"routeType":"eBGP","vias":[{"nexthopAddr":"198.51.100.1"}]}
 	  }}}
 	}`)
@@ -158,6 +189,10 @@ func TestParseCEOSRouteTableStaticAndConnected(t *testing.T) {
 	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
 		t.Fatalf("static route = %#v", static)
 	}
+	blackhole := routeByPrefixProtocol(routes, "198.51.100.0/24", "blackhole")
+	if blackhole == nil || len(blackhole.Paths) != 1 || blackhole.Paths[0].NextHop != "" {
+		t.Fatalf("blackhole route = %#v", blackhole)
+	}
 	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
 		t.Fatalf("BGP route table entry should be excluded: %#v", routes)
 	}
@@ -168,6 +203,7 @@ func TestParseSRLinuxRouteTableStaticAndConnected(t *testing.T) {
 	{"instance":[{"ip route":[
 	  {"Prefix":"192.0.2.0/30","Route Type":"local","Active":"True","Next-hop Interface":"ethernet-1/1.0"},
 	  {"Prefix":"203.0.113.0/24","Route Type":"static","Active":"True","Next-hop (Type)":"192.0.2.2/32 (direct)","Next-hop Interface":"ethernet-1/1.0"},
+	  {"Prefix":"198.51.100.0/24","Route Type":"blackhole","Active":"True","Next-hop (Type)":"None"},
 	  {"Prefix":"10.0.0.0/24","Route Type":"bgp","Active":"True","Next-hop (Type)":"198.51.100.1/32 (indirect)"}
 	]}]}`)
 	routes, err := ParseSRLinuxRouteTable("srl1", data)
@@ -180,6 +216,10 @@ func TestParseSRLinuxRouteTableStaticAndConnected(t *testing.T) {
 	static := routeByPrefixProtocol(routes, "203.0.113.0/24", "static")
 	if static == nil || len(static.Paths) != 1 || static.Paths[0].NextHop != "192.0.2.2" {
 		t.Fatalf("static route = %#v", static)
+	}
+	blackhole := routeByPrefixProtocol(routes, "198.51.100.0/24", "blackhole")
+	if blackhole == nil || len(blackhole.Paths) != 1 || blackhole.Paths[0].NextHop != "" {
+		t.Fatalf("blackhole route = %#v", blackhole)
 	}
 	if routeByPrefixProtocol(routes, "10.0.0.0/24", "bgp") != nil {
 		t.Fatalf("BGP route table entry should be excluded: %#v", routes)

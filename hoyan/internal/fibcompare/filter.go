@@ -43,7 +43,7 @@ func ComparableRoutes(topo *model.Topology, routes []NormalizedFIBRoute, opts Op
 
 func comparableProtocol(route NormalizedFIBRoute) bool {
 	switch route.Protocol {
-	case "bgp", "connected", "static":
+	case "bgp", "connected", "static", "blackhole":
 		return true
 	default:
 		return false
