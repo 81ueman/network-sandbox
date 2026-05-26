@@ -33,9 +33,13 @@ func routeKey(r NormalizedBgpRoute) string {
 }
 
 func pathKey(p NormalizedBgpPath, opts BgpRibCompareOptions) string {
-	// Path identity is intentionally centered on next-hop and AS path. Other
-	// attributes are compared after matching unless the caller opts into peer
-	// fields as part of the key.
+	// Path identity is deliberately narrower than full path equality. The
+	// default identity is next-hop plus AS path; attributes such as best, valid,
+	// origin, local-pref, MED, weight, communities, originator ID, and cluster
+	// list are compared after identity matching so attribute mismatches stay
+	// distinct from missing/unexpected paths. ComparePeer and ComparePeerAS are
+	// the only options that extend identity, letting callers distinguish
+	// otherwise identical multipath entries learned from different peers.
 	parts := []string{"nh=" + p.NextHop, "as=" + formatASPath(p.ASPath)}
 	if opts.ComparePeer && p.Peer != "" {
 		parts = append(parts, "peer="+p.Peer)

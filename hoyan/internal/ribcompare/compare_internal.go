@@ -1,8 +1,6 @@
 package ribcompare
 
-import (
-	"reflect"
-)
+import "reflect"
 
 func fillCompareDefaults(opts BgpRibCompareOptions) BgpRibCompareOptions {
 	if !opts.CompareBest && !opts.CompareValid && !opts.CompareNextHop && !opts.CompareASPath &&
@@ -15,16 +13,10 @@ func fillCompareDefaults(opts BgpRibCompareOptions) BgpRibCompareOptions {
 }
 
 func comparePaths(routeKey string, expected, actual []NormalizedBgpPath, opts BgpRibCompareOptions, result *BgpRibCompareResult) {
-	exp := map[string]NormalizedBgpPath{}
-	act := map[string]NormalizedBgpPath{}
-	for _, p := range expected {
-		key := pathKey(p, opts)
-		exp[key] = mergeDuplicatePath(exp[key], normalizePath(p))
-	}
-	for _, p := range actual {
-		key := pathKey(p, opts)
-		act[key] = mergeDuplicatePath(act[key], normalizePath(p))
-	}
+	exp, expConflicts := buildPathIndex(routeKey, "expected", expected, opts)
+	act, actConflicts := buildPathIndex(routeKey, "actual", actual, opts)
+	result.DuplicatePathConflicts = append(result.DuplicatePathConflicts, expConflicts...)
+	result.DuplicatePathConflicts = append(result.DuplicatePathConflicts, actConflicts...)
 	keys := sortedUnionKeys(exp, act)
 	for _, key := range keys {
 		e, eok := exp[key]
@@ -42,13 +34,57 @@ func comparePaths(routeKey string, expected, actual []NormalizedBgpPath, opts Bg
 	}
 }
 
-func mergeDuplicatePath(existing, next NormalizedBgpPath) NormalizedBgpPath {
-	if reflect.DeepEqual(existing, NormalizedBgpPath{}) {
-		return next
+type pathIndexEntry struct {
+	path       NormalizedBgpPath
+	paths      []NormalizedBgpPath
+	conflicted bool
+}
+
+func buildPathIndex(routeKey, side string, paths []NormalizedBgpPath, opts BgpRibCompareOptions) (map[string]NormalizedBgpPath, []DuplicatePathConflict) {
+	entries := map[string]pathIndexEntry{}
+	for _, p := range paths {
+		p = normalizePath(p)
+		key := pathKey(p, opts)
+		entry, ok := entries[key]
+		if !ok {
+			entries[key] = pathIndexEntry{path: p, paths: []NormalizedBgpPath{p}}
+			continue
+		}
+		if !samePathAttributes(entry.path, p) {
+			entry.conflicted = true
+		}
+		// The simulator can produce the same visible BGP path under multiple
+		// failure conditions with different selected/valid states. Keep that as
+		// a single visible path, but only when all non-state attributes match.
+		entry.path.Best = entry.path.Best || p.Best
+		entry.path.Valid = entry.path.Valid || p.Valid
+		entry.paths = append(entry.paths, p)
+		entries[key] = entry
 	}
-	existing.Best = existing.Best || next.Best
-	existing.Valid = existing.Valid || next.Valid
-	return existing
+
+	index := map[string]NormalizedBgpPath{}
+	var conflicts []DuplicatePathConflict
+	for key, entry := range entries {
+		if entry.conflicted {
+			conflicts = append(conflicts, DuplicatePathConflict{
+				RouteKey: routeKey,
+				PathKey:  key,
+				Side:     side,
+				Paths:    entry.paths,
+			})
+			continue
+		}
+		index[key] = entry.path
+	}
+	return index, conflicts
+}
+
+func samePathAttributes(a, b NormalizedBgpPath) bool {
+	a.Best = false
+	a.Valid = false
+	b.Best = false
+	b.Valid = false
+	return reflect.DeepEqual(a, b)
 }
 
 func appendMismatches(routeKey, pathKey string, e, a NormalizedBgpPath, opts BgpRibCompareOptions, result *BgpRibCompareResult) {

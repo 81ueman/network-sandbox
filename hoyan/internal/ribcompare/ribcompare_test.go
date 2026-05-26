@@ -379,16 +379,82 @@ func TestDefaultCompareRejectsUnexpectedExtraPath(t *testing.T) {
 	}
 }
 
-func TestCompareMergesDuplicateVisiblePaths(t *testing.T) {
+func TestCompareAllowsIdenticalDuplicatePaths(t *testing.T) {
 	expected := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
 		path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),
-		path(false, true, "192.0.2.1", []uint32{65001}, 100, 0),
+		path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),
 	)}
 	actual := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
 		path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),
 	)}
 	if result := CompareBgpRib(expected, actual, DefaultBgpRibCompareOptions()); !result.OK {
-		t.Fatalf("CompareBgpRib() = %#v, want duplicate visible paths merged", result)
+		t.Fatalf("CompareBgpRib() = %#v, want identical duplicate paths accepted", result)
+	}
+}
+
+func TestCompareReportsDuplicatePathConflictForAttributeDifference(t *testing.T) {
+	expected := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		path(true, true, "192.0.2.1", []uint32{65001}, 100, 10),
+		path(true, true, "192.0.2.1", []uint32{65001}, 100, 20),
+	)}
+	actual := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		path(true, true, "192.0.2.1", []uint32{65001}, 100, 10),
+	)}
+	result := CompareBgpRib(expected, actual, DefaultBgpRibCompareOptions())
+	if result.OK || len(result.DuplicatePathConflicts) != 1 {
+		t.Fatalf("CompareBgpRib() = %#v, want duplicate path conflict", result)
+	}
+	conflict := result.DuplicatePathConflicts[0]
+	if conflict.RouteKey != "r1|default|ipv4|10.0.0.0/24" || conflict.PathKey != "nh=192.0.2.1|as=65001" || conflict.Side != "expected" || len(conflict.Paths) != 2 {
+		t.Fatalf("conflict = %#v", conflict)
+	}
+}
+
+func TestCompareDuplicateBestValidDoesNotHideDiff(t *testing.T) {
+	expected := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),
+		path(false, false, "192.0.2.1", []uint32{65001}, 100, 0),
+	)}
+	actual := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		path(false, false, "192.0.2.1", []uint32{65001}, 100, 0),
+	)}
+	result := CompareBgpRib(expected, actual, DefaultBgpRibCompareOptions())
+	if result.OK || len(result.Mismatched) != 2 || result.Mismatched[0].Field != "best" || result.Mismatched[1].Field != "valid" || len(result.DuplicatePathConflicts) != 0 {
+		t.Fatalf("CompareBgpRib() = %#v, want merged best/valid duplicate to expose mismatches", result)
+	}
+}
+
+func TestComparePeerOptionSeparatesDuplicateIdentity(t *testing.T) {
+	opts := DefaultBgpRibCompareOptions()
+	opts.ComparePeer = true
+	expected := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		pathWithPeer(path(true, true, "192.0.2.1", []uint32{65001}, 100, 10), "192.0.2.10"),
+		pathWithPeer(path(true, true, "192.0.2.1", []uint32{65001}, 100, 20), "192.0.2.20"),
+	)}
+	actual := []NormalizedBgpRoute{route("r1", "10.0.0.0/24",
+		pathWithPeer(path(true, true, "192.0.2.1", []uint32{65001}, 100, 10), "192.0.2.10"),
+		pathWithPeer(path(true, true, "192.0.2.1", []uint32{65001}, 100, 20), "192.0.2.20"),
+	)}
+	result := CompareBgpRib(expected, actual, opts)
+	if !result.OK {
+		t.Fatalf("CompareBgpRib() = %#v, want peer to distinguish path identity", result)
+	}
+}
+
+func TestFormatDiffsIncludesDuplicatePathConflict(t *testing.T) {
+	result := BgpRibCompareResult{DuplicatePathConflicts: []DuplicatePathConflict{{
+		RouteKey: "r1|default|ipv4|10.0.0.0/24",
+		PathKey:  "nh=192.0.2.1|as=65001",
+		Side:     "actual",
+		Paths: []NormalizedBgpPath{
+			path(true, true, "192.0.2.1", []uint32{65001}, 100, 0),
+			path(false, true, "192.0.2.1", []uint32{65001}, 100, 0),
+		},
+	}}}
+	lines := FormatDiffs(result)
+	want := "[DIFF] r1|default|ipv4|10.0.0.0/24 path nh=192.0.2.1|as=65001 duplicate path conflict side=actual paths=2"
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("FormatDiffs() = %#v, want %#v", lines, want)
 	}
 }
 
@@ -404,6 +470,11 @@ func route(node, prefix string, paths ...NormalizedBgpPath) NormalizedBgpRoute {
 
 func path(best, valid bool, nextHop string, asPath []uint32, localPref, med int) NormalizedBgpPath {
 	return NormalizedBgpPath{Best: best, Valid: valid, NextHop: nextHop, ASPath: asPath, Origin: "igp", LocalPref: localPref, MED: med}
+}
+
+func pathWithPeer(p NormalizedBgpPath, peer string) NormalizedBgpPath {
+	p.Peer = peer
+	return p
 }
 
 func routeByPrefix(routes []NormalizedBgpRoute, prefix string) *NormalizedBgpRoute {
