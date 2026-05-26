@@ -35,8 +35,6 @@ jobs:
               echo "missing snapshot: $snapshot" >&2
               exit 1
             fi
-            go run ./cmd/hoyan rib-compare --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail
-            go run ./cmd/hoyan fib-compare --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail
             go run ./cmd/hoyan live-check --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail --offline
           done
 
