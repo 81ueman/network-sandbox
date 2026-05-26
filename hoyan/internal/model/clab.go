@@ -116,9 +116,13 @@ func LoadLabTopologyWithOptions(clabPath string, opts LoadLabTopologyOptions) (*
 			}
 		}
 		topo.Nodes = append(topo.Nodes, node)
-		for _, policy := range parsed.Policies {
-			policy.Node = name
-			topo.Policies = append(topo.Policies, policy)
+		for _, acl := range parsed.ACLs {
+			acl.Node = name
+			topo.ACLs = append(topo.ACLs, acl)
+		}
+		for _, binding := range parsed.ACLBindings {
+			binding.Node = name
+			topo.ACLBindings = append(topo.ACLBindings, binding)
 		}
 		nftPath := resolveNftablesConfigPath(cnode)
 		if nftPath != "" {
@@ -126,13 +130,17 @@ func LoadLabTopologyWithOptions(clabPath string, opts LoadLabTopologyOptions) (*
 			if !filepath.IsAbs(fullNftPath) {
 				fullNftPath = filepath.Join(root, nftPath)
 			}
-			policies, err := ParseNftablesConfig(fullNftPath)
+			acls, bindings, err := ParseNftablesACLConfig(fullNftPath)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%s nftables: %w", name, err)
 			}
-			for _, policy := range policies {
-				policy.Node = name
-				topo.Policies = append(topo.Policies, policy)
+			for _, acl := range acls {
+				acl.Node = name
+				topo.ACLs = append(topo.ACLs, acl)
+			}
+			for _, binding := range bindings {
+				binding.Node = name
+				topo.ACLBindings = append(topo.ACLBindings, binding)
 			}
 		}
 	}

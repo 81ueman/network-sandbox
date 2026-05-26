@@ -754,7 +754,7 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 		t.Fatalf("missing symbolic policy blocked paths: %#v", result)
 	}
 	first, ok := blocked[0].(map[string]any)
-	if !ok || first["policy"] != "BLOCK-HTTP-TO-HZ" || first["node"] != "core-hz" {
+	if !ok || first["acl"] != "BLOCK-HTTP-TO-HZ" || first["node"] != "core-hz" {
 		t.Fatalf("unexpected symbolic blocked path metadata: %#v", first)
 	}
 	source, ok := first["source"].(map[string]any)

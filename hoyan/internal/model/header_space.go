@@ -66,29 +66,44 @@ func CollectHeaderPredicates(topo *Topology, queries *Queries) []HeaderPredicate
 		out = append(out, predicate)
 	}
 	if topo != nil {
-		for _, policy := range topo.Policies {
-			if policy.Plane != "data" {
+		for _, binding := range topo.ACLBindings {
+			acl, ok := aclByName(topo.ACLs, binding.Node, binding.ACLName)
+			if !ok {
 				continue
 			}
-			predicate := HeaderPredicate{
-				Source:   "policy:" + policy.Name,
-				Protocol: policy.Protocol,
-				SrcPort:  policy.SrcPort,
-				DstPort:  policy.DstPort,
+			for _, rule := range acl.Rules {
+				predicate := HeaderPredicate{
+					Source:   "acl:" + acl.Name,
+					Protocol: rule.Match.Protocol,
+					SrcSet:   rule.Match.SrcSet,
+					DstSet:   rule.Match.DstSet,
+					SrcPort:  rule.Match.SrcPort,
+					DstPort:  rule.Match.DstPort,
+				}
+				switch binding.Direction {
+				case "ingress":
+					predicate.IngressInterface = binding.Interface
+				case "egress":
+					predicate.EgressInterface = binding.Interface
+				}
+				add(predicate)
 			}
-			if !policy.SrcPrefix.IsZero() {
-				predicate.SrcSet = ExactPrefixSet{Prefix: policy.SrcPrefix}
+		}
+		for _, acl := range topo.ACLs {
+			if aclHasBinding(topo.ACLBindings, acl.Node, acl.Name) {
+				continue
 			}
-			if !policy.DstPrefix.IsZero() {
-				predicate.DstSet = ExactPrefixSet{Prefix: policy.DstPrefix}
+			for _, rule := range acl.Rules {
+				predicate := HeaderPredicate{
+					Source:   "acl:" + acl.Name,
+					Protocol: rule.Match.Protocol,
+					SrcSet:   rule.Match.SrcSet,
+					DstSet:   rule.Match.DstSet,
+					SrcPort:  rule.Match.SrcPort,
+					DstPort:  rule.Match.DstPort,
+				}
+				add(predicate)
 			}
-			switch policy.Stage {
-			case "ingress":
-				predicate.IngressInterface = policy.Interface
-			case "egress":
-				predicate.EgressInterface = policy.Interface
-			}
-			add(predicate)
 		}
 	}
 	if queries != nil {
@@ -135,6 +150,24 @@ func CollectHeaderPredicates(topo *Topology, queries *Queries) []HeaderPredicate
 
 func NewHeaderSpace(topo *Topology, queries *Queries, universe PrefixUniverse) HeaderSpace {
 	return BuildHeaderSpaceFromPredicates(universe, CollectHeaderPredicates(topo, queries))
+}
+
+func aclByName(acls []ACL, node, name string) (ACL, bool) {
+	for _, acl := range acls {
+		if acl.Node == node && acl.Name == name {
+			return acl, true
+		}
+	}
+	return ACL{}, false
+}
+
+func aclHasBinding(bindings []ACLBinding, node, name string) bool {
+	for _, binding := range bindings {
+		if binding.Node == node && binding.ACLName == name {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildHeaderSpaceFromPredicates(universe PrefixUniverse, predicates []HeaderPredicate) HeaderSpace {

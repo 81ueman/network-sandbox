@@ -103,9 +103,14 @@ func CollectPrefixPredicateMetadata(topo *Topology, queries *Queries) []PrefixPr
 				}
 			}
 		}
-		for _, policy := range topo.Policies {
-			if !policy.DstPrefix.IsZero() {
-				add("policy:"+policy.Name, PredicateAddressSpace, ExactPrefixSet{Prefix: policy.DstPrefix})
+		for _, acl := range topo.ACLs {
+			for _, rule := range acl.Rules {
+				if rule.Match.DstSet != nil {
+					add("acl:"+acl.Name, PredicateAddressSpace, rule.Match.DstSet)
+				}
+				if rule.Match.SrcSet != nil {
+					add("acl:"+acl.Name+":src", PredicateAddressSpace, rule.Match.SrcSet)
+				}
 			}
 		}
 	}

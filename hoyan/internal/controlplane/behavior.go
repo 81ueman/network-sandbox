@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/failure"
@@ -27,22 +28,23 @@ type PacketMessage struct {
 }
 
 type PolicyDecision struct {
-	PolicyName string
-	Denied     bool
-	Cond       failure.Cond
-	Reason     string
-	Source     model.PolicySource
+	PolicyName    string
+	ACLName       string
+	RuleSeq       int
+	Action        model.ACLAction
+	Denied        bool
+	Cond          failure.Cond
+	Reason        string
+	DefaultAction model.ACLDefaultAction
+	Source        model.ConfigSource
 }
 
 type DeviceBehavior interface {
 	Kind() model.DeviceKind
 	BGPBehavior
-	CheckControlEgress(device model.Node, msg ControlMessage, policies []model.Policy) bool
-	CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool
-	CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
-	CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool)
-	CheckDataIngressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision
-	CheckDataEgressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision
+	CheckControlEgress(device model.Node, msg ControlMessage) bool
+	CheckControlIngress(device model.Node, msg ControlMessage) bool
+	EvaluateDataACL(device model.Node, pkt PacketMessage, stage string, acls []model.ACL, bindings []model.ACLBinding) PolicyDecision
 	RouteValidForRIB(device model.Node, route RIBEntry) bool
 	RouteEligibleForAdvertisement(device model.Node, route RIBEntry) bool
 	RouteInstallableInFIB(device model.Node, installed []RIBEntry, route RIBEntry) bool
@@ -52,32 +54,34 @@ func (b baseDeviceBehavior) Kind() model.DeviceKind {
 	return b.kind
 }
 
-func (b baseDeviceBehavior) CheckControlIngress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
-	return !matchesDenyPolicy(device.Name, msg.From, msg.Prefix, "", "control", "ingress", policies)
+func (b baseDeviceBehavior) CheckControlIngress(device model.Node, msg ControlMessage) bool {
+	return true
 }
 
-func (b baseDeviceBehavior) CheckControlEgress(device model.Node, msg ControlMessage, policies []model.Policy) bool {
-	return !matchesDenyPolicy(device.Name, msg.To, msg.Prefix, "", "control", "egress", policies)
+func (b baseDeviceBehavior) CheckControlEgress(device model.Node, msg ControlMessage) bool {
+	return true
 }
 
-func (b baseDeviceBehavior) CheckDataIngress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
-	decision := b.CheckDataIngressSymbolic(device, pkt, policies)
-	return decision.PolicyName, decision.Denied
-}
-
-func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage, policies []model.Policy) (string, bool) {
-	decision := b.CheckDataEgressSymbolic(device, pkt, policies)
-	return decision.PolicyName, decision.Denied
-}
-
-func (b baseDeviceBehavior) CheckDataIngressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision {
+func (b baseDeviceBehavior) EvaluateDataACL(device model.Node, pkt PacketMessage, stage string, acls []model.ACL, bindings []model.ACLBinding) PolicyDecision {
 	spec := pkt.NormalizedSpec()
-	return policyDecision(device.Name, "", spec.IngressInterface, spec, "data", "ingress", policies)
-}
-
-func (b baseDeviceBehavior) CheckDataEgressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision {
-	spec := pkt.NormalizedSpec()
-	return policyDecision(device.Name, "", spec.EgressInterface, spec, "data", "egress", policies)
+	iface := spec.IngressInterface
+	if stage == "egress" {
+		iface = spec.EgressInterface
+	}
+	for _, binding := range bindings {
+		if binding.Node != device.Name || binding.Direction != stage {
+			continue
+		}
+		if binding.Interface != "" && !interfaceMatches(binding.Interface, iface) {
+			continue
+		}
+		acl, ok := aclByName(acls, device.Name, binding.ACLName)
+		if !ok {
+			continue
+		}
+		return evaluateACL(device, acl, binding, spec)
+	}
+	return PolicyDecision{Cond: failure.False()}
 }
 
 func (b baseDeviceBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
@@ -93,72 +97,121 @@ func (b baseDeviceBehavior) RouteInstallableInFIB(device model.Node, installed [
 	return b.RouteValidForRIB(device, route)
 }
 
-func matchesDenyPolicy(node, peer, prefix, protocol, plane, stage string, policies []model.Policy) bool {
-	decision := policyDecision(node, peer, "", model.PacketSpec{DstSet: model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(mustPrefix(prefix))}, Protocol: protocol}, plane, stage, policies)
-	return decision.PolicyName != "" && decision.Denied
-}
-
-func deniedPolicyName(node, peer, iface string, dst netip.Prefix, dstSet model.PrefixSet, protocol, plane, stage string, policies []model.Policy) (string, bool) {
-	decision := policyDecision(node, peer, iface, model.PacketSpec{DstSet: dstSet, Protocol: protocol}, plane, stage, policies)
-	if dstSet == nil {
-		decision = policyDecision(node, peer, iface, model.PacketSpec{DstSet: model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(dst)}, Protocol: protocol}, plane, stage, policies)
-	}
-	return decision.PolicyName, decision.Denied
-}
-
-func policyDecision(node, peer, iface string, spec model.PacketSpec, plane, stage string, policies []model.Policy) PolicyDecision {
-	spec = spec.WithNormalizedPorts()
-	for _, pol := range policies {
-		if pol.Node != node || pol.Action != "deny" {
+func evaluateACL(device model.Node, acl model.ACL, binding model.ACLBinding, spec model.PacketSpec) PolicyDecision {
+	rules := append([]model.ACLRule(nil), acl.Rules...)
+	sort.SliceStable(rules, func(i, j int) bool {
+		if rules[i].Seq == rules[j].Seq {
+			return i < j
+		}
+		if rules[i].Seq == 0 {
+			return false
+		}
+		if rules[j].Seq == 0 {
+			return true
+		}
+		return rules[i].Seq < rules[j].Seq
+	})
+	for _, rule := range rules {
+		if !aclRuleMatches(rule, spec) {
 			continue
 		}
-		if pol.Plane != "" && pol.Plane != plane {
-			continue
-		}
-		if pol.Plane == "" && plane == "control" {
-			continue
-		}
-		if pol.Stage != "" && pol.Stage != stage {
-			continue
-		}
-		if pol.Peer != "" && pol.Peer != peer {
-			continue
-		}
-		if pol.Interface != "" && !interfaceMatches(pol.Interface, iface) {
-			continue
-		}
-		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, spec.Protocol) {
-			continue
-		}
-		if !pol.SrcPrefix.IsZero() {
-			if spec.SrcSet == nil || !model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: pol.SrcPrefix}, spec.SrcSet) {
-				continue
-			}
-		}
-		if pol.SrcPort != nil && !pol.SrcPort.Overlaps(spec.SrcPort) {
-			continue
-		}
-		if pol.DstPort != nil && !pol.DstPort.Overlaps(spec.DstPort) {
-			continue
-		}
-		if !pol.DstPrefix.IsZero() {
-			if spec.DstSet != nil {
-				if !model.AddressSpaceOverlaps(model.ExactPrefixSet{Prefix: pol.DstPrefix}, spec.DstSet) {
-					continue
-				}
-			} else {
-				continue
-			}
+		denied := rule.Action == model.ACLDeny
+		reason := "permitted by acl " + acl.Name
+		if denied {
+			reason = "denied by acl " + acl.Name
 		}
 		return PolicyDecision{
-			PolicyName: pol.Name,
-			Denied:     true,
-			Cond:       failure.True(),
-			Reason:     "denied by policy " + pol.Name,
-			Source:     pol.Source,
+			PolicyName: acl.Name,
+			ACLName:    acl.Name,
+			RuleSeq:    rule.Seq,
+			Action:     rule.Action,
+			Denied:     denied,
+			Cond:       decisionCond(denied),
+			Reason:     reason,
+			Source:     rule.Source,
 		}
 	}
-	return PolicyDecision{Cond: failure.False()}
+	defaultAction := acl.DefaultAction
+	if defaultAction == "" {
+		defaultAction = defaultACLActionForDevice(device.Kind)
+	}
+	denied := defaultAction == model.ACLDefaultDeny
+	reason := "default permit by acl " + acl.Name
+	if denied {
+		reason = "default deny by acl " + acl.Name
+	}
+	return PolicyDecision{
+		PolicyName:    acl.Name,
+		ACLName:       acl.Name,
+		Action:        model.ACLAction(defaultAction),
+		Denied:        denied,
+		Cond:          decisionCond(denied),
+		Reason:        reason,
+		DefaultAction: defaultAction,
+		Source:        binding.Source,
+	}
+}
+
+func decisionCond(denied bool) failure.Cond {
+	if denied {
+		return failure.True()
+	}
+	return failure.False()
+}
+
+func aclByName(acls []model.ACL, node, name string) (model.ACL, bool) {
+	for _, acl := range acls {
+		if acl.Node == node && acl.Name == name {
+			return acl, true
+		}
+	}
+	return model.ACL{}, false
+}
+
+func aclRuleMatches(rule model.ACLRule, spec model.PacketSpec) bool {
+	match := rule.Match.WithNormalizedPorts()
+	spec = spec.WithNormalizedPorts()
+	if match.Protocol != "" && !strings.EqualFold(match.Protocol, spec.Protocol) {
+		return false
+	}
+	if match.SrcSet != nil {
+		if !prefixSetMatches(match.SrcSet, spec.SrcSet) {
+			return false
+		}
+	}
+	if match.DstSet != nil {
+		if !prefixSetMatches(match.DstSet, spec.DstSet) {
+			return false
+		}
+	}
+	if match.SrcPort != nil && !match.SrcPort.Overlaps(spec.SrcPort) {
+		return false
+	}
+	if match.DstPort != nil && !match.DstPort.Overlaps(spec.DstPort) {
+		return false
+	}
+	return true
+}
+
+func prefixSetMatches(match, packet model.PrefixSet) bool {
+	if packet == nil {
+		return prefixSetIsAny(match)
+	}
+	return model.AddressSpaceOverlaps(match, packet)
+}
+
+func prefixSetIsAny(set model.PrefixSet) bool {
+	exact, ok := set.(model.ExactPrefixSet)
+	return ok && exact.Prefix.String() == "0.0.0.0/0"
+}
+
+func defaultACLActionForDevice(kind model.DeviceKind) model.ACLDefaultAction {
+	switch kind {
+	case model.KindCEOS, model.KindSRLinux:
+		return model.ACLDefaultDeny
+	default:
+		return model.ACLDefaultPermit
+	}
 }
 
 func (p PacketMessage) NormalizedSpec() model.PacketSpec {

@@ -49,26 +49,49 @@ func TestInterfaceMatchesAliases(t *testing.T) {
 	}
 }
 
-func TestPolicyDecisionDstPrefixUsesAddressSpaceSemantics(t *testing.T) {
-	decision := policyDecision(
-		"r1",
-		"",
-		"eth1",
-		model.PacketSpec{DstSet: model.PrefixRangeSet{Base: model.MustPrefix("10.0.0.0/8"), MinLen: 16, MaxLen: 24}, Protocol: "tcp"},
-		"data",
-		"egress",
-		[]model.Policy{{
-			Name:      "deny-aggregate",
-			Node:      "r1",
-			Action:    "deny",
-			Plane:     "data",
-			Stage:     "egress",
-			Protocol:  "tcp",
-			DstPrefix: model.MustPrefix("10.4.0.0/16"),
-		}},
-	)
-	if !decision.Denied {
-		t.Fatalf("policyDecision() did not match overlapping packet destination address space")
+func TestEvaluateDataACLFirstMatchAndDefaultAction(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	packet := PacketMessage{Spec: model.PacketSpec{
+		DstSet:          model.ExactPrefixSet{Prefix: pfx},
+		Protocol:        "tcp",
+		DstPort:         model.ExactPort(80),
+		EgressInterface: "eth1",
+	}}
+	node := model.Node{Name: "r1", Kind: model.KindCEOS}
+	bindings := []model.ACLBinding{{Node: "r1", Interface: "eth1", Direction: "egress", ACLName: "WEB"}}
+
+	acls := []model.ACL{{
+		Name:          "WEB",
+		Node:          "r1",
+		Vendor:        model.KindCEOS,
+		DefaultAction: model.ACLDefaultDeny,
+		Rules: []model.ACLRule{
+			{Seq: 10, Action: model.ACLPermit, Match: packet.Spec},
+			{Seq: 20, Action: model.ACLDeny, Match: packet.Spec},
+		},
+	}}
+	decision := BehaviorFor(model.KindCEOS).EvaluateDataACL(node, packet, "egress", acls, bindings)
+	if decision.Denied || decision.Action != model.ACLPermit || decision.RuleSeq != 10 {
+		t.Fatalf("permit before deny decision = %#v, want permit rule 10", decision)
+	}
+
+	acls[0].Rules[0].Action = model.ACLDeny
+	acls[0].Rules[1].Action = model.ACLPermit
+	decision = BehaviorFor(model.KindCEOS).EvaluateDataACL(node, packet, "egress", acls, bindings)
+	if !decision.Denied || decision.Action != model.ACLDeny || decision.RuleSeq != 10 {
+		t.Fatalf("deny before permit decision = %#v, want deny rule 10", decision)
+	}
+
+	acls[0].Rules = nil
+	decision = BehaviorFor(model.KindCEOS).EvaluateDataACL(node, packet, "egress", acls, bindings)
+	if !decision.Denied || decision.DefaultAction != model.ACLDefaultDeny {
+		t.Fatalf("default deny decision = %#v, want denied default", decision)
+	}
+
+	acls[0].DefaultAction = model.ACLDefaultPermit
+	decision = BehaviorFor(model.KindFRR).EvaluateDataACL(model.Node{Name: "r1", Kind: model.KindFRR}, packet, "egress", acls, bindings)
+	if decision.Denied || decision.DefaultAction != model.ACLDefaultPermit {
+		t.Fatalf("default permit decision = %#v, want permitted default", decision)
 	}
 }
 

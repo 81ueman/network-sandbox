@@ -69,6 +69,19 @@ Data-plane policies are parsed from the device startup configs.
 Linux/FRR data-plane ACLs are stored as nftables rulesets under
 `configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
 `hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
+The parser normalizes device ACLs into `model.ACL` plus `ACLBinding` records
+before data-plane simulation. ACL rules are evaluated in sequence order with
+first-match semantics, and both `permit` and `deny` are explicit actions.
+When an ACL is bound to an interface and no rule matches, the model applies
+the ACL's default action. cEOS IPv4 ACLs and SR Linux IPv4 ACL filters use an
+implicit default deny unless an explicit permit rule matches. FRR/Linux
+nftables ACLs use the chain policy; the current lab's nftables chain has
+`policy accept`, so unmatched packets are permitted. `model.ACL` is the single
+data-plane policy IR for parsed configs, manually constructed topologies, and
+`hoyan verify` / `hoyan model symbolic-packet`; the earlier deny-only
+`model.Policy` compatibility path has been removed. Full vendor ACL grammar,
+stateful firewall/conntrack, NAT, PBR, and QoS are intentionally outside the
+current model.
 
 Failure search in the normal verifier path is symbolic-only. Route, packet,
 prefix-set, and prefix-class targets must implement `sim.SymbolicTarget`, and

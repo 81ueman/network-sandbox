@@ -46,7 +46,9 @@ func TestPrefixUniverseCollectsPrefixListAndPolicyPredicates(t *testing.T) {
 				Rules: []PrefixListRule{{Seq: 10, Action: "permit", Prefix: "10.0.0.0/16", Ge: 24, Le: 24, Match: rangeSet}},
 			}},
 		}},
-		Policies: []Policy{{Name: "deny-dst", Node: "r1", Action: "deny", DstPrefix: MustPrefix("192.0.2.0/24")}},
+		ACLs: []ACL{{Name: "deny-dst", Node: "r1", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{
+			Seq: 10, Action: ACLDeny, Match: PacketSpec{DstSet: ExactPrefixSet{Prefix: MustPrefix("192.0.2.0/24")}},
+		}}}},
 	}
 	universe, err := NewPrefixUniverse(topo, nil)
 	if err != nil {
@@ -231,8 +233,10 @@ func containsPrefixPredicateID(ids []PrefixPredicateID, want PrefixPredicateID) 
 
 func TestCollectPrefixPredicateMetadataSources(t *testing.T) {
 	topo := &Topology{
-		Nodes:    []Node{{Name: "dst", Prefixes: MustPrefixes("10.0.0.0/24")}},
-		Policies: []Policy{{Name: "deny-dst", DstPrefix: MustPrefix("192.0.2.0/24")}},
+		Nodes: []Node{{Name: "dst", Prefixes: MustPrefixes("10.0.0.0/24")}},
+		ACLs: []ACL{{Name: "deny-dst", DefaultAction: ACLDefaultPermit, Rules: []ACLRule{{
+			Seq: 10, Action: ACLDeny, Match: PacketSpec{DstSet: ExactPrefixSet{Prefix: MustPrefix("192.0.2.0/24")}},
+		}}}},
 	}
 	queries := &Queries{RouteChecks: []RouteCheck{{Name: "route", Prefix: MustPrefix("10.0.0.0/24")}}}
 	predicates := CollectPrefixPredicateMetadata(topo, queries)
@@ -240,7 +244,7 @@ func TestCollectPrefixPredicateMetadataSources(t *testing.T) {
 	for _, predicate := range predicates {
 		sources = append(sources, predicate.Source)
 	}
-	want := []string{"route:dst", "policy:deny-dst", "query-route:route"}
+	want := []string{"route:dst", "acl:deny-dst", "query-route:route"}
 	if !reflect.DeepEqual(sources, want) {
 		t.Fatalf("sources = %#v, want %#v", sources, want)
 	}
