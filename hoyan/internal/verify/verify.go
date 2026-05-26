@@ -3,6 +3,7 @@ package verify
 import (
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
+	"github.com/81ueman/network-sandbox/hoyan/internal/solver"
 )
 
 type Report struct {
@@ -15,8 +16,8 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	for _, q := range queries.RouteChecks {
 		path, reachable := g.RouteReachable(q.From, q.Prefix.String(), sim.NoFailures())
 		result := sim.Result{Name: q.Name, Reachable: reachable, Expected: true, Path: path}
-		if cut, ok := g.FindBreakingFailures(q.From, sim.PrefixTarget(q.Prefix.String()), q.MaxFailures); ok {
-			result.Counterexample = cut
+		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+			result.Counterexample = formatFailureElements(cut)
 			result.Reason = "reachable now but not resilient to requested failure budget"
 		}
 		report.Results = append(report.Results, result)
@@ -29,8 +30,8 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 		}
 		result := sim.Result{Name: q.Name, Reachable: reachable, Expected: expected, Path: path, Reason: reason}
 		if expected && reachable {
-			if cut, ok := g.FindBreakingFailures(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol}, q.MaxFailures); ok {
-				result.Counterexample = cut
+			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+				result.Counterexample = formatFailureElements(cut)
 				result.Reason = "reachable now but not resilient to requested failure budget"
 			}
 		}
@@ -48,9 +49,9 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 			expected = *q.ExpectReachable
 		}
 		result := sim.Result{Name: q.Name, Expected: expected}
-		if cut, ok := g.FindBreakingFailures(q.From, target, q.MaxFailures); ok {
+		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
 			result.Reachable = false
-			result.Counterexample = cut
+			result.Counterexample = formatFailureElements(cut)
 			result.Reason = "counterexample within failure budget"
 		} else {
 			result.Reachable = true
@@ -58,6 +59,26 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 		report.Results = append(report.Results, result)
 	}
 	return report
+}
+
+func failureSearchOptions(maxFailures int, domain model.FailureDomain) sim.FailureSearchOptions {
+	return sim.FailureSearchOptions{
+		IncludeLinks: true,
+		MaxFailures:  maxFailures,
+		Domain:       domain,
+	}
+}
+
+func formatFailureElements(elements []solver.FailureElement) []string {
+	out := make([]string, 0, len(elements))
+	for _, element := range elements {
+		if element.Kind == solver.FailureLink {
+			out = append(out, element.Name)
+			continue
+		}
+		out = append(out, element.String())
+	}
+	return out
 }
 
 func (r Report) OK() bool {

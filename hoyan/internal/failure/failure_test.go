@@ -100,3 +100,94 @@ func TestExpandLinkVarsEmbedsEndpointNodeConditions(t *testing.T) {
 		t.Fatalf("expanded NOT(link) should be true when endpoint node is failed: %s", notExpanded)
 	}
 }
+
+func TestSearchElementsDefaultWANFailureDomainExcludesCustomerRole(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "edge", Role: "edge"},
+			{Name: "client", Role: "customer"},
+			{Name: "core", Role: "core"},
+		},
+		Links: []model.Link{
+			{Name: "access-link-without-cust-in-name", A: "edge", B: "client"},
+			{Name: "core-link", A: "edge", B: "core"},
+		},
+	}
+
+	got := SearchElements(topo, SearchOptions{IncludeLinks: true, IncludeNodes: true})
+	if containsElement(got, solver.FailureNode, "client") {
+		t.Fatalf("default failure domain should exclude customer node: %#v", got)
+	}
+	if containsElement(got, solver.FailureLink, "access-link-without-cust-in-name") {
+		t.Fatalf("default failure domain should exclude links attached to customer role: %#v", got)
+	}
+	if !containsElement(got, solver.FailureNode, "core") || !containsElement(got, solver.FailureLink, "core-link") {
+		t.Fatalf("default failure domain should keep non-customer elements: %#v", got)
+	}
+}
+
+func TestSearchElementsExplicitDomainOverridesDefault(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "edge", Role: "edge"},
+			{Name: "client", Role: "customer"},
+		},
+		Links: []model.Link{
+			{Name: "access", A: "edge", B: "client"},
+		},
+	}
+
+	got := SearchElements(topo, SearchOptions{
+		IncludeLinks: true,
+		IncludeNodes: true,
+		Domain: model.FailureDomain{
+			IncludeNodes: []string{"client"},
+			IncludeLinks: []string{"access"},
+		},
+	})
+	if !containsElement(got, solver.FailureNode, "client") || !containsElement(got, solver.FailureLink, "access") {
+		t.Fatalf("explicit include domain should override default customer exclusion: %#v", got)
+	}
+	if containsElement(got, solver.FailureNode, "edge") {
+		t.Fatalf("explicit include domain should act as an allowlist: %#v", got)
+	}
+}
+
+func TestSearchElementsUnsetRoleDoesNotMatchRoleSelectors(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "roleless"},
+			{Name: "core", Role: "core"},
+		},
+		Links: []model.Link{
+			{Name: "roleless-core", A: "roleless", B: "core"},
+		},
+	}
+
+	got := SearchElements(topo, SearchOptions{
+		IncludeLinks: true,
+		IncludeNodes: true,
+		Domain: model.FailureDomain{
+			IncludeNodeRoles: []string{"core"},
+			IncludeLinkRoles: []string{"customer"},
+		},
+	})
+	if containsElement(got, solver.FailureNode, "roleless") {
+		t.Fatalf("roleless node should not match include_node_roles: %#v", got)
+	}
+	if containsElement(got, solver.FailureLink, "roleless-core") {
+		t.Fatalf("link without matching explicit or endpoint role should not match include_link_roles: %#v", got)
+	}
+	if !containsElement(got, solver.FailureNode, "core") {
+		t.Fatalf("core node should match include_node_roles: %#v", got)
+	}
+}
+
+func containsElement(elements []solver.FailureElement, kind solver.FailureElementKind, name string) bool {
+	for _, element := range elements {
+		if element.Kind == kind && element.Name == name {
+			return true
+		}
+	}
+	return false
+}
