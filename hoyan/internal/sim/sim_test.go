@@ -132,6 +132,10 @@ func TestPacketPolicyDeny(t *testing.T) {
 	if reason != "denied by policy BLOCK-HTTP-TO-HZ" {
 		t.Fatalf("reason = %q", reason)
 	}
+	_, ok, reason = g.PacketReachableSpec("cust-bj", "10.4.1.10", model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPortSet{Port: 443}}, NoFailures())
+	if !ok {
+		t.Fatalf("tcp/443 packet not reachable: %s", reason)
+	}
 	_, ok, reason = g.PacketReachable("cust-bj", "10.4.1.10", "icmp", NoFailures())
 	if !ok {
 		t.Fatalf("icmp packet not reachable: %s", reason)

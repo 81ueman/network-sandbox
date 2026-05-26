@@ -33,7 +33,8 @@ func RunDataplaneChecks(ctx context.Context, runner ribcompare.Runner, topo *mod
 		if check.ExpectReachable != nil {
 			expected = *check.ExpectReachable
 		}
-		_, modeled, reason := graph.PacketReachable(check.From, check.To, check.Protocol, failure.None())
+		spec := model.PacketSpec{Protocol: check.Protocol, DstPort: model.ExactPort(check.DstPort)}
+		_, modeled, reason := graph.PacketReachableSpec(check.From, check.To, spec, failure.None())
 		live, err := runPacketProbe(ctx, runner, topo, check)
 		if err != nil {
 			return fmt.Errorf("%s live dataplane probe: %w", check.Name, err)

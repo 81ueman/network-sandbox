@@ -156,12 +156,24 @@ func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) 
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).PacketReachable(from, to, protocol, failures)
 }
 
+func (g *Graph) PacketReachableSpec(from, to string, spec model.PacketSpec, failures FailureSet) (Path, bool, string) {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).PacketReachableSpec(from, to, spec, failures)
+}
+
 func (g *Graph) SymbolicPacketReachability(from, to, protocol string) SymbolicReachabilityResult {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachability(from, to, protocol)
 }
 
+func (g *Graph) SymbolicPacketReachabilitySpec(from, to string, spec model.PacketSpec) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilitySpec(from, to, spec)
+}
+
 func (g *Graph) SymbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, protocol string) SymbolicReachabilityResult {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForPrefixSet(from, dst, protocol)
+}
+
+func (g *Graph) SymbolicPacketReachabilityForPrefixSetSpec(from string, dst model.PrefixSet, spec model.PacketSpec) SymbolicReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicPacketReachabilityForPrefixSetSpec(from, dst, spec)
 }
 
 func (g *Graph) SymbolicPacketReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID, protocol string) SymbolicReachabilityResult {
@@ -249,10 +261,10 @@ func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureS
 	var goal failure.Cond
 	switch t := target.(type) {
 	case PacketTarget:
-		result := g.SymbolicPacketReachability(from, t.To, t.Protocol)
+		result := g.SymbolicPacketReachabilitySpec(from, t.To, t.Spec())
 		goal = result.Unreachable
 	case PacketPrefixTarget:
-		result := g.SymbolicPacketReachabilityForPrefixSet(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Protocol)
+		result := g.SymbolicPacketReachabilityForPrefixSetSpec(from, model.ExactPrefixSet{Prefix: t.Prefix}, t.Spec())
 		goal = result.Unreachable
 	case PrefixTarget:
 		result := g.SymbolicRouteReachability(from, string(t))
@@ -293,24 +305,34 @@ func (t PrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool
 type PacketTarget struct {
 	To       string
 	Protocol string
+	DstPort  int
 }
 
 func (t PacketTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
-	_, ok, _ := g.PacketReachable(from, t.To, t.Protocol, failures)
+	_, ok, _ := g.PacketReachableSpec(from, t.To, t.Spec(), failures)
 	return ok
+}
+
+func (t PacketTarget) Spec() model.PacketSpec {
+	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
 }
 
 type PacketPrefixTarget struct {
 	Prefix   model.Prefix
 	Protocol string
+	DstPort  int
 }
 
 func (t PacketPrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
 	if t.Prefix.IsZero() {
 		return false
 	}
-	_, ok, _ := g.PacketReachable(from, t.Prefix.Addr().String(), t.Protocol, failures)
+	_, ok, _ := g.PacketReachableSpec(from, t.Prefix.Addr().String(), t.Spec(), failures)
 	return ok
+}
+
+func (t PacketPrefixTarget) Spec() model.PacketSpec {
+	return model.PacketSpec{Protocol: t.Protocol, DstPort: model.ExactPort(t.DstPort)}
 }
 
 func FormatPath(p Path) string {

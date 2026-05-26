@@ -16,7 +16,9 @@ type ControlMessage struct {
 }
 
 type PacketMessage struct {
-	Node             string
+	Node string
+	Spec model.PacketSpec
+
 	Prefix           netip.Prefix
 	DstSet           model.PrefixSet
 	Protocol         string
@@ -69,11 +71,13 @@ func (b baseDeviceBehavior) CheckDataEgress(device model.Node, pkt PacketMessage
 }
 
 func (b baseDeviceBehavior) CheckDataIngressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision {
-	return policyDecision(device.Name, "", pkt.IngressInterface, pkt.Prefix, pkt.DstSet, pkt.Protocol, "data", "ingress", policies)
+	spec := pkt.NormalizedSpec()
+	return policyDecision(device.Name, "", spec.IngressInterface, spec, "data", "ingress", policies)
 }
 
 func (b baseDeviceBehavior) CheckDataEgressSymbolic(device model.Node, pkt PacketMessage, policies []model.Policy) PolicyDecision {
-	return policyDecision(device.Name, "", pkt.EgressInterface, pkt.Prefix, pkt.DstSet, pkt.Protocol, "data", "egress", policies)
+	spec := pkt.NormalizedSpec()
+	return policyDecision(device.Name, "", spec.EgressInterface, spec, "data", "egress", policies)
 }
 
 func (b baseDeviceBehavior) RouteValidForRIB(device model.Node, route RIBEntry) bool {
@@ -90,16 +94,20 @@ func (b baseDeviceBehavior) RouteInstallableInFIB(device model.Node, installed [
 }
 
 func matchesDenyPolicy(node, peer, prefix, protocol, plane, stage string, policies []model.Policy) bool {
-	decision := policyDecision(node, peer, "", mustPrefix(prefix), nil, protocol, plane, stage, policies)
+	decision := policyDecision(node, peer, "", model.PacketSpec{DstSet: model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(mustPrefix(prefix))}, Protocol: protocol}, plane, stage, policies)
 	return decision.PolicyName != "" && decision.Denied
 }
 
 func deniedPolicyName(node, peer, iface string, dst netip.Prefix, dstSet model.PrefixSet, protocol, plane, stage string, policies []model.Policy) (string, bool) {
-	decision := policyDecision(node, peer, iface, dst, dstSet, protocol, plane, stage, policies)
+	decision := policyDecision(node, peer, iface, model.PacketSpec{DstSet: dstSet, Protocol: protocol}, plane, stage, policies)
+	if dstSet == nil {
+		decision = policyDecision(node, peer, iface, model.PacketSpec{DstSet: model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(dst)}, Protocol: protocol}, plane, stage, policies)
+	}
 	return decision.PolicyName, decision.Denied
 }
 
-func policyDecision(node, peer, iface string, dst netip.Prefix, dstSet model.PrefixSet, protocol, plane, stage string, policies []model.Policy) PolicyDecision {
+func policyDecision(node, peer, iface string, spec model.PacketSpec, plane, stage string, policies []model.Policy) PolicyDecision {
+	spec = spec.WithNormalizedPorts()
 	for _, pol := range policies {
 		if pol.Node != node || pol.Action != "deny" {
 			continue
@@ -119,15 +127,26 @@ func policyDecision(node, peer, iface string, dst netip.Prefix, dstSet model.Pre
 		if pol.Interface != "" && !interfaceMatches(pol.Interface, iface) {
 			continue
 		}
-		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, protocol) {
+		if pol.Protocol != "" && !strings.EqualFold(pol.Protocol, spec.Protocol) {
+			continue
+		}
+		if !pol.SrcPrefix.IsZero() {
+			if spec.SrcSet == nil || !(model.ExactPrefixSet{Prefix: pol.SrcPrefix}).Overlaps(spec.SrcSet) {
+				continue
+			}
+		}
+		if pol.SrcPort != nil && !pol.SrcPort.Overlaps(spec.SrcPort) {
+			continue
+		}
+		if pol.DstPort != nil && !pol.DstPort.Overlaps(spec.DstPort) {
 			continue
 		}
 		if !pol.DstPrefix.IsZero() {
-			if dstSet != nil {
-				if !(model.ExactPrefixSet{Prefix: pol.DstPrefix}).Overlaps(dstSet) {
+			if spec.DstSet != nil {
+				if !(model.ExactPrefixSet{Prefix: pol.DstPrefix}).Overlaps(spec.DstSet) {
 					continue
 				}
-			} else if !pol.DstPrefix.Overlaps(model.PrefixFromNetIP(dst)) {
+			} else {
 				continue
 			}
 		}
@@ -140,6 +159,26 @@ func policyDecision(node, peer, iface string, dst netip.Prefix, dstSet model.Pre
 		}
 	}
 	return PolicyDecision{Cond: failure.False()}
+}
+
+func (p PacketMessage) NormalizedSpec() model.PacketSpec {
+	spec := p.Spec
+	if spec.DstSet == nil && p.DstSet != nil {
+		spec.DstSet = p.DstSet
+	}
+	if spec.DstSet == nil && p.Prefix.IsValid() {
+		spec.DstSet = model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(p.Prefix)}
+	}
+	if spec.Protocol == "" {
+		spec.Protocol = p.Protocol
+	}
+	if spec.IngressInterface == "" {
+		spec.IngressInterface = p.IngressInterface
+	}
+	if spec.EgressInterface == "" {
+		spec.EgressInterface = p.EgressInterface
+	}
+	return spec.WithNormalizedPorts()
 }
 
 func interfaceMatches(policyInterface, packetInterface string) bool {

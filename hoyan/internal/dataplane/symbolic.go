@@ -175,6 +175,10 @@ func (e *Engine) SymbolicRouteReachability(from, prefix string) SymbolicRouteRea
 }
 
 func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicReachabilityResult {
+	return e.SymbolicPacketReachabilitySpec(from, to, model.PacketSpec{Protocol: protocol})
+}
+
+func (e *Engine) SymbolicPacketReachabilitySpec(from, to string, spec model.PacketSpec) SymbolicReachabilityResult {
 	reachable := failure.False()
 	result := SymbolicReachabilityResult{Reachable: reachable, Unreachable: failure.True()}
 	if e == nil || e.idx == nil {
@@ -196,10 +200,14 @@ func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicR
 		return result
 	}
 	dstSet := model.ExactPrefixSet{Prefix: dstPrefix}
-	return e.symbolicPacketReachabilityForPrefixSet(from, dstSet, dstPrefix.NetIP(), protocol, failure.And(failure.NodeVar(from), failure.NodeVar(dstNode)))
+	return e.symbolicPacketReachabilityForPrefixSet(from, dstSet, dstPrefix.NetIP(), spec, failure.And(failure.NodeVar(from), failure.NodeVar(dstNode)))
 }
 
 func (e *Engine) SymbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, protocol string) SymbolicReachabilityResult {
+	return e.SymbolicPacketReachabilityForPrefixSetSpec(from, dst, model.PacketSpec{Protocol: protocol})
+}
+
+func (e *Engine) SymbolicPacketReachabilityForPrefixSetSpec(from string, dst model.PrefixSet, spec model.PacketSpec) SymbolicReachabilityResult {
 	result := SymbolicReachabilityResult{Reachable: failure.False(), Unreachable: failure.True()}
 	if e == nil || e.idx == nil {
 		result.Reason = "topology index is unavailable"
@@ -222,7 +230,7 @@ func (e *Engine) SymbolicPacketReachabilityForPrefixSet(from string, dst model.P
 		result.Reason = "destination prefix not advertised"
 		return result
 	}
-	return e.symbolicPacketReachabilityForPrefixSet(from, dst, rep.NetIP(), protocol, failure.NodeVar(from))
+	return e.symbolicPacketReachabilityForPrefixSet(from, dst, rep.NetIP(), spec, failure.NodeVar(from))
 }
 
 func (e *Engine) SymbolicPacketReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID, protocol string) SymbolicReachabilityResult {
@@ -238,12 +246,14 @@ func (e *Engine) SymbolicPacketReachabilityForClass(from string, universe model.
 	}
 }
 
-func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, packetPrefix netip.Prefix, protocol string, initialCond failure.Cond) SymbolicReachabilityResult {
+func (e *Engine) symbolicPacketReachabilityForPrefixSet(from string, dst model.PrefixSet, packetPrefix netip.Prefix, spec model.PacketSpec, initialCond failure.Cond) SymbolicReachabilityResult {
 	maxHops := len(e.idx.NodesByName)
 	if maxHops == 0 {
 		maxHops = len(e.fib) + 1
 	}
-	packet := controlplane.PacketMessage{Node: from, Prefix: packetPrefix, DstSet: dst, Protocol: protocol}
+	spec = spec.WithNormalizedPorts()
+	spec.DstSet = dst
+	packet := controlplane.PacketMessage{Node: from, Prefix: packetPrefix, Spec: spec}
 	var reasons []SymbolicUnreachableReason
 	addUnreachableReason(&reasons, SymbolicUnreachableReason{
 		Kind:    UnreachableNodeFailed,

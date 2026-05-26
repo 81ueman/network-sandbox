@@ -129,7 +129,10 @@ type Policy struct {
 	Peer      string       `yaml:"peer"`
 	Action    string       `yaml:"action"`
 	Protocol  string       `yaml:"protocol"`
+	SrcPrefix Prefix       `yaml:"src_prefix"`
 	DstPrefix Prefix       `yaml:"dst_prefix"`
+	SrcPort   PortSet      `yaml:"-"`
+	DstPort   PortSet      `yaml:"-"`
 	Seq       int          `yaml:"seq,omitempty"`
 	Source    PolicySource `yaml:"source,omitempty"`
 }
@@ -195,6 +198,7 @@ type FailureCheck struct {
 	To              string        `yaml:"to"`
 	Prefix          Prefix        `yaml:"prefix"`
 	Protocol        string        `yaml:"protocol"`
+	DstPort         int           `yaml:"dst_port,omitempty"`
 	ExpectReachable *bool         `yaml:"expect_reachable"`
 	MaxFailures     int           `yaml:"max_failures"`
 	FailureDomain   FailureDomain `yaml:"failure_domain"`

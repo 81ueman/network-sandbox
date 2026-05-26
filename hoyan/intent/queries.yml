@@ -33,6 +33,14 @@ packet_checks:
     dst_port: 80
     expect_reachable: false
     max_failures: 0
+  - name: bj-client-to-hz-https-allowed-linux-acl
+    from: cust-bj
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 443
+    live_probe: false
+    expect_reachable: true
+    max_failures: 0
   - name: sh-client-to-hz-http-denied-live-ceos
     from: cust-sh
     to: 10.4.1.10
@@ -40,12 +48,28 @@ packet_checks:
     dst_port: 80
     expect_reachable: false
     max_failures: 0
+  - name: sh-client-to-hz-https-allowed-ceos
+    from: cust-sh
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 443
+    live_probe: false
+    expect_reachable: true
+    max_failures: 0
   - name: gz-client-to-hz-http-denied-live-srlinux
     from: cust-gz
     to: 10.4.1.10
     protocol: tcp
     dst_port: 80
     expect_reachable: false
+    max_failures: 0
+  - name: gz-client-to-hz-https-allowed-srlinux
+    from: cust-gz
+    to: 10.4.1.10
+    protocol: tcp
+    dst_port: 443
+    live_probe: false
+    expect_reachable: true
     max_failures: 0
 failure_checks:
   - name: bj-client-gz-has-one-core-failure-counterexample

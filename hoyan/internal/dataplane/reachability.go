@@ -33,6 +33,10 @@ func (e *Engine) RouteReachable(from, prefix string, failures failure.Set) (Path
 }
 
 func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set) (Path, bool, string) {
+	return e.PacketReachableSpec(from, to, model.PacketSpec{Protocol: protocol}, failures)
+}
+
+func (e *Engine) PacketReachableSpec(from, to string, spec model.PacketSpec, failures failure.Set) (Path, bool, string) {
 	ctx := e.FailureContext(failures)
 	dstNode, dstPrefix, ok := e.idx.OriginForIP(to)
 	if !ok {
@@ -47,7 +51,7 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 	return e.packetReachableFrom(packetReachableState{
 		current:   from,
 		to:        to,
-		protocol:  protocol,
+		spec:      spec,
 		dstPrefix: dstPrefix.NetIP(),
 		ctx:       ctx,
 		visited:   map[string]bool{},
@@ -58,7 +62,7 @@ func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set
 type packetReachableState struct {
 	current          string
 	to               string
-	protocol         string
+	spec             model.PacketSpec
 	dstPrefix        netip.Prefix
 	ingressInterface string
 	ctx              failure.Context
@@ -77,7 +81,10 @@ func (e *Engine) packetReachableFrom(state packetReachableState) (Path, bool, st
 		return state.full, true, ""
 	}
 	currentNode, _ := e.idx.Node(state.current)
-	packet := controlplane.PacketMessage{Node: state.current, Prefix: state.dstPrefix, Protocol: state.protocol, IngressInterface: state.ingressInterface}
+	packetSpec := state.spec.WithNormalizedPorts()
+	packetSpec.DstSet = model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(state.dstPrefix)}
+	packetSpec.IngressInterface = state.ingressInterface
+	packet := controlplane.PacketMessage{Node: state.current, Prefix: state.dstPrefix, Spec: packetSpec}
 	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngress(currentNode, packet, e.idx.Topology.Policies); ok {
 		return state.full, false, "denied by policy " + pol
 	}
@@ -118,7 +125,7 @@ func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[
 	if !ok || state.ctx.LinkFailed(model.LinkID(link.Name)) {
 		return state.full, false, "next-hop link is down"
 	}
-	packet.EgressInterface = interfaceOnLink(link, state.current)
+	packet.Spec.EgressInterface = interfaceOnLink(link, state.current)
 	if pol, ok := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgress(currentNode, packet, e.idx.Topology.Policies); ok {
 		return state.full, false, "denied by policy " + pol
 	}
@@ -130,7 +137,7 @@ func (e *Engine) tryPacketCandidate(state packetReachableState, nextVisited map[
 	return e.packetReachableFrom(packetReachableState{
 		current:          rule.NextHop,
 		to:               state.to,
-		protocol:         state.protocol,
+		spec:             state.spec,
 		dstPrefix:        state.dstPrefix,
 		ingressInterface: interfaceOnLink(link, rule.NextHop),
 		ctx:              state.ctx,
