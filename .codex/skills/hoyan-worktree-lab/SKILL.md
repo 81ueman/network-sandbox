@@ -87,8 +87,10 @@ Base new work on the latest `main` by default. Fetch and fast-forward `main` bef
 9. If the task changes behavior that hoyan models, verifies, or compares against live devices, run the live integration check at the end from the `hoyan` directory:
 
    ```bash
-   go run ./cmd/hoyan-live-check
+   go run ./cmd/hoyan live-check --topology <generated>.clab.yml
    ```
+
+   Always pass the explicitly generated worktree topology to `live-check` with `--topology`. Do not rely on the command's default `hoyan.clab.yml` topology when a generated worktree topology exists.
 
    Treat changes to verifier/model/simulator/RIB comparison code, intent files, topology, device configs, render logic, or live-check collection/normalization as behavior-changing. If the live check fails, report the failing output and whether the command left a lab running. Use the command's debugging flags, such as `-keep-on-failure`, only when needed to investigate a failure.
 
