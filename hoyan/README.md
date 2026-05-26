@@ -237,12 +237,19 @@ run:
 go run ./cmd/hoyan fib-compare
 ```
 
-`fib-compare` normalizes modeled BGP, next-hop static, and comparable connected
-FIB entries with live installed FIB entries by node, VRF, AFI, protocol,
-prefix, and next-hop set. Null0/blackhole static routes without a comparable
-next-hop are outside the strict FIB set. It reports missing routes, unexpected
-routes, missing next-hops, and unexpected next-hops, including ECMP group
-differences. Live collectors currently use:
+`fib-compare` normalizes modeled BGP, next-hop static, Null0/blackhole, and
+comparable connected FIB entries with live installed FIB entries by node, VRF,
+AFI, source protocol, prefix, and next-hop set. FRR `Null0`, cEOS
+`Null0`/discard, and SR Linux blackhole/discard routes are canonicalized as
+source protocol `blackhole` with no next-hop. When a local blackhole static and
+a BGP `network` route use the same prefix, RIB compare keeps both sources as
+separate entries, while FIB compare expects the local blackhole install and does
+not require a same-prefix local BGP forwarding entry. BGP aggregate routes are
+modeled as BGP control-plane advertisements; they are not treated as local
+blackhole/discard FIB entries unless the device also has an explicit discard
+route. It reports missing routes, unexpected routes, missing next-hops, and
+unexpected next-hops, including ECMP group differences. Live collectors
+currently use:
 
 ```bash
 docker exec -i <frr-node> ip -j route show table main

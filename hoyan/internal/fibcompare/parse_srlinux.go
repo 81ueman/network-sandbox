@@ -73,6 +73,10 @@ func srlinuxRoute(node string, m map[string]any) (NormalizedFIBRoute, bool) {
 	if backupHop.Address != "" || backupHop.Interface != "" {
 		route.NextHops = append(route.NextHops, backupHop)
 	}
+	if discardNextHops(route.NextHops) {
+		route.Protocol = "blackhole"
+		route.NextHops = nil
+	}
 	route.NextHops = dedupeNextHops(route.NextHops)
 	return route, true
 }

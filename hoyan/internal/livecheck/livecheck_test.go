@@ -92,9 +92,9 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 		case strings.Contains(cmd, "show ip bgp json"):
 			return []byte(`{"10.1.1.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"ip":""}]}]}`), nil
 		case strings.Contains(cmd, "show ip route json"):
-			return []byte(`{"10.255.1.1/32":[{"protocol":"connected","interfaceName":"lo"}]}`), nil
+			return []byte(`{"10.255.1.1/32":[{"protocol":"connected","interfaceName":"lo"}],"10.1.1.10/32":[{"protocol":"static","nexthops":[{"interfaceName":"Null0"}]}]}`), nil
 		case strings.Contains(cmd, "ip -j route show table main"):
-			return []byte(`[{"dst":"10.1.1.10/32","protocol":"static"},{"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}]`), nil
+			return []byte(`[{"type":"blackhole","dst":"10.1.1.10/32","protocol":"static"},{"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}]`), nil
 		case strings.Contains(cmd, "ip -j route show table local"):
 			return []byte(`[{"dst":"10.255.1.1","dev":"lo","protocol":"local"}]`), nil
 		default:
@@ -134,10 +134,10 @@ func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
 		case strings.Contains(cmd, "show ip bgp json"):
 			return []byte(`{"10.1.1.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"ip":""}]}]}`), nil
 		case strings.Contains(cmd, "show ip route json"):
-			return []byte(`{"10.255.1.1/32":[{"protocol":"connected","interfaceName":"lo"}]}`), nil
+			return []byte(`{"10.255.1.1/32":[{"protocol":"connected","interfaceName":"lo"}],"10.1.1.10/32":[{"protocol":"static","nexthops":[{"interfaceName":"Null0"}]}]}`), nil
 		case strings.Contains(cmd, "ip -j route show table main"):
 			return []byte(`[
-			  {"dst":"10.1.1.10/32","protocol":"static"},
+			  {"type":"blackhole","dst":"10.1.1.10/32","protocol":"static"},
 			  {"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}
 			]`), nil
 		case strings.Contains(cmd, "ip -j route show table local"):

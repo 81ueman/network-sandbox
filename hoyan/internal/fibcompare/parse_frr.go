@@ -21,13 +21,19 @@ func ParseLinuxIPRoute(node string, data []byte) ([]NormalizedFIBRoute, error) {
 		if !ok {
 			continue
 		}
+		protocol := linuxRouteProtocol(item)
+		nextHops := routeNextHops(item)
+		if discardLinuxRoute(item, nextHops) {
+			protocol = "blackhole"
+			nextHops = nil
+		}
 		route := NormalizedFIBRoute{
 			Node:       node,
 			VRF:        "default",
 			AFI:        "ipv4",
 			Prefix:     prefix,
-			NextHops:   routeNextHops(item),
-			Protocol:   linuxRouteProtocol(item),
+			NextHops:   nextHops,
+			Protocol:   protocol,
 			Preference: intValue(item["pref"]),
 			Metric:     intValue(item["metric"]),
 			Installed:  true,
@@ -40,10 +46,20 @@ func ParseLinuxIPRoute(node string, data []byte) ([]NormalizedFIBRoute, error) {
 }
 
 func linuxRouteProtocol(item map[string]any) string {
+	if routeType := canonicalProtocol(stringValue(item["type"])); routeType == "blackhole" {
+		return routeType
+	}
 	if protocol := canonicalProtocol(stringValue(item["protocol"])); protocol != "" {
 		return protocol
 	}
 	return canonicalProtocol(stringValue(item["type"]))
+}
+
+func discardLinuxRoute(item map[string]any, hops []NormalizedFIBNextHop) bool {
+	if canonicalProtocol(stringValue(item["type"])) == "blackhole" {
+		return true
+	}
+	return discardNextHops(hops)
 }
 
 func routePrefix(item map[string]any) (string, bool, error) {
@@ -68,6 +84,34 @@ func routePrefix(item map[string]any) (string, bool, error) {
 		return "", false, nil
 	}
 	return pfx.Masked().String(), true, nil
+}
+
+func discardNextHops(hops []NormalizedFIBNextHop) bool {
+	if len(hops) == 0 {
+		return false
+	}
+	for _, hop := range hops {
+		if !discardNextHop(hop) {
+			return false
+		}
+	}
+	return true
+}
+
+func discardNextHop(hop NormalizedFIBNextHop) bool {
+	if hop.Address != "" && !discardToken(hop.Address) {
+		return false
+	}
+	return discardToken(hop.Interface)
+}
+
+func discardToken(raw string) bool {
+	switch canonicalProtocol(raw) {
+	case "blackhole":
+		return true
+	default:
+		return false
+	}
 }
 
 func routeNextHops(item map[string]any) []NormalizedFIBNextHop {
