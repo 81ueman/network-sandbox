@@ -69,11 +69,11 @@ type ribInspectRow struct {
 	PathLinks             []string `json:"path_links,omitempty"`
 	ASPath                []uint32 `json:"as_path,omitempty"`
 	Communities           []string `json:"communities,omitempty"`
-	OriginCode            string   `json:"origin_code,omitempty"`
-	LocalPref             int      `json:"local_pref,omitempty"`
-	MED                   int      `json:"med,omitempty"`
-	LearnedIBGP           bool     `json:"learned_ibgp"`
-	Invalid               bool     `json:"invalid"`
+	OriginCode            *string  `json:"origin_code,omitempty"`
+	LocalPref             *int     `json:"local_pref,omitempty"`
+	MED                   *int     `json:"med,omitempty"`
+	LearnedIBGP           *bool    `json:"learned_ibgp,omitempty"`
+	Invalid               *bool    `json:"invalid,omitempty"`
 	AggregateContributors []string `json:"aggregate_contributors,omitempty"`
 	Condition             string   `json:"condition,omitempty"`
 	SelectedCondition     string   `json:"selected_condition,omitempty"`
@@ -233,13 +233,16 @@ func NewModelPacketClassesCommand() *cobra.Command {
 func NewModelRIBCommand() *cobra.Command {
 	var opts modelInspectOptions
 	cmd := &cobra.Command{
-		Use:           "rib",
-		Short:         "Inspect modeled BGP RIB entries",
+		Use:           "rib [bgp|connected|static|aggregate|blackhole]",
+		Short:         "Inspect modeled RIB entries",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 {
+			if len(args) > 1 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			if len(args) == 1 {
+				opts.protocol = args[0]
 			}
 			return runModelRIB(cmd.Context(), opts, cmd.OutOrStdout())
 		},
@@ -325,6 +328,10 @@ func addModelCommonFlags(cmd *cobra.Command, opts *modelInspectOptions) {
 }
 
 func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) error {
+	protocol, err := canonicalRouteProtocol(opts.protocol)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
 	topo, graph, err := loadModelGraph(opts.topologyPath, opts.strictConfig)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
@@ -337,10 +344,10 @@ func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) err
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
-	rows := collectRIBRows(graph, nodes, prefix)
+	rows := collectRIBRows(graph, nodes, prefix, protocol)
 	switch opts.format {
 	case modelFormatTable:
-		return writeRIBTable(out, rows, opts.showCond)
+		return writeRIBTable(out, rows, opts.showCond, protocol)
 	case modelFormatJSON:
 		return writeJSON(out, rows)
 	default:
@@ -557,6 +564,22 @@ func canonicalPrefix(raw string) (string, error) {
 	return prefix.String(), nil
 }
 
+func canonicalRouteProtocol(raw string) (model.RouteSourceKind, error) {
+	protocol := model.RouteSourceKind(strings.ToLower(strings.TrimSpace(raw)))
+	switch protocol {
+	case "":
+		return "", nil
+	case model.RouteSourceBGP, model.RouteSourceConnected, model.RouteSourceStatic, model.RouteSourceAggregate, model.RouteSourceBlackhole:
+		return protocol, nil
+	default:
+		return "", fmt.Errorf("protocol must be one of bgp, connected, static, aggregate, or blackhole")
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
 func modelPrefixUniverse(topo *model.Topology, graph *sim.Graph, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
 	return modelPrefixUniverseWithQueries(topo, nil, graph, request)
 }
@@ -612,11 +635,11 @@ func collectPacketClassRows(headerSpace model.HeaderSpace, filter model.PrefixSe
 	return rows
 }
 
-func collectRIBRows(graph *sim.Graph, nodes []string, prefix string) []ribInspectRow {
+func collectRIBRows(graph *sim.Graph, nodes []string, prefix string, protocol model.RouteSourceKind) []ribInspectRow {
 	var rows []ribInspectRow
 	for _, node := range nodes {
 		if prefix != "" {
-			rows = append(rows, ribRowsForRoutes(node, graph.RIB(node, prefix))...)
+			rows = append(rows, ribRowsForRoutes(node, graph.RIB(node, prefix), protocol)...)
 			continue
 		}
 		table := graph.RIBTable(node)
@@ -626,16 +649,19 @@ func collectRIBRows(graph *sim.Graph, nodes []string, prefix string) []ribInspec
 		}
 		sort.Strings(prefixes)
 		for _, p := range prefixes {
-			rows = append(rows, ribRowsForRoutes(node, table[p])...)
+			rows = append(rows, ribRowsForRoutes(node, table[p], protocol)...)
 		}
 	}
 	return rows
 }
 
-func ribRowsForRoutes(node string, routes []sim.RIBEntry) []ribInspectRow {
+func ribRowsForRoutes(node string, routes []sim.RIBEntry, protocol model.RouteSourceKind) []ribInspectRow {
 	rows := make([]ribInspectRow, 0, len(routes))
 	for _, route := range routes {
 		route = route.Normalize()
+		if protocol != "" && route.SourceKind != protocol {
+			continue
+		}
 		rows = append(rows, ribInspectRow{
 			Node:                  node,
 			Prefix:                route.NLRI.Prefix.String(),
@@ -647,18 +673,21 @@ func ribRowsForRoutes(node string, routes []sim.RIBEntry) []ribInspectRow {
 			FromNode:              route.Provenance.FromNode,
 			PathNodes:             append([]string(nil), route.Provenance.PathNodes...),
 			PathLinks:             append([]string(nil), route.Provenance.PathLinks...),
-			ASPath:                append([]uint32(nil), route.Attrs.ASPath...),
-			Communities:           append([]string(nil), route.Attrs.Communities...),
-			OriginCode:            string(route.Attrs.OriginCode),
-			LocalPref:             route.Attrs.LocalPref,
-			MED:                   route.Attrs.MED,
-			LearnedIBGP:           route.Attrs.LearnedIBGP,
-			Invalid:               route.Attrs.Invalid,
 			AggregateContributors: append([]string(nil), route.AggregateContributors...),
 			Condition:             condString(route.Condition),
 			SelectedCondition:     condString(route.SelectedCond),
 			BaseCondition:         condString(route.BaseCond),
 		})
+		if route.SourceKind == model.RouteSourceBGP {
+			last := &rows[len(rows)-1]
+			last.ASPath = append([]uint32(nil), route.Attrs.ASPath...)
+			last.Communities = append([]string(nil), route.Attrs.Communities...)
+			last.OriginCode = ptr(string(route.Attrs.OriginCode))
+			last.LocalPref = ptr(route.Attrs.LocalPref)
+			last.MED = ptr(route.Attrs.MED)
+			last.LearnedIBGP = ptr(route.Attrs.LearnedIBGP)
+			last.Invalid = ptr(route.Attrs.Invalid)
+		}
 	}
 	return rows
 }
@@ -867,7 +896,10 @@ func writePacketClassTable(out io.Writer, rows []packetClassInspectRow, showPred
 	return tw.Flush()
 }
 
-func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
+func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool, protocol model.RouteSourceKind) error {
+	if protocol != "" && protocol != model.RouteSourceBGP {
+		return writeRouteSourceRIBTable(out, rows, showCond)
+	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
 		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
@@ -875,7 +907,7 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH")
 	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%t\t%t\t%s",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			row.Node,
 			row.Prefix,
 			row.SourceKind,
@@ -884,11 +916,11 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 			row.OriginNode,
 			row.FromNode,
 			formatASPath(row.ASPath),
-			row.LocalPref,
-			row.MED,
-			row.OriginCode,
-			row.LearnedIBGP,
-			row.Invalid,
+			formatIntPtr(row.LocalPref),
+			formatIntPtr(row.MED),
+			formatStringPtr(row.OriginCode),
+			formatBoolPtr(row.LearnedIBGP),
+			formatBoolPtr(row.Invalid),
 			strings.Join(row.PathNodes, "->"),
 		)
 		if showCond {
@@ -897,6 +929,53 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 		fmt.Fprintln(tw)
 	}
 	return tw.Flush()
+}
+
+func writeRouteSourceRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if showCond {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tPATH\tCONDITION\tSELECTED")
+	} else {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tPATH")
+	}
+	for _, row := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
+			row.Node,
+			row.Prefix,
+			row.SourceKind,
+			row.NextHopNode,
+			row.RouteInterface,
+			row.OriginNode,
+			row.FromNode,
+			strings.Join(row.PathNodes, "->"),
+		)
+		if showCond {
+			fmt.Fprintf(tw, "\t%s\t%s", row.Condition, row.SelectedCondition)
+		}
+		fmt.Fprintln(tw)
+	}
+	return tw.Flush()
+}
+
+func formatStringPtr(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func formatIntPtr(v *int) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *v)
+}
+
+func formatBoolPtr(v *bool) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%t", *v)
 }
 
 func writeFIBTable(out io.Writer, rows []fibInspectRow, showCond bool) error {

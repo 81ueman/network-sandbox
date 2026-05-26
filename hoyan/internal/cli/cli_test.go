@@ -415,6 +415,78 @@ func TestModelRIBCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 	}
 }
 
+func TestModelRIBCommandFiltersProtocolArgument(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"connected",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) == 0 {
+		t.Fatalf("rows = 0, want connected RIB entries")
+	}
+	for _, row := range rows {
+		if row["source_kind"] != "connected" {
+			t.Fatalf("unexpected protocol filter result: %#v", row)
+		}
+		for _, unexpected := range []string{"as_path", "origin_code", "local_pref", "med", "learned_ibgp", "invalid"} {
+			if _, ok := row[unexpected]; ok {
+				t.Fatalf("connected row should not include BGP field %q: %#v", unexpected, row)
+			}
+		}
+	}
+}
+
+func TestModelRIBCommandUsesRouteSourceTableForNonBGPProtocol(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"connected",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "AS-PATH") || strings.Contains(got, "LOCAL-PREF") || strings.Contains(got, "ORIGIN-CODE") || strings.Contains(got, "IBGP") {
+		t.Fatalf("connected table should not include BGP columns:\n%s", got)
+	}
+	for _, want := range []string{"NODE", "PREFIX", "SOURCE", "IFACE", "connected"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("connected table missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestModelRIBCommandRejectsInvalidProtocolArgument(t *testing.T) {
+	cmd := NewModelRIBCommand()
+	cmd.SetOut(ioDiscard{})
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{"bogus"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil")
+	}
+	if !strings.Contains(err.Error(), "protocol must be one of bgp, connected, static, aggregate, or blackhole") {
+		t.Fatalf("error = %q, want protocol validation", err.Error())
+	}
+}
+
 func TestModelFIBCommandOutputsTable(t *testing.T) {
 	var out bytes.Buffer
 	cmd := NewModelFIBCommand()

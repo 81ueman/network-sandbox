@@ -92,7 +92,9 @@ topology and device configs without collecting live device state:
 
 ```bash
 go run ./cmd/hoyan model rib --node bj-edge1
+go run ./cmd/hoyan model rib --node bj-edge1 bgp
 go run ./cmd/hoyan model rib --node bj-edge1 --prefix 10.4.0.0/16 --format json
+go run ./cmd/hoyan model rib --node bj-edge1 connected
 go run ./cmd/hoyan model fib --node bj-edge1
 go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
