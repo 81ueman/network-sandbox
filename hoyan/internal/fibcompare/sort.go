@@ -38,3 +38,13 @@ func sortUnresolvedRoutes(routes []UnresolvedRoute) {
 func unresolvedRouteSortKey(route UnresolvedRoute) string {
 	return route.RouteKey + "|" + route.Reason
 }
+
+func sortDuplicateRouteConflicts(conflicts []DuplicateRouteConflict) {
+	sort.SliceStable(conflicts, func(i, j int) bool {
+		return duplicateRouteConflictSortKey(conflicts[i]) < duplicateRouteConflictSortKey(conflicts[j])
+	})
+}
+
+func duplicateRouteConflictSortKey(conflict DuplicateRouteConflict) string {
+	return conflict.RouteKey + "|" + conflict.Side + "|" + conflict.Reason
+}

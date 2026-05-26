@@ -3,19 +3,28 @@ package fibcompare
 import "sort"
 
 func Compare(expected, actual []NormalizedFIBRoute) Result {
+	expected, expConflicts := normalizeRoutesForSide("expected", expected)
+	actual, actConflicts := normalizeRoutesForSide("actual", actual)
 	exp := map[string]NormalizedFIBRoute{}
 	act := map[string]NormalizedFIBRoute{}
+	conflictedKeys := map[string]bool{}
+	var result Result
+	result.DuplicateRouteConflicts = append(result.DuplicateRouteConflicts, expConflicts...)
+	result.DuplicateRouteConflicts = append(result.DuplicateRouteConflicts, actConflicts...)
+	for _, conflict := range result.DuplicateRouteConflicts {
+		conflictedKeys[conflict.RouteKey] = true
+	}
 	for _, route := range expected {
-		route.NextHops = dedupeNextHops(route.NextHops)
 		exp[routeKey(route)] = route
 	}
 	for _, route := range actual {
-		route.NextHops = dedupeNextHops(route.NextHops)
 		act[routeKey(route)] = route
 	}
 	keys := sortedUnion(exp, act)
-	var result Result
 	for _, key := range keys {
+		if conflictedKeys[key] {
+			continue
+		}
 		e, eok := exp[key]
 		a, aok := act[key]
 		switch {
@@ -38,10 +47,12 @@ func Compare(expected, actual []NormalizedFIBRoute) Result {
 	sort.Slice(result.Mismatched, func(i, j int) bool {
 		return result.Mismatched[i].RouteKey+"|"+result.Mismatched[i].Field < result.Mismatched[j].RouteKey+"|"+result.Mismatched[j].Field
 	})
+	sortDuplicateRouteConflicts(result.DuplicateRouteConflicts)
 	result.OK = len(result.MissingRoutes) == 0 &&
 		len(result.UnexpectedRoutes) == 0 &&
 		len(result.MissingNextHops) == 0 &&
 		len(result.UnexpectedNextHops) == 0 &&
+		len(result.DuplicateRouteConflicts) == 0 &&
 		len(result.Mismatched) == 0 &&
 		len(result.UnresolvedRoutes) == 0 &&
 		len(result.UnsupportedNodes) == 0

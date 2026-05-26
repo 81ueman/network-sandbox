@@ -2,6 +2,7 @@ package fibcompare
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -275,6 +276,103 @@ func TestCompareReportsRouteAndNextHopDiffs(t *testing.T) {
 	}
 	if len(result.MissingRoutes) != 1 || len(result.UnexpectedRoutes) != 1 || len(result.MissingNextHops) != 1 || len(result.UnexpectedNextHops) != 1 {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestNormalizeRoutesMergesDuplicateNextHops(t *testing.T) {
+	routes, conflicts := NormalizeRoutes([]NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 20, NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.1", Interface: "eth1"}}},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 20, NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.2", Interface: "eth2"}}},
+	})
+	if len(conflicts) != 0 || len(routes) != 1 {
+		t.Fatalf("routes=%#v conflicts=%#v, want one merged route and no conflicts", routes, conflicts)
+	}
+	want := []NormalizedFIBNextHop{
+		{Address: "192.0.2.1", Interface: "eth1"},
+		{Address: "192.0.2.2", Interface: "eth2"},
+	}
+	if !reflect.DeepEqual(routes[0].NextHops, want) {
+		t.Fatalf("next-hops = %#v, want %#v", routes[0].NextHops, want)
+	}
+}
+
+func TestCompareReportsDuplicateRouteConflictForPreference(t *testing.T) {
+	result := Compare([]NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 20},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 30},
+	}, nil)
+	if result.OK || len(result.DuplicateRouteConflicts) != 1 {
+		t.Fatalf("result = %#v, want duplicate route conflict", result)
+	}
+	conflict := result.DuplicateRouteConflicts[0]
+	if conflict.Side != "expected" || conflict.Reason != "preference mismatch" || len(conflict.Routes) != 2 {
+		t.Fatalf("conflict = %#v", conflict)
+	}
+}
+
+func TestCompareReportsDuplicateRouteConflictForConnectedClass(t *testing.T) {
+	result := Compare([]NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "192.0.2.0/31", Protocol: "connected", ConnectedClass: model.ConnectedRouteClassLink, Installed: true},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "192.0.2.0/31", Protocol: "connected", ConnectedClass: model.ConnectedRouteClassLoopback, Installed: true},
+	}, nil)
+	if result.OK || len(result.DuplicateRouteConflicts) != 1 || result.DuplicateRouteConflicts[0].Reason != "connected_class mismatch" {
+		t.Fatalf("result = %#v, want connected class duplicate conflict", result)
+	}
+}
+
+func TestCompareReportsExpectedAndActualDuplicateRouteConflicts(t *testing.T) {
+	expected := []NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 20},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, Preference: 30},
+	}
+	actual := []NormalizedFIBRoute{
+		{Node: "r2", VRF: "default", AFI: "ipv4", Prefix: "10.0.1.0/24", Protocol: "bgp", Installed: true, Metric: 10},
+		{Node: "r2", VRF: "default", AFI: "ipv4", Prefix: "10.0.1.0/24", Protocol: "bgp", Installed: true, Metric: 20},
+	}
+	result := Compare(expected, actual)
+	if result.OK || len(result.DuplicateRouteConflicts) != 2 {
+		t.Fatalf("result = %#v, want expected and actual duplicate conflicts", result)
+	}
+	if result.DuplicateRouteConflicts[0].Side != "expected" || result.DuplicateRouteConflicts[1].Side != "actual" {
+		t.Fatalf("conflicts = %#v", result.DuplicateRouteConflicts)
+	}
+}
+
+func TestCompareDuplicateRoutesDoNotSilentlyOverwrite(t *testing.T) {
+	expected := []NormalizedFIBRoute{{
+		Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true,
+		NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.1", Interface: "eth1"}},
+	}}
+	actual := []NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.2", Interface: "eth2"}}},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Installed: true, NextHops: []NormalizedFIBNextHop{{Address: "192.0.2.1", Interface: "eth1"}}},
+	}
+	result := Compare(expected, actual)
+	if result.OK || len(result.UnexpectedNextHops) != 1 || result.UnexpectedNextHops[0].NextHopKey != "192.0.2.2|eth2" {
+		t.Fatalf("result = %#v, want duplicate next-hop merged into visible diff", result)
+	}
+}
+
+func TestFormatAndJSONIncludeDuplicateRouteConflict(t *testing.T) {
+	result := Result{DuplicateRouteConflicts: []DuplicateRouteConflict{{
+		RouteKey: "r1|default|ipv4|10.0.0.0/24",
+		Side:     "expected",
+		Reason:   "preference mismatch",
+		Routes: []NormalizedFIBRoute{
+			{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Preference: 20},
+			{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.0.0.0/24", Protocol: "bgp", Preference: 30},
+		},
+	}}}
+	lines := FormatDiffs(result)
+	if len(lines) != 1 || !strings.Contains(lines[0], "duplicate FIB route conflict") || !strings.Contains(lines[0], "reason=preference mismatch") {
+		t.Fatalf("lines = %#v", lines)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(data), "DuplicateRouteConflicts") || !strings.Contains(string(data), "preference mismatch") {
+		t.Fatalf("json = %s, want duplicate conflict", data)
 	}
 }
 
