@@ -79,6 +79,7 @@ type ConfiguredRoute struct {
 	Kind            RouteSourceKind   `yaml:"kind" json:"kind"`
 	AdminDistance   int               `yaml:"admin_distance,omitempty" json:"admin_distance,omitempty"`
 	Metric          int               `yaml:"metric,omitempty" json:"metric,omitempty"`
+	SummaryOnly     bool              `yaml:"summary_only,omitempty" json:"summary_only,omitempty"`
 	Source          PolicySource      `yaml:"source,omitempty" json:"source,omitempty"`
 }
 

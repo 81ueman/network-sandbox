@@ -1034,6 +1034,71 @@ router bgp 65001
 	}
 }
 
+func TestParseFRRAggregateAddressSummaryOnly(t *testing.T) {
+	cfg := parseFRRConfigText(t, `
+hostname r1
+router bgp 65001
+ address-family ipv4 unicast
+  aggregate-address 10.0.0.0/16 summary-only
+ exit-address-family
+!
+`)
+	if len(cfg.Routes) != 1 {
+		t.Fatalf("routes = %#v, want one aggregate route", cfg.Routes)
+	}
+	route := cfg.Routes[0]
+	if route.Kind != RouteSourceAggregate || route.Prefix.String() != "10.0.0.0/16" || !route.SummaryOnly || route.AdminDistance != 200 {
+		t.Fatalf("aggregate route = %#v", route)
+	}
+	if len(cfg.Prefixes) != 0 {
+		t.Fatalf("aggregate-address should not be parsed as unconditional BGP network prefix: %#v", cfg.Prefixes)
+	}
+}
+
+func TestParseFRRAggregateAddressRejectsUnsupportedOptions(t *testing.T) {
+	config := `
+router bgp 65001
+ address-family ipv4 unicast
+  aggregate-address 10.0.0.0/16 as-set
+ exit-address-family
+`
+	_, err := parseFRRConfigTextResult(t, config)
+	if err == nil || !strings.Contains(err.Error(), `unsupported FRR aggregate-address option "as-set"`) {
+		t.Fatalf("ParseConfig() error = %v, want unsupported aggregate-address option", err)
+	}
+	path := filepath.Join(t.TempDir(), "frr.conf")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, err := ParseConfigWithWarnings(KindFRR, path)
+	if err != nil {
+		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0].Reason, "unsupported FRR aggregate-address option") {
+		t.Fatalf("warnings = %#v, want aggregate option warning", result.Warnings)
+	}
+}
+
+func TestParseSRLinuxBGPAggregateWarnsUnsupported(t *testing.T) {
+	config := `set / network-instance default protocols bgp aggregate-routes route 10.0.0.0/16`
+	path := filepath.Join(t.TempDir(), "core.cfg")
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := ParseConfig(KindSRLinux, path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported SR Linux BGP aggregate route statement") {
+		t.Fatalf("ParseConfig() error = %v, want unsupported SR Linux aggregate", err)
+	}
+	result, err := ParseConfigWithWarnings(KindSRLinux, path)
+	if err != nil {
+		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+	}
+	want := []UnsupportedStatement{{Vendor: "srlinux", File: path, Line: 1, Text: config, Reason: "unsupported SR Linux BGP aggregate route statement"}}
+	if !reflect.DeepEqual(result.Warnings, want) {
+		t.Fatalf("Warnings = %#v, want %#v", result.Warnings, want)
+	}
+}
+
 func TestParseUnsupportedStaticRouteWarningAndStrictError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "frr.conf")
 	if err := os.WriteFile(path, []byte("ip route 10.0.0.0/24 192.0.2.1 250\n"), 0o644); err != nil {

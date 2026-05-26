@@ -107,7 +107,7 @@ func expectedRouteProtocol(route sim.RIBEntry) string {
 func routeComparableInLiveRIB(idx *model.TopologyIndex, node string, route sim.RIBEntry) bool {
 	route = route.Normalize()
 	switch route.SourceKind {
-	case model.RouteSourceBGP:
+	case model.RouteSourceBGP, model.RouteSourceAggregate:
 		return true
 	case model.RouteSourceConnected:
 		iface := route.RouteSource.Interface
