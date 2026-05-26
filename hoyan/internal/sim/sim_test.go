@@ -2,6 +2,7 @@ package sim
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
@@ -160,4 +161,81 @@ func TestFindBreakingFailures(t *testing.T) {
 	if !ok || len(cut) == 0 {
 		t.Fatalf("expected a cut within three failures, got %v %v", cut, ok)
 	}
+}
+
+func TestFailureSearchTargetsAreSymbolic(t *testing.T) {
+	var _ SymbolicTarget = PacketTarget{}
+	var _ SymbolicTarget = PacketPrefixTarget{}
+	var _ SymbolicTarget = PacketClassTarget{}
+	var _ SymbolicTarget = PrefixTarget("")
+	var _ SymbolicTarget = RoutePrefixSetTarget{}
+	var _ SymbolicTarget = RouteClassTarget{}
+}
+
+func TestFindBreakingFailuresSymbolicUnsatAndTrace(t *testing.T) {
+	g := loadGraph(t)
+	result, err := g.FindBreakingFailuresSymbolic("cust-bj", PacketTarget{To: "10.4.1.10", Protocol: "icmp"}, FailureSearchOptions{
+		IncludeLinks: true,
+		MaxFailures:  0,
+	})
+	if err != nil {
+		t.Fatalf("FindBreakingFailuresSymbolic() error = %v", err)
+	}
+	if result.Sat {
+		t.Fatalf("FindBreakingFailuresSymbolic() Sat = true, want false for zero-failure reachable packet")
+	}
+	if result.Solver.Backend == "" || result.Solver.Elements == 0 || result.Solver.MaxFailures != 0 {
+		t.Fatalf("solver trace = %#v", result.Solver)
+	}
+}
+
+func TestFindBreakingFailuresSymbolicSupportsBuiltInTargets(t *testing.T) {
+	g := loadGraph(t)
+	universe, err := model.BuildPrefixUniverse([]model.PrefixSet{
+		model.ExactPrefixSet{Prefix: model.MustPrefix("10.4.0.0/16")},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverse() error = %v", err)
+	}
+	if len(universe.Classes) == 0 {
+		t.Fatalf("BuildPrefixUniverse() produced no classes")
+	}
+	targets := []SymbolicTarget{
+		PacketTarget{To: "10.4.1.10", Protocol: "icmp"},
+		PacketPrefixTarget{Prefix: model.MustPrefix("10.4.1.10/32"), Protocol: "icmp"},
+		PacketClassTarget{Universe: universe, ClassID: universe.Classes[0].ID, Protocol: "icmp"},
+		PrefixTarget("10.4.0.0/16"),
+		RoutePrefixSetTarget{Space: model.ExactPrefixSet{Prefix: model.MustPrefix("10.4.0.0/16")}},
+		RouteClassTarget{Universe: universe, ClassID: universe.Classes[0].ID},
+	}
+	for _, target := range targets {
+		result, err := g.FindBreakingFailuresSymbolic("cust-bj", target, FailureSearchOptions{
+			IncludeLinks: true,
+			MaxFailures:  0,
+		})
+		if err != nil {
+			t.Fatalf("FindBreakingFailuresSymbolic(%T) error = %v", target, err)
+		}
+		if result.Solver.Backend == "" || result.Solver.Elements == 0 {
+			t.Fatalf("FindBreakingFailuresSymbolic(%T) trace = %#v", target, result.Solver)
+		}
+	}
+}
+
+func TestFindBreakingFailuresRejectsConcreteOnlyTarget(t *testing.T) {
+	g := loadGraph(t)
+	target := concreteOnlyTarget{}
+	if _, ok := g.FindBreakingFailuresWithOptions("cust-bj", target, FailureSearchOptions{IncludeLinks: true, MaxFailures: 1}); ok {
+		t.Fatalf("FindBreakingFailuresWithOptions() accepted concrete-only target")
+	}
+	_, err := g.FindBreakingFailuresTargetSymbolic("cust-bj", target, FailureSearchOptions{IncludeLinks: true, MaxFailures: 1})
+	if err == nil || !strings.Contains(err.Error(), "does not implement sim.SymbolicTarget") {
+		t.Fatalf("FindBreakingFailuresTargetSymbolic() error = %v", err)
+	}
+}
+
+type concreteOnlyTarget struct{}
+
+func (concreteOnlyTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	return false
 }

@@ -64,11 +64,14 @@ Linux/FRR data-plane ACLs are stored as nftables rulesets under
 `configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
 `hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
 
-The normal build uses a small solver for failure sets. The legacy
-`FailureProblem` path still passes already-enumerated bad combinations to the
-backend; that mode does not encode reachability itself. Packet reachability can
-also be converted to a symbolic BoolExpr goal (`NOT(reachable)`) and solved by
-the symbolic backend without first materializing every bad combo. With Z3:
+Failure search in the normal verifier path is symbolic-only. Route, packet,
+prefix-set, and prefix-class targets must implement `sim.SymbolicTarget`, and
+the verifier builds a symbolic `NOT(reachable)` goal for the solver instead of
+falling back to pre-enumerated forbidden failure combinations. The legacy
+enumerated `FailureProblem` helper remains as a small test/parity oracle for
+solver regression coverage, not as the verify-time fallback. JSON verify output
+for results that run failure search includes a `solver` trace with backend,
+candidate element count, and maximum failure budget. With Z3:
 
 ```bash
 go run -tags z3 ./cmd/hoyan verify
