@@ -100,9 +100,9 @@ func (ceosCollector) Collect(ctx context.Context, runner Runner, nodes []model.N
 	var out []NormalizedFIBRoute
 	for _, n := range nodes {
 		containerName := n.RuntimeName()
-		data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "Cli", "-p", "15", "-c", "show ip route vrf default bgp | json")
+		data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "Cli", "-p", "15", "-c", "show ip route vrf default | json")
 		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s Cli -p 15 -c %q: %w", containerName, "show ip route vrf default bgp | json", err)
+			return nil, fmt.Errorf("docker exec -i %s Cli -p 15 -c %q: %w", containerName, "show ip route vrf default | json", err)
 		}
 		routes, err := ParseCEOSRoutes(n.Name, data)
 		if err != nil {

@@ -59,6 +59,8 @@ type packetClassInspectRow struct {
 type ribInspectRow struct {
 	Node              string   `json:"node"`
 	Prefix            string   `json:"prefix"`
+	SourceKind        string   `json:"source_kind,omitempty"`
+	RouteInterface    string   `json:"interface,omitempty"`
 	NextHopNode       string   `json:"next_hop_node,omitempty"`
 	NextHopAddr       string   `json:"next_hop_addr,omitempty"`
 	OriginNode        string   `json:"origin_node,omitempty"`
@@ -80,6 +82,8 @@ type ribInspectRow struct {
 type fibInspectRow struct {
 	Node       string   `json:"node"`
 	Prefix     string   `json:"prefix"`
+	SourceKind string   `json:"source_kind,omitempty"`
+	Interface  string   `json:"interface,omitempty"`
 	NextHop    string   `json:"next_hop_node,omitempty"`
 	Rank       int      `json:"rank"`
 	GroupID    string   `json:"group_id,omitempty"`
@@ -634,6 +638,8 @@ func ribRowsForRoutes(node string, routes []sim.RIBEntry) []ribInspectRow {
 		rows = append(rows, ribInspectRow{
 			Node:              node,
 			Prefix:            route.NLRI.Prefix.String(),
+			SourceKind:        string(route.SourceKind),
+			RouteInterface:    route.RouteSource.Interface,
 			NextHopNode:       route.ForwardingNextHop.Node,
 			NextHopAddr:       route.ForwardingNextHop.Addr,
 			OriginNode:        route.Provenance.OriginNode,
@@ -665,6 +671,8 @@ func collectFIBRows(graph *sim.Graph, nodes []string, prefix string) []fibInspec
 			rows = append(rows, fibInspectRow{
 				Node:       node,
 				Prefix:     entry.Prefix.String(),
+				SourceKind: string(entry.SourceKind),
+				Interface:  entry.Interface,
 				NextHop:    entry.NextHop,
 				Rank:       entry.Rank,
 				GroupID:    entry.GroupID,
@@ -860,15 +868,17 @@ func writePacketClassTable(out io.Writer, rows []packetClassInspectRow, showPred
 func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
 	} else {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH")
 	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%t\t%t\t%s",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%t\t%t\t%s",
 			row.Node,
 			row.Prefix,
+			row.SourceKind,
 			row.NextHopNode,
+			row.RouteInterface,
 			row.OriginNode,
 			row.FromNode,
 			formatASPath(row.ASPath),
@@ -890,15 +900,17 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 func writeFIBTable(out io.Writer, rows []fibInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if showCond {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
 	} else {
-		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
+		fmt.Fprintln(tw, "NODE\tPREFIX\tSOURCE\tNEXT-HOP\tIFACE\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
 	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
 			row.Node,
 			row.Prefix,
+			row.SourceKind,
 			row.NextHop,
+			row.Interface,
 			row.Rank,
 			row.GroupID,
 			row.Equivalent,

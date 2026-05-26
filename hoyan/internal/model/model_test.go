@@ -1005,6 +1005,53 @@ topology:
 	}
 }
 
+func TestParseFRRStaticRoutesAndRedistribution(t *testing.T) {
+	cfg := parseFRRConfigText(t, `
+hostname r1
+ip route 0.0.0.0/0 192.0.2.254
+ip route 203.0.113.0/24 Null0
+router bgp 65001
+ address-family ipv4 unicast
+  network 198.51.100.0/24
+  redistribute static route-map STATIC-OUT
+ exit-address-family
+!
+`)
+	if got, want := len(cfg.Routes), 2; got != want {
+		t.Fatalf("routes = %d, want %d: %#v", got, want, cfg.Routes)
+	}
+	if cfg.Routes[0].Prefix.String() != "0.0.0.0/0" || cfg.Routes[0].NextHop != "192.0.2.254" || cfg.Routes[0].Kind != RouteSourceStatic {
+		t.Fatalf("default static route not parsed: %#v", cfg.Routes[0])
+	}
+	if cfg.Routes[1].Kind != RouteSourceBlackhole || cfg.Routes[1].Interface != "Null0" {
+		t.Fatalf("blackhole route not parsed: %#v", cfg.Routes[1])
+	}
+	if len(cfg.Redistribute) != 1 || cfg.Redistribute[0].Kind != RouteSourceStatic || cfg.Redistribute[0].RouteMap != "STATIC-OUT" {
+		t.Fatalf("redistribute static not parsed: %#v", cfg.Redistribute)
+	}
+	if len(cfg.Prefixes) != 1 || cfg.Prefixes[0] != "198.51.100.0/24" {
+		t.Fatalf("BGP network prefixes = %#v", cfg.Prefixes)
+	}
+}
+
+func TestParseUnsupportedStaticRouteWarningAndStrictError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "frr.conf")
+	if err := os.WriteFile(path, []byte("ip route 10.0.0.0/24 192.0.2.1 250\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ParseConfigWithWarnings(KindFRR, path)
+	if err != nil {
+		t.Fatalf("ParseConfigWithWarnings() error = %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one unsupported static route warning", result.Warnings)
+	}
+	_, err = ParseConfig(KindFRR, path)
+	if err == nil {
+		t.Fatalf("ParseConfig() error = nil, want strict unsupported static route error")
+	}
+}
+
 func TestParseCEOSRouteMapRejectsUnsupportedMatch(t *testing.T) {
 	_, err := parseCEOSConfigTextResult(t, `
 route-map RM permit 10

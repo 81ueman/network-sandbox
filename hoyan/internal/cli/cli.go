@@ -306,7 +306,7 @@ func NewRIBCompareCommand() *cobra.Command {
 	var opts ribCompareOptions
 	cmd := &cobra.Command{
 		Use:           "rib-compare",
-		Short:         "Compare modeled BGP RIBs with live device RIBs",
+		Short:         "Compare modeled RIBs with live device RIBs",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -345,9 +345,9 @@ func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) e
 		fmt.Fprintln(out, line)
 	}
 	if !result.OK {
-		return ExitError{Code: 1, Err: fmt.Errorf("BGP RIB comparison found diff(s)")}
+		return ExitError{Code: 1, Err: fmt.Errorf("RIB comparison found diff(s)")}
 	}
-	fmt.Fprintln(out, "BGP RIBs match expected modeled paths")
+	fmt.Fprintln(out, "RIBs match expected modeled paths")
 	return nil
 }
 

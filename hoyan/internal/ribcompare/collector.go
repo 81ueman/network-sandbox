@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/81ueman/network-sandbox/hoyan/internal/fibcompare"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 )
 
@@ -16,6 +17,24 @@ const srlinuxJSONMaxAttempts = 3
 var srlinuxJSONRetryDelay = 250 * time.Millisecond
 
 func Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
+	out, err := collectBGP(ctx, runner, nodes)
+	if err != nil {
+		return nil, err
+	}
+	nonBGP, err := collectNonBGPRoutes(ctx, runner, nodes)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, nonBGP...)
+	sortRoutes(out)
+	return out, nil
+}
+
+func CollectBGPOnlyWithRunner(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
+	return collectBGP(ctx, runner, nodes)
+}
+
+func collectBGP(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
 	var out []NormalizedBgpRoute
 	collectors := collectorsByKind()
 	for _, kind := range []model.DeviceKind{model.KindFRR, model.KindCEOS, model.KindSRLinux} {
@@ -116,6 +135,58 @@ func (ceosCollector) Collect(ctx context.Context, runner Runner, nodes []model.N
 	}
 	sortRoutes(out)
 	return out, nil
+}
+
+func collectNonBGPRoutes(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {
+	fibNodes := fibcompare.SupportedNodes(nodes)
+	routes, err := fibcompare.Collect(ctx, runner, fibNodes, fibcompare.Options{AllowUnsupported: true})
+	if err != nil {
+		return nil, err
+	}
+	var out []NormalizedBgpRoute
+	for _, route := range routes {
+		protocol := normalizedNonBGPProtocol(route.Protocol)
+		if protocol == "" {
+			continue
+		}
+		out = append(out, NormalizedBgpRoute{
+			Node:            route.Node,
+			NetworkInstance: route.VRF,
+			AFI:             route.AFI,
+			Prefix:          route.Prefix,
+			Protocol:        protocol,
+			Paths:           []NormalizedBgpPath{nonBGPPath(protocol, route.NextHops)},
+		})
+	}
+	sortRoutes(out)
+	return out, nil
+}
+
+func normalizedNonBGPProtocol(protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "bgp", "ebgp", "ibgp", "":
+		return ""
+	case "kernel", "connected", "direct", "local", "host":
+		return "connected"
+	case "static", "blackhole":
+		return "static"
+	default:
+		return ""
+	}
+}
+
+func nonBGPPath(protocol string, hops []fibcompare.NormalizedFIBNextHop) NormalizedBgpPath {
+	path := NormalizedBgpPath{Best: true, Valid: true, Origin: "igp", LocalPref: 100}
+	if protocol == "connected" {
+		return path
+	}
+	if len(hops) == 0 {
+		return path
+	}
+	if hops[0].Address != "" {
+		path.NextHop = hops[0].Address
+	}
+	return path
 }
 
 func (srlinuxCollector) Collect(ctx context.Context, runner Runner, nodes []model.Node) ([]NormalizedBgpRoute, error) {

@@ -19,6 +19,8 @@ type Path struct {
 type FIBEntry struct {
 	Prefix     netip.Prefix
 	NextHop    string
+	Interface  string
+	SourceKind model.RouteSourceKind
 	Path       Path
 	Condition  failure.Cond
 	Rank       int
@@ -42,6 +44,14 @@ func (e *Engine) DeriveFIB() {
 		n, _ := e.idx.Node(node)
 		behavior := controlplane.BehaviorFor(n.Kind)
 		for _, routes := range byPrefix {
+			routes = append([]controlplane.RIBEntry(nil), routes...)
+			sort.SliceStable(routes, func(i, j int) bool {
+				ai, aj := fibAdminDistance(routes[i]), fibAdminDistance(routes[j])
+				if ai == aj {
+					return routes[i].SourceKind < routes[j].SourceKind
+				}
+				return ai < aj
+			})
 			seenSelected := map[string]bool{}
 			var installed []controlplane.RIBEntry
 			var groups []fibRouteGroup
@@ -72,6 +82,8 @@ func (e *Engine) DeriveFIB() {
 				entries = append(entries, FIBEntry{
 					Prefix:     route.Prefix.NetIP(),
 					NextHop:    route.NextHop,
+					Interface:  route.RouteSource.Interface,
+					SourceKind: route.SourceKind,
 					Path:       Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
 					Condition:  route.SelectedCond,
 					Rank:       group.rank,
@@ -90,6 +102,21 @@ func (e *Engine) DeriveFIB() {
 			return entries[i].Prefix.Bits() > entries[j].Prefix.Bits()
 		})
 		e.fib[node] = entries
+	}
+}
+
+func fibAdminDistance(route controlplane.RIBEntry) int {
+	route = route.Normalize()
+	if route.RouteSource.AdminDistance != 0 || route.SourceKind == model.RouteSourceConnected {
+		return route.RouteSource.AdminDistance
+	}
+	switch route.SourceKind {
+	case model.RouteSourceConnected:
+		return 0
+	case model.RouteSourceStatic, model.RouteSourceBlackhole:
+		return 1
+	default:
+		return 200
 	}
 }
 

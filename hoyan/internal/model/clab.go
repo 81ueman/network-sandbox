@@ -97,12 +97,23 @@ func LoadLabTopologyWithOptions(clabPath string, opts LoadLabTopologyOptions) (*
 			Loopback:       parsed.Loopback,
 			ConfigPath:     configPath,
 			Prefixes:       prefixes,
+			Routes:         parsed.Routes,
 			Interfaces:     parsed.Interfaces,
 			Neighbors:      parsed.Neighbors,
+			Redistribute:   parsed.Redistribute,
 			PrefixLists:    parsed.PrefixLists,
 			ASPathLists:    parsed.ASPathLists,
 			CommunityLists: parsed.CommunityLists,
 			RoutePolicies:  parsed.RoutePolicies,
+		}
+		for ri := range node.Routes {
+			node.Routes[ri].Node = name
+			if node.Routes[ri].NetworkInstance == "" {
+				node.Routes[ri].NetworkInstance = NetworkInstanceDefault
+			}
+			if node.Routes[ri].AFI == "" {
+				node.Routes[ri].AFI = AFIIPv4
+			}
 		}
 		topo.Nodes = append(topo.Nodes, node)
 		for _, policy := range parsed.Policies {

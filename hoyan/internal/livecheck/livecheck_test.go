@@ -91,6 +91,8 @@ func TestRunDestroysOnSuccess(t *testing.T) {
 			return []byte("true\n"), nil
 		case strings.Contains(cmd, "show ip bgp json"):
 			return []byte(`{"10.1.1.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"ip":""}]}]}`), nil
+		case strings.Contains(cmd, "ip -j route show table main"):
+			return []byte(`[{"dst":"10.1.1.10/32","protocol":"static"},{"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}]`), nil
 		default:
 			return nil, errors.New("unexpected command: " + cmd)
 		}
@@ -129,7 +131,8 @@ func TestRunCheckFIBCollectsKernelRoutes(t *testing.T) {
 			return []byte(`{"10.1.1.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"ip":""}]}]}`), nil
 		case strings.Contains(cmd, "ip -j route show table main"):
 			return []byte(`[
-			  {"dst":"10.1.1.10/32","protocol":"kernel"}
+			  {"dst":"10.1.1.10/32","protocol":"static"},
+			  {"dst":"10.255.1.1","dev":"lo","protocol":"kernel"}
 			]`), nil
 		default:
 			return nil, errors.New("unexpected command: " + cmd)

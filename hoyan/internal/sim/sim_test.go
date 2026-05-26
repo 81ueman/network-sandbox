@@ -87,6 +87,118 @@ func TestRIBEntryKeepsOriginNodeAndBGPOriginCodeSeparate(t *testing.T) {
 	}
 }
 
+func TestConnectedAndStaticRoutesInstallInFIB(t *testing.T) {
+	staticPrefix := model.MustPrefix("203.0.113.0/24")
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name: "r1", Kind: model.KindFRR,
+				Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.1/30"}},
+				Routes: []model.ConfiguredRoute{{
+					Prefix:        staticPrefix,
+					NextHop:       "192.0.2.2",
+					Kind:          model.RouteSourceStatic,
+					AdminDistance: 1,
+				}},
+			},
+			{Name: "r2", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.2/30"}}},
+		},
+		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/30"}},
+	}
+	g := NewGraph(topo)
+	var connected, static bool
+	for _, entry := range g.FIB("r1") {
+		switch {
+		case entry.Prefix.String() == "192.0.2.0/30" && entry.SourceKind == model.RouteSourceConnected && entry.Interface == "eth1":
+			connected = true
+		case entry.Prefix.String() == staticPrefix.String() && entry.SourceKind == model.RouteSourceStatic && entry.NextHop == "r2":
+			static = true
+		}
+	}
+	if !connected || !static {
+		t.Fatalf("connected/static FIB entries missing: %#v", g.FIB("r1"))
+	}
+}
+
+func TestRedistributeStaticPropagatesBGPRoute(t *testing.T) {
+	prefix := model.MustPrefix("203.0.113.0/24")
+	topo := twoNodeRedistributeTopology(prefix, nil)
+	g := NewGraph(topo)
+	var learned bool
+	for _, route := range g.RIB("r2", prefix.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceBGP && route.Provenance.OriginNode == "r1" && route.From == "r1" {
+			learned = true
+		}
+	}
+	if !learned {
+		t.Fatalf("r2 did not learn redistributed static route: %#v", g.RIB("r2", prefix.String()))
+	}
+}
+
+func TestRedistributeConnectedUsesRouteMapFilter(t *testing.T) {
+	blocked := model.MustPrefix("192.0.2.0/30")
+	topo := twoNodeRedistributeTopology(model.MustPrefix("203.0.113.0/24"), []model.BGPRedistribution{{
+		Kind:     model.RouteSourceConnected,
+		RouteMap: "BLOCK-CONNECTED",
+	}})
+	topo.Nodes[0].PrefixLists = []model.PrefixList{{
+		Name: "BLOCKED",
+		Rules: []model.PrefixListRule{{
+			Seq: 10, Action: "permit", Prefix: blocked.String(), Match: model.ExactPrefixSet{Prefix: blocked},
+		}},
+	}}
+	topo.Nodes[0].RoutePolicies = []model.RoutePolicy{{
+		Name: "BLOCK-CONNECTED",
+		Rules: []model.RoutePolicyRule{
+			{Seq: 10, Action: "deny", MatchPrefixList: "BLOCKED"},
+			{Seq: 20, Action: "permit"},
+		},
+	}}
+	g := NewGraph(topo)
+	for _, route := range g.RIB("r2", blocked.String()) {
+		route = route.Normalize()
+		if route.SourceKind == model.RouteSourceBGP && route.From == "r1" {
+			t.Fatalf("route-map filtered connected route was advertised: %#v", route)
+		}
+	}
+}
+
+func TestDefaultRouteSourceEntersPrefixUniverse(t *testing.T) {
+	defaultRoute := model.MustPrefix("0.0.0.0/0")
+	topo := &model.Topology{Nodes: []model.Node{{Name: "r1", Routes: []model.ConfiguredRoute{{Prefix: defaultRoute, Kind: model.RouteSourceStatic}}}}}
+	universe, err := model.NewPrefixUniverse(topo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := universe.ClassForPrefix(defaultRoute); !ok {
+		t.Fatalf("default static route was not included in PrefixUniverse: %#v", universe)
+	}
+}
+
+func twoNodeRedistributeTopology(prefix model.Prefix, redist []model.BGPRedistribution) *model.Topology {
+	if redist == nil {
+		redist = []model.BGPRedistribution{{Kind: model.RouteSourceStatic}}
+	}
+	return &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name: "r1", Kind: model.KindFRR, ASN: 65001,
+				Interfaces:   []model.Interface{{Name: "eth1", Address: "192.0.2.1/30"}},
+				Routes:       []model.ConfiguredRoute{{Prefix: prefix, Kind: model.RouteSourceBlackhole, Interface: "Null0", AdminDistance: 1}},
+				Redistribute: redist,
+				Neighbors:    []model.BGPNeighbor{{Address: "192.0.2.2", RemoteAS: 65002, Activated: true, PeerNode: "r2"}},
+			},
+			{
+				Name: "r2", Kind: model.KindFRR, ASN: 65002,
+				Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.2/30"}},
+				Neighbors:  []model.BGPNeighbor{{Address: "192.0.2.1", RemoteAS: 65001, Activated: true, PeerNode: "r1"}},
+			},
+		},
+		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1", Cost: 1, Subnet: "192.0.2.0/30"}},
+	}
+}
+
 func TestBGPRejectsASLoops(t *testing.T) {
 	g := loadGraph(t)
 	for _, r := range g.RIB("gz-edge1", "10.3.1.10/32") {

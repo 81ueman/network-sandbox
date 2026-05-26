@@ -180,7 +180,7 @@ func TestCollectAllSupportedKinds(t *testing.T) {
 		switch {
 		case cmd == "docker exec -i frr1 ip -j route show table main":
 			return []byte(`[{"dst":"10.0.0.0/24","gateway":"192.0.2.1","dev":"eth1","protocol":"bgp"}]`), nil
-		case cmd == "docker exec -i ceos1 Cli -p 15 -c show ip route vrf default bgp | json":
+		case cmd == "docker exec -i ceos1 Cli -p 15 -c show ip route vrf default | json":
 			return []byte(`{"vrfs":{"default":{"routes":{"10.0.1.0/24":{"kernelProgrammed":true,"routeType":"eBGP","vias":[{"nexthopAddr":"192.0.2.2","interface":"Ethernet1"}]}}}}}`), nil
 		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'srl1' sr_cli"):
 			return []byte(`{"instance":[{"ip route":[{"Prefix":"10.0.2.0/24","Route Type":"bgp","Active":"True","Next-hop (Type)":"192.0.2.3/31 (indirect/local)","Next-hop Interface":"ethernet-1/1.0 "}]}]}`), nil
