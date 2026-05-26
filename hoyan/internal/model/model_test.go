@@ -144,7 +144,7 @@ func TestLoadLabTopologyIncludesACLPoliciesWithoutPolicyFile(t *testing.T) {
 		if policy == nil {
 			t.Fatalf("policy for %s %s not found in %#v", tt.node, tt.iface, topo.Policies)
 		}
-		if policy.Name != "BLOCK-HTTP-TO-HZ" || policy.Plane != "data" || policy.Stage != "egress" || policy.Action != "deny" || policy.Protocol != "tcp" || policy.DstPrefix.String() != "10.4.0.0/16" {
+		if policy.Name != "BLOCK-HTTP-TO-HZ" || policy.Plane != "data" || policy.Stage != "egress" || policy.Action != "deny" || policy.Protocol != "tcp" || policy.DstPrefix.String() != "10.4.0.0/16" || !policy.DstPort.Contains(80) {
 			t.Fatalf("policy for %s %s = %#v", tt.node, tt.iface, policy)
 		}
 		if policy.Source.File == "" || policy.Source.Line == 0 || policy.Source.Raw == "" {
@@ -223,7 +223,7 @@ func TestParseNftablesConfig(t *testing.T) {
 	if len(policies) != 2 {
 		t.Fatalf("policies = %d, want 2: %#v", len(policies), policies)
 	}
-	if policies[0].Name != "BLOCK-HTTP-TO-HZ" || policies[0].Stage != "egress" || policies[0].Interface != "eth1" || policies[0].Protocol != "tcp" || policies[0].DstPrefix.String() != "10.4.0.0/16" || policies[0].Action != "deny" {
+	if policies[0].Name != "BLOCK-HTTP-TO-HZ" || policies[0].Stage != "egress" || policies[0].Interface != "eth1" || policies[0].Protocol != "tcp" || policies[0].DstPrefix.String() != "10.4.0.0/16" || policies[0].Action != "deny" || !policies[0].DstPort.Contains(80) {
 		t.Fatalf("first policy = %#v", policies[0])
 	}
 	if policies[1].Stage != "ingress" || policies[1].Interface != "eth2" || policies[1].Protocol != "icmp" || policies[1].DstPrefix.String() != "10.5.0.0/16" {

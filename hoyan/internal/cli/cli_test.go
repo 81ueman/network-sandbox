@@ -211,6 +211,7 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 		"--from", "cust-bj",
 		"--to", "10.4.1.10",
 		"--protocol", "tcp",
+		"--dst-port", "80",
 		"--format", "json",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -222,6 +223,9 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 	}
 	if result["from"] != "cust-bj" || result["to"] != "10.4.1.10" || result["protocol"] != "tcp" {
 		t.Fatalf("unexpected symbolic packet metadata: %#v", result)
+	}
+	if result["dst_port"] != float64(80) {
+		t.Fatalf("unexpected symbolic packet dst_port: %#v", result)
 	}
 	if result["reachable_condition"] == "" || result["unreachable_condition"] == "" {
 		t.Fatalf("missing reachability conditions: %#v", result)

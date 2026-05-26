@@ -426,6 +426,58 @@ func TestPacketReachableMatchesPolicyInterface(t *testing.T) {
 	}
 }
 
+func TestPacketReachableMatchesPolicyDstPort(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
+			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
+		},
+		Policies: []model.Policy{{
+			Name:      "DENY-HTTP",
+			Node:      "mid",
+			Plane:     "data",
+			Stage:     "egress",
+			Interface: "eth2",
+			Action:    "deny",
+			Protocol:  "tcp",
+			DstPrefix: pfx,
+			DstPort:   model.ExactPortSet{Port: 80},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	http := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPortSet{Port: 80}}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", http, failure.None()); ok || reason != "denied by policy DENY-HTTP" {
+		t.Fatalf("tcp/80 PacketReachableSpec() ok=%v reason=%q, want policy deny", ok, reason)
+	}
+	https := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPortSet{Port: 443}}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", https, failure.None()); !ok {
+		t.Fatalf("tcp/443 PacketReachableSpec() ok=false reason=%q, want reachable", reason)
+	}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", model.PacketSpec{Protocol: "icmp"}, failure.None()); !ok {
+		t.Fatalf("icmp PacketReachableSpec() ok=false reason=%q, want reachable", reason)
+	}
+	result := e.SymbolicPacketReachabilitySpec("src", "10.0.0.10", http)
+	if got := result.Reachable.Eval(e.FailureContext(failure.None())); got {
+		t.Fatalf("tcp/80 symbolic reachable = %v, want false", got)
+	}
+	result = e.SymbolicPacketReachabilitySpec("src", "10.0.0.10", https)
+	if got := result.Reachable.Eval(e.FailureContext(failure.None())); !got {
+		t.Fatalf("tcp/443 symbolic reachable = %v, want true", got)
+	}
+}
+
 func TestSymbolicPacketReachabilityForClassAppliesDstPrefixPolicy(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{

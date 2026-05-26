@@ -17,14 +17,18 @@ func TestRunBundledQueries(t *testing.T) {
 		t.Fatalf("LoadQueries() error = %v", err)
 	}
 	report := Run(topo, queries)
-	if len(report.Results) != 10 {
-		t.Fatalf("results = %d, want 10", len(report.Results))
+	if len(report.Results) != 13 {
+		t.Fatalf("results = %d, want 13", len(report.Results))
 	}
 	for _, result := range report.Results {
 		switch result.Name {
 		case "bj-client-to-hz-http-denied", "bj-client-to-hz-http-denied-live-linux-acl", "sh-client-to-hz-http-denied-live-ceos", "gz-client-to-hz-http-denied-live-srlinux":
 			if result.Reachable {
 				t.Fatalf("%s should be denied", result.Name)
+			}
+		case "bj-client-to-hz-https-allowed-linux-acl", "sh-client-to-hz-https-allowed-ceos", "gz-client-to-hz-https-allowed-srlinux":
+			if !result.Reachable {
+				t.Fatalf("%s should be allowed: %s", result.Name, result.Reason)
 			}
 		}
 	}

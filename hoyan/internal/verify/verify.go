@@ -23,14 +23,15 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 		report.Results = append(report.Results, result)
 	}
 	for _, q := range queries.PacketChecks {
-		path, reachable, reason := g.PacketReachable(q.From, q.To, q.Protocol, sim.NoFailures())
+		spec := model.PacketSpec{Protocol: q.Protocol, DstPort: model.ExactPort(q.DstPort)}
+		path, reachable, reason := g.PacketReachableSpec(q.From, q.To, spec, sim.NoFailures())
 		expected := true
 		if q.ExpectReachable != nil {
 			expected = *q.ExpectReachable
 		}
 		result := sim.Result{Name: q.Name, Reachable: reachable, Expected: expected, Path: path, Reason: reason}
 		if expected && reachable {
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
 				result.Counterexample = formatFailureElements(cut)
 				result.Reason = "reachable now but not resilient to requested failure budget"
 			}
@@ -40,9 +41,9 @@ func Run(topo *model.Topology, queries *model.Queries) Report {
 	for _, q := range queries.FailureChecks {
 		var target sim.Target
 		if !q.Prefix.IsZero() {
-			target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol}
+			target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol, DstPort: q.DstPort}
 		} else {
-			target = sim.PacketTarget{To: q.To, Protocol: q.Protocol}
+			target = sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}
 		}
 		expected := true
 		if q.ExpectReachable != nil {

@@ -29,6 +29,7 @@ type modelInspectOptions struct {
 	from         string
 	to           string
 	protocol     string
+	dstPort      int
 }
 
 type ribInspectRow struct {
@@ -69,6 +70,7 @@ type symbolicPacketInspect struct {
 	From               string                               `json:"from"`
 	To                 string                               `json:"to"`
 	Protocol           string                               `json:"protocol"`
+	DstPort            int                                  `json:"dst_port,omitempty"`
 	Reachable          string                               `json:"reachable_condition"`
 	Unreachable        string                               `json:"unreachable_condition"`
 	Reason             string                               `json:"reason,omitempty"`
@@ -203,6 +205,7 @@ func NewModelSymbolicPacketCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.to, "to", "", "destination IP address")
 	cmd.Flags().StringVar(&opts.protocol, "protocol", "tcp", "packet protocol")
+	cmd.Flags().IntVar(&opts.dstPort, "dst-port", 0, "destination transport port")
 	return cmd
 }
 
@@ -299,7 +302,8 @@ func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.
 	if _, err := netip.ParseAddr(opts.to); err != nil {
 		return ExitError{Code: 2, Err: fmt.Errorf("--to must be an IP address: %w", err)}
 	}
-	result := buildSymbolicPacketInspect(opts, graph.SymbolicPacketReachability(opts.from, opts.to, opts.protocol))
+	spec := model.PacketSpec{Protocol: opts.protocol, DstPort: model.ExactPort(opts.dstPort)}
+	result := buildSymbolicPacketInspect(opts, graph.SymbolicPacketReachabilitySpec(opts.from, opts.to, spec))
 	switch opts.format {
 	case modelFormatTable:
 		return writeSymbolicPacketTable(out, result)
@@ -450,6 +454,7 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 		From:        opts.from,
 		To:          opts.to,
 		Protocol:    opts.protocol,
+		DstPort:     opts.dstPort,
 		Reachable:   condString(result.Reachable),
 		Unreachable: condString(result.Unreachable),
 		Reason:      result.Reason,

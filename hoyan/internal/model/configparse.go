@@ -735,6 +735,7 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 	iface := ""
 	protocol := ""
 	dstPrefix := Prefix{}
+	dstPort := PortSet(nil)
 	action := ""
 	for i := 0; i < len(fields); i++ {
 		switch fields[i] {
@@ -772,6 +773,14 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 			if i+2 >= len(fields) || fields[i+1] != "dport" || !supportedACLPortTail([]string{"eq", fields[i+2]}) {
 				return Policy{}, false, fmt.Errorf("%s:%d: unsupported nftables transport match %q", path, lineNo, raw)
 			}
+			if protocol == "" {
+				protocol = fields[i]
+			}
+			port, err := parseACLPort(fields[i+2])
+			if err != nil {
+				return Policy{}, false, fmt.Errorf("%s:%d: %w", path, lineNo, err)
+			}
+			dstPort = ExactPort(port)
 			i += 2
 		case "drop":
 			action = "deny"
@@ -795,6 +804,7 @@ func parseNftablesForwardRule(path string, lineNo int, raw, tableName string, fi
 		Action:    action,
 		Protocol:  aclPolicyProtocol(protocol),
 		DstPrefix: dstPrefix,
+		DstPort:   dstPort,
 		Seq:       lineNo,
 		Source: PolicySource{
 			Vendor: "nftables",
@@ -860,7 +870,8 @@ func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fi
 	if err != nil {
 		return Policy{}, false, err
 	}
-	if dstEnd+srcEnd < len(rest) && !supportedACLPortTail(rest[srcEnd+dstEnd:]) {
+	dstPort, err := parseACLPortTail(rest[srcEnd+dstEnd:])
+	if err != nil {
 		return Policy{}, false, fmt.Errorf("unsupported %s ACL port match", routeMapVendorName(kind))
 	}
 	if action != "deny" {
@@ -872,6 +883,7 @@ func parseACLRule(kind DeviceKind, path string, lineNo int, raw, name string, fi
 		Action:    "deny",
 		Protocol:  aclPolicyProtocol(protocol),
 		DstPrefix: dstPrefix,
+		DstPort:   dstPort,
 		Seq:       seq,
 		Source: PolicySource{
 			Vendor: string(kind),
@@ -944,13 +956,34 @@ func wildcardPrefix(addr, wildcard string) (Prefix, bool) {
 }
 
 func supportedACLPortTail(fields []string) bool {
+	_, err := parseACLPortTail(fields)
+	return err == nil
+}
+
+func parseACLPortTail(fields []string) (PortSet, error) {
 	if len(fields) == 0 {
-		return true
+		return nil, nil
 	}
 	if len(fields) == 2 && fields[0] == "eq" {
-		return fields[1] == "80" || fields[1] == "www" || fields[1] == "http"
+		port, err := parseACLPort(fields[1])
+		if err != nil {
+			return nil, err
+		}
+		return ExactPort(port), nil
 	}
-	return false
+	return nil, fmt.Errorf("unsupported port tail")
+}
+
+func parseACLPort(raw string) (int, error) {
+	switch raw {
+	case "www", "http":
+		return 80, nil
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("unsupported port %q", raw)
+	}
+	return port, nil
 }
 
 func aclPolicyProtocol(protocol string) string {
@@ -1035,6 +1068,11 @@ func parseSRLinuxACL(aclPolicies map[string]map[int]*Policy, path string, lineNo
 		if !supportedACLPortTail([]string{"eq", fields[len(fields)-1]}) {
 			return fmt.Errorf("unsupported SR Linux ACL destination port %q", fields[len(fields)-1])
 		}
+		port, err := parseACLPort(fields[len(fields)-1])
+		if err != nil {
+			return err
+		}
+		policy.DstPort = ExactPort(port)
 		return nil
 	}
 	if containsSeq(fields, "action") {
