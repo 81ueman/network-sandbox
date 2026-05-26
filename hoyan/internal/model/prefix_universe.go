@@ -2,18 +2,30 @@ package model
 
 import (
 	"fmt"
+	"math/bits"
+	"net/netip"
+	"sort"
 	"strings"
 )
 
 type PrefixClassID int
+type PrefixPredicateID int
+
+type PrefixPredicate struct {
+	ID     PrefixPredicateID
+	Source string
+	Set    PrefixSet
+}
 
 type PrefixClass struct {
-	ID    PrefixClassID
-	Space PrefixSet
+	ID                 PrefixClassID
+	Space              PrefixSet
+	MatchingPredicates []PrefixPredicateID
 }
 
 type PrefixUniverse struct {
-	Classes []PrefixClass
+	Classes    []PrefixClass
+	Predicates []PrefixPredicate
 }
 
 type OverlappingPrefixPredicateError struct {
@@ -26,85 +38,145 @@ func (e OverlappingPrefixPredicateError) Error() string {
 }
 
 func CollectPrefixPredicates(topo *Topology, queries *Queries) []PrefixSet {
-	var out []PrefixSet
+	predicates := CollectPrefixPredicateMetadata(topo, queries)
+	out := make([]PrefixSet, 0, len(predicates))
+	for _, predicate := range predicates {
+		out = append(out, predicate.Set)
+	}
+	return out
+}
+
+func CollectPrefixPredicateMetadata(topo *Topology, queries *Queries) []PrefixPredicate {
+	var out []PrefixPredicate
+	add := func(source string, set PrefixSet) {
+		if set == nil {
+			return
+		}
+		out = append(out, PrefixPredicate{
+			ID:     PrefixPredicateID(len(out)),
+			Source: source,
+			Set:    set,
+		})
+	}
 	if topo != nil {
 		for _, node := range topo.Nodes {
 			for _, prefix := range node.Prefixes {
 				if !prefix.IsZero() {
-					out = append(out, ExactPrefixSet{Prefix: prefix})
+					add("route:"+node.Name, ExactPrefixSet{Prefix: prefix})
 				}
 			}
 			for _, list := range node.PrefixLists {
 				for _, rule := range list.Rules {
 					if rule.Match != nil {
-						out = append(out, rule.Match)
+						add(fmt.Sprintf("prefix-list:%s:%s:%d", node.Name, list.Name, rule.Seq), rule.Match)
 						continue
 					}
 					set, err := NewPrefixSet(rule.Prefix, rule.Ge, rule.Le)
 					if err == nil {
-						out = append(out, set)
+						add(fmt.Sprintf("prefix-list:%s:%s:%d", node.Name, list.Name, rule.Seq), set)
 					}
 				}
 			}
 		}
 		for _, policy := range topo.Policies {
 			if !policy.DstPrefix.IsZero() {
-				out = append(out, ExactPrefixSet{Prefix: policy.DstPrefix})
+				add("policy:"+policy.Name, ExactPrefixSet{Prefix: policy.DstPrefix})
 			}
 		}
 	}
 	if queries != nil {
 		for _, check := range queries.RouteChecks {
 			if !check.Prefix.IsZero() {
-				out = append(out, ExactPrefixSet{Prefix: check.Prefix})
+				add("query-route:"+check.Name, ExactPrefixSet{Prefix: check.Prefix})
 			}
 		}
 		for _, check := range queries.PacketChecks {
-			out = append(out, destinationPrefixSets(topo, check.To)...)
+			for _, set := range destinationPrefixSets(topo, check.To) {
+				add("query-packet:"+check.Name, set)
+			}
 		}
 		for _, check := range queries.FailureChecks {
 			if !check.Prefix.IsZero() {
-				out = append(out, ExactPrefixSet{Prefix: check.Prefix})
+				add("query-failure:"+check.Name, ExactPrefixSet{Prefix: check.Prefix})
 				continue
 			}
-			out = append(out, destinationPrefixSets(topo, check.To)...)
+			for _, set := range destinationPrefixSets(topo, check.To) {
+				add("query-failure:"+check.Name, set)
+			}
 		}
 	}
 	return out
 }
 
 func BuildPrefixUniverse(predicates []PrefixSet) (PrefixUniverse, error) {
-	universe := PrefixUniverse{}
-	seen := map[string]bool{}
-	for _, predicate := range predicates {
-		if predicate == nil {
+	withMetadata := make([]PrefixPredicate, 0, len(predicates))
+	for _, set := range predicates {
+		if set == nil {
 			continue
 		}
-		key := prefixSetKey(predicate)
+		withMetadata = append(withMetadata, PrefixPredicate{
+			ID:     PrefixPredicateID(len(withMetadata)),
+			Source: "predicate",
+			Set:    set,
+		})
+	}
+	return BuildPrefixUniverseFromPredicates(withMetadata)
+}
+
+func BuildPrefixUniverseFromPredicates(predicates []PrefixPredicate) (PrefixUniverse, error) {
+	universe := PrefixUniverse{}
+	seen := map[string]bool{}
+	var boundaries []uint64
+	for _, predicate := range predicates {
+		if predicate.Set == nil {
+			continue
+		}
+		predicate.ID = PrefixPredicateID(len(universe.Predicates))
+		universe.Predicates = append(universe.Predicates, predicate)
+		key := prefixSetKey(predicate.Set)
 		if seen[key] {
 			continue
 		}
-		for _, class := range universe.Classes {
-			if class.Space.Overlaps(predicate) {
-				return PrefixUniverse{}, OverlappingPrefixPredicateError{Existing: class.Space, Candidate: predicate}
-			}
-		}
 		seen[key] = true
+		setIntervals, err := prefixSetIPv4Intervals(predicate.Set)
+		if err != nil {
+			return PrefixUniverse{}, err
+		}
+		for _, interval := range setIntervals {
+			boundaries = append(boundaries, uint64(interval.lo), uint64(interval.hi)+1)
+		}
+	}
+	if len(boundaries) == 0 {
+		return universe, nil
+	}
+	sort.Slice(boundaries, func(i, j int) bool { return boundaries[i] < boundaries[j] })
+	boundaries = compactUint64s(boundaries)
+	for i := 0; i+1 < len(boundaries); i++ {
+		lo, hi := boundaries[i], boundaries[i+1]-1
+		if lo > hi || hi > uint64(^uint32(0)) {
+			continue
+		}
+		space := prefixInterval{lo: uint32(lo), hi: uint32(hi)}
+		matches := matchingPredicateIDs(space, universe.Predicates)
+		if len(matches) == 0 {
+			continue
+		}
 		universe.Classes = append(universe.Classes, PrefixClass{
-			ID:    PrefixClassID(len(universe.Classes)),
-			Space: predicate,
+			ID:                 PrefixClassID(len(universe.Classes)),
+			Space:              prefixSetForInterval(space),
+			MatchingPredicates: matches,
 		})
 	}
 	return universe, nil
 }
 
 func NewPrefixUniverse(topo *Topology, queries *Queries) (PrefixUniverse, error) {
-	return BuildPrefixUniverse(CollectPrefixPredicates(topo, queries))
+	return BuildPrefixUniverseFromPredicates(CollectPrefixPredicateMetadata(topo, queries))
 }
 
 func (u PrefixUniverse) ClassForPrefix(prefix Prefix) (PrefixClassID, bool) {
 	for _, class := range u.Classes {
-		if class.Space.ContainsPrefix(prefix) {
+		if prefixSetContainsPrefixSpace(class.Space, prefix) {
 			return class.ID, true
 		}
 	}
@@ -122,6 +194,15 @@ func (u PrefixUniverse) ClassesMatching(set PrefixSet) []PrefixClassID {
 		}
 	}
 	return out
+}
+
+func (u PrefixUniverse) PredicatesForClass(id PrefixClassID) []PrefixPredicateID {
+	for _, class := range u.Classes {
+		if class.ID == id {
+			return append([]PrefixPredicateID(nil), class.MatchingPredicates...)
+		}
+	}
+	return nil
 }
 
 func destinationPrefixSets(topo *Topology, destination string) []PrefixSet {
@@ -143,4 +224,109 @@ func destinationPrefixSets(topo *Topology, destination string) []PrefixSet {
 
 func prefixSetKey(set PrefixSet) string {
 	return strings.TrimSpace(set.String())
+}
+
+type prefixInterval struct {
+	lo uint32
+	hi uint32
+}
+
+func prefixSetIPv4Intervals(set PrefixSet) ([]prefixInterval, error) {
+	switch s := set.(type) {
+	case AnyPrefixSet:
+		return []prefixInterval{{lo: 0, hi: ^uint32(0)}}, nil
+	case ExactPrefixSet:
+		return prefixIPv4Interval(s.Prefix)
+	case PrefixRangeSet:
+		return prefixIPv4Interval(s.Base)
+	case UnionPrefixSet:
+		var out []prefixInterval
+		for _, child := range s.Sets {
+			intervals, err := prefixSetIPv4Intervals(child)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, intervals...)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported prefix set type %T", set)
+	}
+}
+
+func prefixIPv4Interval(prefix Prefix) ([]prefixInterval, error) {
+	if prefix.IsZero() {
+		return nil, nil
+	}
+	addr := prefix.Addr()
+	if !addr.Is4() {
+		return nil, fmt.Errorf("prefix universe supports IPv4 only: %s", prefix.String())
+	}
+	lo := ipv4ToUint32(addr)
+	size := uint64(1) << uint(32-prefix.Bits())
+	return []prefixInterval{{lo: lo, hi: lo + uint32(size-1)}}, nil
+}
+
+func matchingPredicateIDs(space prefixInterval, predicates []PrefixPredicate) []PrefixPredicateID {
+	spaceSet := prefixSetForInterval(space)
+	var out []PrefixPredicateID
+	for _, predicate := range predicates {
+		if spaceSet.Overlaps(predicate.Set) {
+			out = append(out, predicate.ID)
+		}
+	}
+	return out
+}
+
+func prefixSetForInterval(interval prefixInterval) PrefixSet {
+	prefixes := prefixesForIPv4Range(interval.lo, interval.hi)
+	sets := make([]PrefixSet, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		sets = append(sets, ExactPrefixSet{Prefix: prefix})
+	}
+	if len(sets) == 1 {
+		return sets[0]
+	}
+	return UnionPrefixSet{Sets: sets}
+}
+
+func prefixesForIPv4Range(lo, hi uint32) []Prefix {
+	var out []Prefix
+	for current := uint64(lo); current <= uint64(hi); {
+		remaining := uint64(hi) - current + 1
+		size := uint64(1)
+		if current == 0 {
+			size = uint64(1) << 32
+		} else {
+			size = uint64(current & -current)
+		}
+		for size > remaining {
+			size >>= 1
+		}
+		prefixLen := 32 - bits.TrailingZeros64(size)
+		out = append(out, PrefixFromNetIP(netip.PrefixFrom(uint32ToIPv4(uint32(current)), prefixLen)))
+		current += size
+	}
+	return out
+}
+
+func compactUint64s(in []uint64) []uint64 {
+	out := in[:0]
+	var prev uint64
+	for i, value := range in {
+		if i == 0 || value != prev {
+			out = append(out, value)
+			prev = value
+		}
+	}
+	return out
+}
+
+func ipv4ToUint32(addr netip.Addr) uint32 {
+	raw := addr.As4()
+	return uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3])
+}
+
+func uint32ToIPv4(value uint32) netip.Addr {
+	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
 }
