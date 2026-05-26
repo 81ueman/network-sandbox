@@ -87,9 +87,11 @@ go run ./cmd/hoyan model rib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model fib --node bj-edge1
 go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
+go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16 --show-predicates
 go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protocol tcp
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --show-conditions
+go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --show-predicates
 ```
 
 The default table views keep symbolic conditions hidden so route and prefix
@@ -101,9 +103,13 @@ still includes condition fields for `jq` or Codex.
 The `prefix-classes` view shows the PrefixUniverse classes derived from
 advertised route prefixes, prefix-list predicates, policy destination prefixes,
 modeled RIB/FIB prefixes, and an optional `--prefix` request predicate.
+Matched predicates are hidden in table output by default; add
+`--show-predicates` to `model prefix-classes` or `model symbolic-route` when
+you need to see which predicates matched each class.
 `model symbolic-route --prefix` uses the same request-aware PrefixUniverse and
 emits one symbolic route result per matching class, including `class_id`,
-`space`, matched predicates, and reachable/unreachable conditions.
+`space`, and reachable/unreachable conditions. JSON output still includes
+`matched_predicates`.
 `model symbolic-packet` remains IP-address based.
 
 Modeled FIB semantics use reachability OR for explicitly grouped ECMP /

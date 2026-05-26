@@ -439,7 +439,31 @@ func TestModelPrefixClassesCommandOutputsTable(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"CLASS", "SPACE", "MATCHED-PREDICATES", "pc-", "10.4.1.10/32"} {
+	for _, want := range []string{"CLASS", "SPACE", "pc-", "10.4.1.10/32"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "MATCHED-PREDICATES") || strings.Contains(got, "request:prefix-classes:") {
+		t.Fatalf("default table output should hide matched predicates:\n%s", got)
+	}
+}
+
+func TestModelPrefixClassesCommandShowsPredicatesWhenRequested(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--prefix", "10.4.1.10/32",
+		"--show-predicates",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"MATCHED-PREDICATES", "request:prefix-classes:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
@@ -561,15 +585,35 @@ func TestModelSymbolicRouteCommandOutputsClassTable(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"class: pc-", "space:", "matched predicates:", "PATH"} {
+	for _, want := range []string{"class: pc-", "space:", "PATH"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
 	}
-	for _, hidden := range []string{"reachable:", "unreachable:", "CONDITION", "link:", "node:"} {
+	for _, hidden := range []string{"matched predicates:", "reachable:", "unreachable:", "CONDITION", "link:", "node:"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("default table output should hide %q:\n%s", hidden, got)
 		}
+	}
+}
+
+func TestModelSymbolicRouteCommandShowsPredicatesWhenRequested(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelSymbolicRouteCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--from", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--show-predicates",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "matched predicates:") {
+		t.Fatalf("output missing matched predicates:\n%s", got)
 	}
 }
 

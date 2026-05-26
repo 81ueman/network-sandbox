@@ -32,6 +32,7 @@ type modelInspectOptions struct {
 	dstPort      int
 	strictConfig bool
 	showCond     bool
+	showPreds    bool
 }
 
 type prefixClassInspectRow struct {
@@ -178,6 +179,7 @@ func NewModelPrefixClassesCommand() *cobra.Command {
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix overlap filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
+	cmd.Flags().BoolVar(&opts.showPreds, "show-predicates", false, "show matched prefix predicates in table output")
 	return cmd
 }
 
@@ -262,6 +264,7 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "destination prefix")
 	cmd.Flags().BoolVar(&opts.showCond, "show-conditions", false, "show symbolic conditions in table output")
+	cmd.Flags().BoolVar(&opts.showPreds, "show-predicates", false, "show matched prefix predicates in table output")
 	return cmd
 }
 
@@ -345,7 +348,7 @@ func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.W
 	rows := collectPrefixClassRows(universe, filter)
 	switch opts.format {
 	case modelFormatTable:
-		return writePrefixClassTable(out, rows)
+		return writePrefixClassTable(out, rows, opts.showPreds)
 	case modelFormatJSON:
 		return writeJSON(out, rows)
 	default:
@@ -415,7 +418,7 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 	results := buildSymbolicRouteClassInspects(opts.from, prefix, universe, filter, graph.SymbolicRouteReachability(opts.from, prefix))
 	switch opts.format {
 	case modelFormatTable:
-		return writeSymbolicRouteTable(out, results, opts.showCond)
+		return writeSymbolicRouteTable(out, results, opts.showCond, opts.showPreds)
 	case modelFormatJSON:
 		return writeJSON(out, results)
 	default:
@@ -665,15 +668,22 @@ func matchedPrefixPredicates(universe model.PrefixUniverse, class model.PrefixCl
 	return out
 }
 
-func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow) error {
+func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow, showPreds bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CLASS\tSPACE\tMATCHED-PREDICATES")
+	if showPreds {
+		fmt.Fprintln(tw, "CLASS\tSPACE\tMATCHED-PREDICATES")
+	} else {
+		fmt.Fprintln(tw, "CLASS\tSPACE")
+	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "pc-%d\t%s\t%s\n",
+		fmt.Fprintf(tw, "pc-%d\t%s",
 			row.ClassID,
 			row.Space,
-			strings.Join(row.MatchedPredicates, ","),
 		)
+		if showPreds {
+			fmt.Fprintf(tw, "\t%s", strings.Join(row.MatchedPredicates, ","))
+		}
+		fmt.Fprintln(tw)
 	}
 	return tw.Flush()
 }
@@ -849,7 +859,7 @@ func formatPolicySource(src model.PolicySource) string {
 	return strings.Join(parts, " ")
 }
 
-func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect, showCond bool) error {
+func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect, showCond bool, showPreds bool) error {
 	for i, result := range results {
 		if i > 0 {
 			fmt.Fprintln(out)
@@ -858,7 +868,7 @@ func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect, show
 		fmt.Fprintf(out, "prefix: %s\n", result.Prefix)
 		fmt.Fprintf(out, "class: pc-%d\n", result.ClassID)
 		fmt.Fprintf(out, "space: %s\n", result.Space)
-		if len(result.MatchedPredicates) > 0 {
+		if showPreds && len(result.MatchedPredicates) > 0 {
 			fmt.Fprintf(out, "matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
 		}
 		if showCond {
