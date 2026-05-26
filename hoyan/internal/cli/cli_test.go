@@ -237,6 +237,26 @@ func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
 	if !foundRIB || !foundFIB {
 		t.Fatalf("verify JSON missing RIB/FIB predicates: rib=%v fib=%v", foundRIB, foundFIB)
 	}
+	var foundSolver bool
+	for _, row := range rows {
+		rawSolver, ok := row["solver"].(map[string]any)
+		if !ok {
+			continue
+		}
+		foundSolver = true
+		if _, ok := rawSolver["mode"]; ok {
+			t.Fatalf("verify JSON solver trace should not include redundant mode: %#v", rawSolver)
+		}
+		if _, ok := rawSolver["used_symbolic"]; ok {
+			t.Fatalf("verify JSON solver trace should not include redundant used_symbolic: %#v", rawSolver)
+		}
+		if rawSolver["backend"] == "" || rawSolver["elements"] == nil || rawSolver["max_failures"] == nil {
+			t.Fatalf("verify JSON solver trace incomplete: %#v", rawSolver)
+		}
+	}
+	if !foundSolver {
+		t.Fatalf("verify JSON missing solver trace in failure-search results")
+	}
 }
 
 func TestVerifyCommandPrefixClassThresholdFails(t *testing.T) {

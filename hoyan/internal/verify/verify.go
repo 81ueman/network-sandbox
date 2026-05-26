@@ -39,7 +39,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 	for _, q := range queries.RouteChecks {
 		path, reachable := g.RouteReachable(q.From, q.Prefix.String(), sim.NoFailures())
 		result := sim.Result{Name: q.Name, QueryType: "route", Reachable: reachable, Expected: true, Path: path}
-		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+		if cut, ok := findBreakingFailures(g, q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 			result.Counterexample = formatFailureElements(cut)
 			result.Reason = "reachable now but not resilient to requested failure budget"
 		}
@@ -54,7 +54,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 		}
 		result := sim.Result{Name: q.Name, QueryType: "packet", Reachable: reachable, Expected: expected, Path: path, Reason: reason}
 		if expected && reachable {
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+			if cut, ok := findBreakingFailures(g, q.From, sim.PacketTarget{To: q.To, Protocol: q.Protocol, DstPort: q.DstPort}, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 				result.Counterexample = formatFailureElements(cut)
 				result.Reason = "reachable now but not resilient to requested failure budget"
 			}
@@ -62,7 +62,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 		report.Results = append(report.Results, result)
 	}
 	for _, q := range queries.FailureChecks {
-		var target sim.Target
+		var target sim.SymbolicTarget
 		if !q.Prefix.IsZero() {
 			target = sim.PacketPrefixTarget{Prefix: q.Prefix, Protocol: q.Protocol, DstPort: q.DstPort}
 		} else {
@@ -73,7 +73,7 @@ func runLegacy(topo *model.Topology, queries *model.Queries) Report {
 			expected = *q.ExpectReachable
 		}
 		result := sim.Result{Name: q.Name, QueryType: "failure", Expected: expected}
-		if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+		if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 			result.Reachable = false
 			result.Counterexample = formatFailureElements(cut)
 			result.Reason = "counterexample within failure budget"
@@ -128,7 +128,7 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 			})
 			if reachable {
 				target := sim.RouteClassTarget{Universe: universe, ClassID: classID}
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+				if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 					result.Counterexample = formatFailureElements(cut)
 					result.Reason = "reachable now but not resilient to requested failure budget"
 				}
@@ -160,7 +160,7 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 			})
 			if expected && reachable {
 				target := sim.PacketClassTarget{Universe: universe, ClassID: classID, Protocol: q.Protocol, DstPort: q.DstPort}
-				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+				if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 					result.Counterexample = formatFailureElements(cut)
 					result.Reason = "reachable now but not resilient to requested failure budget"
 				}
@@ -188,7 +188,7 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 				UnreachableCondition: symbolic.Unreachable.String(),
 				Reason:               symbolic.Reason,
 			})
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+			if cut, ok := findBreakingFailures(g, q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain), &result); ok {
 				result.Reachable = false
 				result.Counterexample = formatFailureElements(cut)
 				result.Reason = "counterexample within failure budget"
@@ -378,6 +378,26 @@ func failureSearchOptions(maxFailures int, domain model.FailureDomain) sim.Failu
 		MaxFailures:  maxFailures,
 		Domain:       domain,
 	}
+}
+
+func findBreakingFailures(g *sim.Graph, from string, target sim.SymbolicTarget, opts sim.FailureSearchOptions, result *sim.Result) ([]solver.FailureElement, bool) {
+	search, err := g.FindBreakingFailuresSymbolic(from, target, opts)
+	result.Solver = &search.Solver
+	if err != nil {
+		result.Reason = appendReason(result.Reason, "failure search error: "+err.Error())
+		return nil, false
+	}
+	if !search.Sat {
+		return nil, false
+	}
+	return search.Failures, true
+}
+
+func appendReason(existing, extra string) string {
+	if existing == "" {
+		return extra
+	}
+	return existing + "; " + extra
 }
 
 func formatFailureElements(elements []solver.FailureElement) []string {
