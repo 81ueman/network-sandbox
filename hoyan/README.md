@@ -171,6 +171,22 @@ normalizes selected FRR multipath RIB entries into an ECMP next-hop set for
 live kernel FIB comparison. cEOS and SR Linux do not currently expose
 equivalent FIB install groups in this model.
 
+Modeled packet forwarding treats `FIBEntry.NextHop` as a resolved adjacent
+topology node, not as a raw BGP next-hop address. Recursive BGP next-hop
+resolution is therefore a control-plane/FIB derivation responsibility before an
+entry can be used by the modeled dataplane. This model does not implement full
+recursive FIB lookup yet: an address-only next-hop is marked
+`unresolved_recursive_next_hop`, and packet reachability reports
+`recursive next-hop unresolved` instead of forwarding over an inferred path. If
+a selected FIB entry names a topology node that is not adjacent to the current
+node, packet reachability reports `next-hop is not adjacent`; if the adjacent
+link exists but is failed, it reports `next-hop link is down`. Entries that are
+known to resolve through the Docker management/default interface are reported
+as `next-hop resolved via management interface`. These terms intentionally
+mirror FIB compare diagnostics such as `unresolved_recursive_next_hop` and
+management fallback so modeled dataplane output and live FIB warnings describe
+the same class of issue.
+
 Connected routes are classified when the model derives routes from interface
 addresses. `link` means the interface belongs to a containerlab topology link,
 `loopback` means a loopback interface on an infrastructure node, `service`

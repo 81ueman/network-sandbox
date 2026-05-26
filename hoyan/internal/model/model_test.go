@@ -619,6 +619,20 @@ route-map RM permit 10
 	}
 }
 
+func TestParseFRRRouteMapSetIPAddressNextHop(t *testing.T) {
+	cfg := parseFRRConfigText(t, `
+route-map RM permit 10
+ set ip next-hop 192.0.2.1
+`)
+	policy := routePolicyByName(cfg.RoutePolicies, "RM")
+	if policy == nil || len(policy.Rules) != 1 {
+		t.Fatalf("RM = %#v", policy)
+	}
+	if got := policy.Rules[0].SetNextHop; got != "192.0.2.1" {
+		t.Fatalf("SetNextHop = %q, want 192.0.2.1", got)
+	}
+}
+
 func TestParseFRRPrefixListDenyAndOrder(t *testing.T) {
 	cfg := parseFRRConfigText(t, `
 ip prefix-list PL seq 20 permit 10.1.0.0/16

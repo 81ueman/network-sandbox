@@ -65,6 +65,10 @@ func applyRoutePolicy(idx *model.TopologyIndex, node model.Node, peerName string
 			out.ForwardingNextHop.Node = node.Name
 			out.ForwardingNextHop.Addr = ""
 		}
+		if rule.SetNextHop != "" {
+			out.NextHop = rule.SetNextHop
+			out.ForwardingNextHop = routeNextHopForSet(idx, node.Name, rule.SetNextHop)
+		}
 		return BGPRouteDecision{Route: out.Normalize(), Accept: true}
 	}
 	return BGPRouteDecision{Route: route, Accept: false, Reason: "route-map implicit deny"}
@@ -220,6 +224,19 @@ func routeNextHopForPolicy(idx *model.TopologyIndex, node string, peerName strin
 		}
 	}
 	return route.NextHop
+}
+
+func routeNextHopForSet(idx *model.TopologyIndex, node, nextHop string) RouteNextHop {
+	if idx == nil || nextHop == "" {
+		return RouteNextHop{Addr: nextHop}
+	}
+	for _, adj := range idx.Adj[model.NodeID(node)] {
+		peer := string(adj.To)
+		if addr, ok := idx.PeerAddress(node, peer); ok && addr.String() == nextHop {
+			return RouteNextHop{Node: peer, Addr: nextHop}
+		}
+	}
+	return RouteNextHop{Addr: nextHop}
 }
 
 func peerAddress(idx *model.TopologyIndex, node, peer string) string {

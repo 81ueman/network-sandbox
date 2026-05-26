@@ -46,15 +46,18 @@ type SymbolicPacketBlockedPath struct {
 type SymbolicUnreachableReasonKind string
 
 const (
-	UnreachableNoRoute                  SymbolicUnreachableReasonKind = "no_route"
-	UnreachableNoNextHop                SymbolicUnreachableReasonKind = "no_next_hop"
-	UnreachableDiscard                  SymbolicUnreachableReasonKind = "discard"
-	UnreachableNodeFailed               SymbolicUnreachableReasonKind = "node_failed"
-	UnreachableLinkFailed               SymbolicUnreachableReasonKind = "link_failed"
-	UnreachableIngressPolicy            SymbolicUnreachableReasonKind = "ingress_policy"
-	UnreachableEgressPolicy             SymbolicUnreachableReasonKind = "egress_policy"
-	UnreachableLoop                     SymbolicUnreachableReasonKind = "loop"
-	UnreachableDestinationNotAdvertised SymbolicUnreachableReasonKind = "destination_not_advertised"
+	UnreachableNoRoute                    SymbolicUnreachableReasonKind = "no_route"
+	UnreachableNoNextHop                  SymbolicUnreachableReasonKind = "no_next_hop"
+	UnreachableDiscard                    SymbolicUnreachableReasonKind = "discard"
+	UnreachableRecursiveNextHopUnresolved SymbolicUnreachableReasonKind = "recursive_next_hop_unresolved"
+	UnreachableNextHopNotAdjacent         SymbolicUnreachableReasonKind = "next_hop_not_adjacent"
+	UnreachableNextHopManagementFallback  SymbolicUnreachableReasonKind = "next_hop_management_fallback"
+	UnreachableNodeFailed                 SymbolicUnreachableReasonKind = "node_failed"
+	UnreachableLinkFailed                 SymbolicUnreachableReasonKind = "link_failed"
+	UnreachableIngressPolicy              SymbolicUnreachableReasonKind = "ingress_policy"
+	UnreachableEgressPolicy               SymbolicUnreachableReasonKind = "egress_policy"
+	UnreachableLoop                       SymbolicUnreachableReasonKind = "loop"
+	UnreachableDestinationNotAdvertised   SymbolicUnreachableReasonKind = "destination_not_advertised"
 )
 
 type SymbolicUnreachableReason struct {
@@ -449,6 +452,27 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 			})
 			continue
 		}
+		switch entry.effectiveResolutionStatus() {
+		case NextHopResolutionUnresolvedRecursive:
+			addUnreachableReason(reasons, SymbolicUnreachableReason{
+				Kind:    UnreachableRecursiveNextHopUnresolved,
+				Node:    state.Node,
+				Cond:    failure.And(state.Cond, candidate.Cond),
+				Path:    state.Path,
+				Message: "recursive next-hop unresolved",
+			})
+			continue
+		case NextHopResolutionManagementFallback:
+			addUnreachableReason(reasons, SymbolicUnreachableReason{
+				Kind:      UnreachableNextHopManagementFallback,
+				Node:      state.Node,
+				Interface: entry.Interface,
+				Cond:      failure.And(state.Cond, candidate.Cond),
+				Path:      state.Path,
+				Message:   "next-hop resolved via management interface",
+			})
+			continue
+		}
 		if entry.NextHop == "" {
 			addUnreachableReason(reasons, SymbolicUnreachableReason{
 				Kind:    UnreachableNoNextHop,
@@ -469,12 +493,12 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 		link, ok := e.idx.LinkBetween(state.Node, entry.NextHop)
 		if !ok {
 			addUnreachableReason(reasons, SymbolicUnreachableReason{
-				Kind:    UnreachableLinkFailed,
+				Kind:    UnreachableNextHopNotAdjacent,
 				Node:    state.Node,
 				Link:    state.Node + "-" + entry.NextHop,
 				Cond:    failure.And(state.Cond, candidate.Cond, failure.NodeVar(entry.NextHop)),
 				Path:    state.Path,
-				Message: "next-hop link is down",
+				Message: "next-hop is not adjacent",
 			})
 			continue
 		}

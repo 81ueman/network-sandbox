@@ -161,6 +161,7 @@ type RoutePolicyRule struct {
 	SetCommunities         []string `yaml:"set_communities,omitempty"`
 	SetCommunityAdditive   bool     `yaml:"set_community_additive,omitempty"`
 	SetOriginCode          string   `yaml:"set_origin_code,omitempty"`
+	SetNextHop             string   `yaml:"set_next_hop,omitempty"`
 	SetNextHopSelf         bool     `yaml:"set_next_hop_self,omitempty"`
 }
 

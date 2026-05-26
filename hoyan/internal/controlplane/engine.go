@@ -121,11 +121,15 @@ func (r RIBEntry) Normalize() RIBEntry {
 	if len(r.Links) == 0 {
 		r.Links = append([]string(nil), r.Provenance.PathLinks...)
 	}
-	if r.ForwardingNextHop.Node == "" {
+	if r.ForwardingNextHop.Node == "" && r.ForwardingNextHop.Addr == "" {
 		r.ForwardingNextHop.Node = r.NextHop
 	}
 	if r.NextHop == "" {
-		r.NextHop = r.ForwardingNextHop.Node
+		if r.ForwardingNextHop.Node != "" {
+			r.NextHop = r.ForwardingNextHop.Node
+		} else {
+			r.NextHop = r.ForwardingNextHop.Addr
+		}
 	}
 	if r.Attrs.ASPath == nil {
 		r.Attrs.ASPath = append([]uint32(nil), r.ASPath...)

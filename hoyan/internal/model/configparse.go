@@ -297,6 +297,15 @@ func parseFRRLike(kind DeviceKind, path, text string, collectWarnings bool) (Par
 				}
 				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map origin"))
 			}
+		case kind == KindFRR && currentRouteRule != nil && len(fields) >= 4 && fields[0] == "set" && fields[1] == "ip" && fields[2] == "next-hop":
+			if _, err := netip.ParseAddr(fields[3]); err != nil {
+				if !collectWarnings {
+					return ParseResult{}, fmt.Errorf("unsupported FRR route-map next-hop %q", line)
+				}
+				warnings = append(warnings, unsupportedStatement(string(kind), path, lineNo, line, "unsupported FRR route-map next-hop"))
+				continue
+			}
+			currentRouteRule.SetNextHop = fields[3]
 		case isRouteMapPolicyKind(kind) && currentRouteRule != nil && len(fields) >= 1 && (fields[0] == "set" || fields[0] == "call" || fields[0] == "continue" || fields[0] == "on-match"):
 			if !collectWarnings {
 				return ParseResult{}, fmt.Errorf("unsupported %s route-map statement %q", routeMapVendorName(kind), line)

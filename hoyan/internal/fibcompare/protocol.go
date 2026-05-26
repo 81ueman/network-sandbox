@@ -8,7 +8,7 @@ func canonicalProtocol(protocol string) string {
 		return "bgp"
 	case "kernel", "connected", "direct", "local", "host":
 		return "connected"
-	case "static":
+	case "static", "196":
 		return "static"
 	case "blackhole", "discard", "drop", "null0", "null":
 		return "blackhole"

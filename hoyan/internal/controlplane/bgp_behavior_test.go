@@ -102,55 +102,61 @@ func TestBaseBGPExportRoute(t *testing.T) {
 	ibgpTo := model.Node{Name: "r3", ASN: 65001}
 
 	tests := []struct {
-		name       string
-		from       model.Node
-		to         model.Node
-		session    model.BGPNeighbor
-		route      RIBEntry
-		accept     bool
-		nextHop    string
-		asPath     []uint32
-		learnedIBG bool
+		name        string
+		from        model.Node
+		to          model.Node
+		session     model.BGPNeighbor
+		route       RIBEntry
+		accept      bool
+		nextHop     string
+		nextHopNode string
+		nextHopAddr string
+		asPath      []uint32
+		learnedIBG  bool
 	}{
 		{
-			name:    "ebgp prepends local ASN and rewrites next-hop",
-			from:    ebgpFrom,
-			to:      ebgpTo,
-			route:   RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "original", ASPath: []uint32{65100}},
-			accept:  true,
-			nextHop: "r1",
-			asPath:  []uint32{65001, 65100},
+			name:        "ebgp prepends local ASN and rewrites next-hop",
+			from:        ebgpFrom,
+			to:          ebgpTo,
+			route:       RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "original", ASPath: []uint32{65100}},
+			accept:      true,
+			nextHop:     "r1",
+			nextHopNode: "r1",
+			asPath:      []uint32{65001, 65100},
 		},
 		{
-			name:       "ibgp preserves next-hop",
-			from:       ebgpFrom,
-			to:         ibgpTo,
-			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "edge", ASPath: []uint32{65100}},
-			accept:     true,
-			nextHop:    "edge",
-			asPath:     []uint32{65100},
-			learnedIBG: true,
+			name:        "ibgp preserves next-hop",
+			from:        ebgpFrom,
+			to:          ibgpTo,
+			route:       RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "192.0.2.1", ForwardingNextHop: RouteNextHop{Addr: "192.0.2.1"}, ASPath: []uint32{65100}},
+			accept:      true,
+			nextHop:     "192.0.2.1",
+			nextHopAddr: "192.0.2.1",
+			asPath:      []uint32{65100},
+			learnedIBG:  true,
 		},
 		{
-			name:       "ibgp next-hop-self rewrites next-hop",
-			from:       ebgpFrom,
-			to:         ibgpTo,
-			session:    model.BGPNeighbor{NextHopSelf: true},
-			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "edge", ASPath: []uint32{65100}},
-			accept:     true,
-			nextHop:    "r1",
-			asPath:     []uint32{65100},
-			learnedIBG: true,
+			name:        "ibgp next-hop-self rewrites next-hop",
+			from:        ebgpFrom,
+			to:          ibgpTo,
+			session:     model.BGPNeighbor{NextHopSelf: true},
+			route:       RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), NextHop: "192.0.2.1", ForwardingNextHop: RouteNextHop{Addr: "192.0.2.1"}, ASPath: []uint32{65100}},
+			accept:      true,
+			nextHop:     "r1",
+			nextHopNode: "r1",
+			asPath:      []uint32{65100},
+			learnedIBG:  true,
 		},
 		{
-			name:       "ibgp empty next-hop is set to exporter",
-			from:       ebgpFrom,
-			to:         ibgpTo,
-			route:      RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), ASPath: []uint32{65100}},
-			accept:     true,
-			nextHop:    "r1",
-			asPath:     []uint32{65100},
-			learnedIBG: true,
+			name:        "ibgp empty next-hop is set to exporter",
+			from:        ebgpFrom,
+			to:          ibgpTo,
+			route:       RIBEntry{Prefix: model.MustPrefix("10.0.0.0/24"), ASPath: []uint32{65100}},
+			accept:      true,
+			nextHop:     "r1",
+			nextHopNode: "r1",
+			asPath:      []uint32{65100},
+			learnedIBG:  true,
 		},
 		{
 			name:   "ibgp learned route is not readvertised to ibgp",
@@ -179,8 +185,11 @@ func TestBaseBGPExportRoute(t *testing.T) {
 			if got.Route.LearnedIBGP != tt.learnedIBG {
 				t.Fatalf("LearnedIBGP = %v, want %v", got.Route.LearnedIBGP, tt.learnedIBG)
 			}
-			if got.Route.ForwardingNextHop.Node != tt.nextHop {
-				t.Fatalf("ForwardingNextHop.Node = %q, want %q", got.Route.ForwardingNextHop.Node, tt.nextHop)
+			if got.Route.ForwardingNextHop.Node != tt.nextHopNode {
+				t.Fatalf("ForwardingNextHop.Node = %q, want %q", got.Route.ForwardingNextHop.Node, tt.nextHopNode)
+			}
+			if got.Route.ForwardingNextHop.Addr != tt.nextHopAddr {
+				t.Fatalf("ForwardingNextHop.Addr = %q, want %q", got.Route.ForwardingNextHop.Addr, tt.nextHopAddr)
 			}
 			if !reflect.DeepEqual(got.Route.Attrs.ASPath, tt.asPath) || got.Route.Attrs.LearnedIBGP != tt.learnedIBG {
 				t.Fatalf("structured BGP attrs = %#v, want ASPath %v LearnedIBGP %v", got.Route.Attrs, tt.asPath, tt.learnedIBG)

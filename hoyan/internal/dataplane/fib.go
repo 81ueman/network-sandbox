@@ -16,18 +16,32 @@ type Path struct {
 	Cost  int
 }
 
+type NextHopResolutionStatus string
+
+const (
+	NextHopResolutionResolvedAdjacent    NextHopResolutionStatus = "resolved_adjacent"
+	NextHopResolutionUnresolvedRecursive NextHopResolutionStatus = "unresolved_recursive_next_hop"
+	NextHopResolutionManagementFallback  NextHopResolutionStatus = "next_hop_management_fallback"
+)
+
 type FIBEntry struct {
-	Prefix         netip.Prefix
-	NextHop        string
-	Interface      string
-	SourceKind     model.RouteSourceKind
-	Discard        bool
-	ConnectedClass model.ConnectedRouteClass
-	Path           Path
-	Condition      failure.Cond
-	Rank           int
-	GroupID        string
-	Equivalent     bool
+	Prefix netip.Prefix
+	// NextHop is the resolved adjacent topology node used by modeled packet
+	// forwarding. It is not a raw BGP next-hop address.
+	NextHop          string
+	RawNextHop       string
+	NextHopAddress   string
+	Interface        string
+	ResolutionStatus NextHopResolutionStatus
+	ResolutionReason string
+	SourceKind       model.RouteSourceKind
+	Discard          bool
+	ConnectedClass   model.ConnectedRouteClass
+	Path             Path
+	Condition        failure.Cond
+	Rank             int
+	GroupID          string
+	Equivalent       bool
 }
 
 type Engine struct {
@@ -81,18 +95,32 @@ func (e *Engine) DeriveFIB() {
 						}
 					}
 				}
+				resolvedNextHop := route.ForwardingNextHop.Node
+				if resolvedNextHop == "" && route.ForwardingNextHop.Addr == "" {
+					resolvedNextHop = route.NextHop
+				}
+				nextHopAddress := route.ForwardingNextHop.Addr
+				rawNextHop := route.NextHop
+				if rawNextHop == "" {
+					rawNextHop = nextHopAddress
+				}
+				resolutionStatus, resolutionReason := nextHopResolution(resolvedNextHop, nextHopAddress)
 				entries = append(entries, FIBEntry{
-					Prefix:         route.Prefix.NetIP(),
-					NextHop:        route.NextHop,
-					Interface:      route.RouteSource.Interface,
-					SourceKind:     route.SourceKind,
-					Discard:        route.SourceKind == model.RouteSourceBlackhole,
-					ConnectedClass: route.RouteSource.ConnectedClass,
-					Path:           Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
-					Condition:      route.SelectedCond,
-					Rank:           group.rank,
-					GroupID:        group.id,
-					Equivalent:     group.equivalent,
+					Prefix:           route.Prefix.NetIP(),
+					NextHop:          resolvedNextHop,
+					RawNextHop:       rawNextHop,
+					NextHopAddress:   nextHopAddress,
+					Interface:        route.RouteSource.Interface,
+					ResolutionStatus: resolutionStatus,
+					ResolutionReason: resolutionReason,
+					SourceKind:       route.SourceKind,
+					Discard:          route.SourceKind == model.RouteSourceBlackhole,
+					ConnectedClass:   route.RouteSource.ConnectedClass,
+					Path:             Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
+					Condition:        route.SelectedCond,
+					Rank:             group.rank,
+					GroupID:          group.id,
+					Equivalent:       group.equivalent,
 				})
 			}
 		}
@@ -162,4 +190,27 @@ func (e *Engine) LookupFIB(node, dst string, ctx failure.Context) (FIBEntry, boo
 		}
 	}
 	return FIBEntry{}, false
+}
+
+func nextHopResolution(node, addr string) (NextHopResolutionStatus, string) {
+	if node != "" {
+		return NextHopResolutionResolvedAdjacent, ""
+	}
+	if addr != "" {
+		return NextHopResolutionUnresolvedRecursive, "recursive next-hop unresolved"
+	}
+	return "", ""
+}
+
+func (entry FIBEntry) effectiveResolutionStatus() NextHopResolutionStatus {
+	if entry.ResolutionStatus != "" {
+		return entry.ResolutionStatus
+	}
+	if entry.NextHop == "" && (entry.RawNextHop != "" || entry.NextHopAddress != "") {
+		return NextHopResolutionUnresolvedRecursive
+	}
+	if _, err := netip.ParseAddr(entry.NextHop); err == nil {
+		return NextHopResolutionUnresolvedRecursive
+	}
+	return ""
 }

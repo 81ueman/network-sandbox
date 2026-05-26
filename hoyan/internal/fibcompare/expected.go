@@ -1,6 +1,8 @@
 package fibcompare
 
 import (
+	"net/netip"
+
 	"github.com/81ueman/network-sandbox/hoyan/internal/dataplane"
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
 	"github.com/81ueman/network-sandbox/hoyan/internal/sim"
@@ -40,7 +42,7 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 				if entry.SelectedCond == nil || !entry.SelectedCond.Eval(ctx) || !behavior.RouteValidForRIB(n, entry) {
 					continue
 				}
-				addExpectedRoute(byRoute, idx, n.Name, entry.Prefix.String(), entry.NextHop, entry.RouteSource.Interface, entry.SourceKind, entry.RouteSource.ConnectedClass, idx.PathCost(entry.Links))
+				addExpectedRoute(byRoute, idx, graph.FIB(n.Name), ctx, n.Name, entry.Prefix.String(), entry.NextHop, entry.RouteSource.Interface, entry.SourceKind, entry.RouteSource.ConnectedClass, idx.PathCost(entry.Links))
 			}
 		}
 		for _, entry := range graph.FIB(n.Name) {
@@ -50,7 +52,7 @@ func ExpectedForNodes(topo *model.Topology, nodes []model.Node) []NormalizedFIBR
 			if entry.Condition == nil || !entry.Condition.Eval(ctx) {
 				continue
 			}
-			addExpectedRoute(byRoute, idx, n.Name, entry.Prefix.String(), entry.NextHop, entry.Interface, entry.SourceKind, entry.ConnectedClass, entry.Path.Cost)
+			addExpectedRoute(byRoute, idx, nil, ctx, n.Name, entry.Prefix.String(), entry.NextHop, entry.Interface, entry.SourceKind, entry.ConnectedClass, entry.Path.Cost)
 		}
 	}
 	out := make([]NormalizedFIBRoute, 0, len(byRoute))
@@ -76,7 +78,7 @@ func bgpSuppressedByNonBGPFIB(entries []dataplane.FIBEntry, ctx sim.FailureConte
 	return out
 }
 
-func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.TopologyIndex, node, prefix, nextHop, iface string, source model.RouteSourceKind, class model.ConnectedRouteClass, metric int) {
+func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.TopologyIndex, fib []dataplane.FIBEntry, ctx sim.FailureContext, node, prefix, nextHop, iface string, source model.RouteSourceKind, class model.ConnectedRouteClass, metric int) {
 	route := NormalizedFIBRoute{
 		Node:           node,
 		VRF:            "default",
@@ -88,7 +90,7 @@ func addExpectedRoute(byRoute map[string]NormalizedFIBRoute, idx *model.Topology
 		Installed:      true,
 	}
 	if nextHop != "" {
-		route.NextHops = []NormalizedFIBNextHop{expectedNextHop(idx, node, nextHop)}
+		route.NextHops = []NormalizedFIBNextHop{expectedNextHop(idx, fib, ctx, node, prefix, nextHop)}
 	} else if iface != "" && source != model.RouteSourceBlackhole {
 		route.NextHops = []NormalizedFIBNextHop{{Interface: iface}}
 	}
@@ -117,7 +119,10 @@ func expectedProtocol(source model.RouteSourceKind, nextHop string) string {
 	return "bgp"
 }
 
-func expectedNextHop(idx *model.TopologyIndex, node, nextHop string) NormalizedFIBNextHop {
+func expectedNextHop(idx *model.TopologyIndex, fib []dataplane.FIBEntry, ctx sim.FailureContext, node, routePrefix, nextHop string) NormalizedFIBNextHop {
+	if resolved, ok := resolveRecursiveNextHop(idx, fib, ctx, node, routePrefix, nextHop); ok {
+		return resolved
+	}
 	out := NormalizedFIBNextHop{}
 	if ref, ok := idx.InterfaceToPeer(node, nextHop); ok {
 		out.Interface = ref.ConfigName
@@ -128,6 +133,23 @@ func expectedNextHop(idx *model.TopologyIndex, node, nextHop string) NormalizedF
 	}
 	out.Address = nextHop
 	return out
+}
+
+func resolveRecursiveNextHop(idx *model.TopologyIndex, fib []dataplane.FIBEntry, ctx sim.FailureContext, node, routePrefix, nextHop string) (NormalizedFIBNextHop, bool) {
+	addr, err := netip.ParseAddr(nextHop)
+	if err != nil {
+		return NormalizedFIBNextHop{}, false
+	}
+	for _, entry := range fib {
+		if entry.Prefix.String() == routePrefix || !entry.Prefix.Contains(addr) {
+			continue
+		}
+		if entry.Condition == nil || !entry.Condition.Eval(ctx) || entry.NextHop == "" {
+			continue
+		}
+		return expectedNextHop(idx, nil, ctx, node, entry.Prefix.String(), entry.NextHop), true
+	}
+	return NormalizedFIBNextHop{}, false
 }
 
 func dedupeNextHops(in []NormalizedFIBNextHop) []NormalizedFIBNextHop {
