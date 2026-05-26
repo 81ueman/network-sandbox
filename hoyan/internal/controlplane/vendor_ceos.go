@@ -9,13 +9,13 @@ import (
 type ceosBehavior struct{ baseDeviceBehavior }
 
 func NewCEOSBehavior() DeviceBehavior {
-	return ceosBehavior{baseDeviceBehavior{kind: model.KindCEOS, decision: ceosDecisionProcess{}}}
+	return ceosBehavior{baseDeviceBehavior{kind: model.KindCEOS, decision: ceosDecisionProcess{defaultBGPDecisionProcess{options: DefaultBGPDecisionOptions()}}}}
 }
 
-type ceosDecisionProcess struct{}
+type ceosDecisionProcess struct{ defaultBGPDecisionProcess }
 
-func (ceosDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
-	return defaultBGPDecisionProcess{}.Less(receiver, a, b)
+func (d ceosDecisionProcess) Less(receiver model.Node, a, b RIBEntry) bool {
+	return d.defaultBGPDecisionProcess.Less(receiver, a, b)
 }
 
 func (ceosDecisionProcess) Equivalent(receiver model.Node, a, b RIBEntry) bool {

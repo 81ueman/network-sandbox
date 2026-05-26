@@ -32,6 +32,7 @@ type PacketMessage = controlplane.PacketMessage
 type BGPRouteDecision = controlplane.BGPRouteDecision
 type BGPBehavior = controlplane.BGPBehavior
 type BGPDecisionProcess = controlplane.BGPDecisionProcess
+type BGPDecisionOptions = controlplane.BGPDecisionOptions
 type DeviceBehavior = controlplane.DeviceBehavior
 
 type Graph struct {
@@ -103,6 +104,12 @@ func NewSRLinuxBehavior() DeviceBehavior {
 }
 func DefaultBGPDecisionProcess() BGPDecisionProcess {
 	return controlplane.DefaultBGPDecisionProcess()
+}
+func DefaultBGPDecisionOptions() BGPDecisionOptions {
+	return controlplane.DefaultBGPDecisionOptions()
+}
+func NewBGPDecisionProcess(options BGPDecisionOptions) BGPDecisionProcess {
+	return controlplane.NewBGPDecisionProcess(options)
 }
 
 func NewGraph(topo *model.Topology) *Graph {
