@@ -57,9 +57,13 @@ prefix-list and policy predicates, query destinations, and modeled RIB/FIB
 prefixes. Route, packet, and failure checks are expanded across matching
 classes. The default output collapses classes with identical reachability,
 expected result, counterexample, reason, and symbolic conditions; `--no-collapse`
-prints each class result separately. JSON output includes `class_id` or
-`class_ids`, `space` or `spaces`, `matched_predicates`, `reachable_condition`,
-and `unreachable_condition`.
+prints each class result separately.
+
+`--format json` emits a structured report object with `results`. Each result
+has common `name`, `type`, and `metadata` fields, then stores query-specific
+payload under `route`, `packet`, or `failure`. Prefix class information is kept
+separately under `prefix_class`, so route, packet, failure, and prefix-class
+semantics can evolve without overloading a single flat result object.
 
 Data-plane policies are parsed from the device startup configs.
 Linux/FRR data-plane ACLs are stored as nftables rulesets under
