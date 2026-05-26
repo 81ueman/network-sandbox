@@ -147,17 +147,11 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		value := any(report.Results)
-		if opts.showPrefixUniverseStats && opts.prefixClasses && report.Stats != nil {
-			value = struct {
-				Stats   *model.PrefixUniverseStats `json:"prefix_universe_stats"`
-				Results []sim.Result               `json:"results"`
-			}{
-				Stats:   report.Stats,
-				Results: report.Results,
-			}
+		jsonReport := report
+		if !opts.showPrefixUniverseStats {
+			jsonReport.Stats = nil
 		}
-		if err := enc.Encode(value); err != nil {
+		if err := enc.Encode(jsonReport); err != nil {
 			return err
 		}
 		if !report.OK() {
@@ -173,29 +167,29 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	}
 	for _, result := range report.Results {
 		status := "PASS"
-		if result.Reachable != result.Expected {
+		if result.Metadata.Reachable != result.Metadata.Expected {
 			status = "FAIL"
 		}
-		fmt.Fprintf(out, "[%s] %s reachable=%v expected=%v\n", status, result.Name, result.Reachable, result.Expected)
-		if len(result.PrefixClassIDs) > 0 {
-			fmt.Fprintf(out, "  classes: %s\n", formatClassIDs(result.PrefixClassIDs))
+		fmt.Fprintf(out, "[%s] %s reachable=%v expected=%v\n", status, result.Name, result.Metadata.Reachable, result.Metadata.Expected)
+		if result.PrefixClass != nil && len(result.PrefixClass.ClassIDs) > 0 {
+			fmt.Fprintf(out, "  classes: %s\n", formatClassIDs(result.PrefixClass.ClassIDs))
 		}
-		if len(result.PrefixSpaces) > 0 {
-			fmt.Fprintf(out, "  spaces: %s\n", strings.Join(result.PrefixSpaces, ", "))
-		} else if result.PrefixSpace != "" {
-			fmt.Fprintf(out, "  space: %s\n", result.PrefixSpace)
+		if result.PrefixClass != nil && len(result.PrefixClass.Spaces) > 0 {
+			fmt.Fprintf(out, "  spaces: %s\n", strings.Join(result.PrefixClass.Spaces, ", "))
+		} else if result.PrefixClass != nil && result.PrefixClass.Space != "" {
+			fmt.Fprintf(out, "  space: %s\n", result.PrefixClass.Space)
 		}
-		if len(result.MatchedPredicates) > 0 {
-			fmt.Fprintf(out, "  matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
+		if result.PrefixClass != nil && len(result.PrefixClass.MatchedPredicates) > 0 {
+			fmt.Fprintf(out, "  matched predicates: %s\n", strings.Join(result.PrefixClass.MatchedPredicates, ", "))
 		}
-		if len(result.Path.Nodes) > 0 {
-			fmt.Fprintf(out, "  path: %s\n", sim.FormatPath(result.Path))
+		if path := result.Path(); len(path.Nodes) > 0 {
+			fmt.Fprintf(out, "  path: %s\n", sim.FormatPath(path))
 		}
-		if len(result.Counterexample) > 0 {
-			fmt.Fprintf(out, "  counterexample: %s\n", strings.Join(result.Counterexample, ", "))
+		if counterexample := result.Counterexample(); len(counterexample) > 0 {
+			fmt.Fprintf(out, "  counterexample: %s\n", strings.Join(counterexample, ", "))
 		}
-		if result.Reason != "" {
-			fmt.Fprintf(out, "  reason: %s\n", result.Reason)
+		if result.Metadata.Reason != "" {
+			fmt.Fprintf(out, "  reason: %s\n", result.Metadata.Reason)
 		}
 	}
 	if !report.OK() {

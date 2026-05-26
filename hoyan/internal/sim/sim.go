@@ -42,24 +42,6 @@ type Graph struct {
 	fib       map[string][]FIBEntry
 }
 
-type Result struct {
-	Name                 string                `json:"name"`
-	QueryType            string                `json:"query_type,omitempty"`
-	Reachable            bool                  `json:"reachable"`
-	Expected             bool                  `json:"expected"`
-	Path                 Path                  `json:"path,omitempty"`
-	Counterexample       []string              `json:"counterexample,omitempty"`
-	Reason               string                `json:"reason,omitempty"`
-	PrefixClassID        *model.PrefixClassID  `json:"class_id,omitempty"`
-	PrefixClassIDs       []model.PrefixClassID `json:"class_ids,omitempty"`
-	PrefixSpace          string                `json:"space,omitempty"`
-	PrefixSpaces         []string              `json:"spaces,omitempty"`
-	MatchedPredicates    []string              `json:"matched_predicates,omitempty"`
-	ReachableCondition   string                `json:"reachable_condition,omitempty"`
-	UnreachableCondition string                `json:"unreachable_condition,omitempty"`
-	Solver               *SolverTrace          `json:"solver,omitempty"`
-}
-
 func NoFailures() FailureSet { return failure.None() }
 func LinkFailures(names ...model.LinkID) FailureSet {
 	return failure.Links(names...)
