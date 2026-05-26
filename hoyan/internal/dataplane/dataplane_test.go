@@ -395,16 +395,10 @@ func TestPacketReachableMatchesPolicyInterface(t *testing.T) {
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "NFT-DENY",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "egress",
-			Interface: "eth2",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: pfx,
-		}},
+		ACLs: testACLs("NFT-DENY", "mid", model.ACLRule{
+			Seq: 10, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}},
+		}),
+		ACLBindings: testACLBindings("NFT-DENY", "mid", "eth2", "egress"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -414,13 +408,13 @@ func TestPacketReachableMatchesPolicyInterface(t *testing.T) {
 		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
 	})
 	_, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None())
-	if ok || reason != "denied by policy NFT-DENY" {
+	if ok || reason != "denied by acl NFT-DENY" {
 		t.Fatalf("tcp PacketReachable() ok=%v reason=%q, want nft deny", ok, reason)
 	}
 	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "icmp", failure.None()); !ok {
 		t.Fatalf("icmp PacketReachable() ok=false reason=%q, want reachable", reason)
 	}
-	idx.Topology.Policies[0].Interface = "eth9"
+	idx.Topology.ACLBindings[0].Interface = "eth9"
 	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); !ok {
 		t.Fatalf("tcp PacketReachable() with nonmatching interface ok=false reason=%q, want reachable", reason)
 	}
@@ -438,17 +432,10 @@ func TestPacketReachableMatchesPolicyDstPort(t *testing.T) {
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "DENY-HTTP",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "egress",
-			Interface: "eth2",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: pfx,
-			DstPort:   model.ExactPortSet{Port: 80},
-		}},
+		ACLs: testACLs("DENY-HTTP", "mid", model.ACLRule{
+			Seq: 10, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}, DstPort: model.ExactPortSet{Port: 80}},
+		}),
+		ACLBindings: testACLBindings("DENY-HTTP", "mid", "eth2", "egress"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +445,7 @@ func TestPacketReachableMatchesPolicyDstPort(t *testing.T) {
 		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
 	})
 	http := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPortSet{Port: 80}}
-	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", http, failure.None()); ok || reason != "denied by policy DENY-HTTP" {
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", http, failure.None()); ok || reason != "denied by acl DENY-HTTP" {
 		t.Fatalf("tcp/80 PacketReachableSpec() ok=%v reason=%q, want policy deny", ok, reason)
 	}
 	https := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPortSet{Port: 443}}
@@ -478,6 +465,51 @@ func TestPacketReachableMatchesPolicyDstPort(t *testing.T) {
 	}
 }
 
+func TestPacketReachableUsesACLPermitAndDefaultAction(t *testing.T) {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx, err := model.BuildTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "mid", Kind: model.KindCEOS},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "Ethernet1", Cost: 1},
+			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "Ethernet2", BIntf: "eth1", Cost: 1},
+		},
+		ACLs: []model.ACL{{
+			Name:          "WEB",
+			Node:          "mid",
+			Vendor:        model.KindCEOS,
+			DefaultAction: model.ACLDefaultDeny,
+			Rules: []model.ACLRule{
+				{Seq: 10, Action: model.ACLPermit, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}, DstPort: model.ExactPort(443)}},
+				{Seq: 20, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}, DstPort: model.ExactPort(80)}},
+			},
+		}},
+		ACLBindings: []model.ACLBinding{{Node: "mid", Interface: "Ethernet2", Direction: "egress", ACLName: "WEB"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {{Prefix: pfx.NetIP(), NextHop: "mid", Condition: failure.True()}},
+		"mid": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
+	https := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPort(443)}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", https, failure.None()); !ok {
+		t.Fatalf("tcp/443 PacketReachableSpec() ok=false reason=%q, want ACL permit", reason)
+	}
+	http := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPort(80)}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", http, failure.None()); ok || reason != "denied by acl WEB" {
+		t.Fatalf("tcp/80 PacketReachableSpec() ok=%v reason=%q, want ACL deny", ok, reason)
+	}
+	ssh := model.PacketSpec{Protocol: "tcp", DstPort: model.ExactPort(22)}
+	if _, ok, reason := e.PacketReachableSpec("src", "10.0.0.10", ssh, failure.None()); ok || reason != "default deny by acl WEB" {
+		t.Fatalf("tcp/22 PacketReachableSpec() ok=%v reason=%q, want ACL default deny", ok, reason)
+	}
+}
+
 func TestSymbolicPacketReachabilityForClassAppliesDstPrefixPolicy(t *testing.T) {
 	pfx := model.MustPrefix("10.0.0.0/24")
 	idx, err := model.BuildTopologyIndex(&model.Topology{
@@ -490,16 +522,10 @@ func TestSymbolicPacketReachabilityForClassAppliesDstPrefixPolicy(t *testing.T) 
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "deny-tcp",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "egress",
-			Interface: "eth2",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: pfx,
-		}},
+		ACLs: testACLs("deny-tcp", "mid", model.ACLRule{
+			Seq: 10, Action: model.ACLDeny, Match: model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}},
+		}),
+		ACLBindings: testACLBindings("deny-tcp", "mid", "eth2", "egress"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -534,22 +560,18 @@ func TestSymbolicPacketReachabilityRecordsPolicyDeny(t *testing.T) {
 			{Name: "src-mid", A: "src", B: "mid", AIntf: "eth1", BIntf: "eth1", Cost: 1},
 			{Name: "mid-dst", A: "mid", B: "dst", AIntf: "eth2", BIntf: "eth1", Cost: 1},
 		},
-		Policies: []model.Policy{{
-			Name:      "NFT-DENY-TCP",
-			Node:      "mid",
-			Plane:     "data",
-			Stage:     "egress",
-			Interface: "eth2",
-			Action:    "deny",
-			Protocol:  "tcp",
-			DstPrefix: pfx,
-			Source: model.PolicySource{
+		ACLs: testACLs("NFT-DENY-TCP", "mid", model.ACLRule{
+			Seq:    10,
+			Action: model.ACLDeny,
+			Match:  model.PacketSpec{Protocol: "tcp", DstSet: model.ExactPrefixSet{Prefix: pfx}},
+			Source: model.ConfigSource{
 				Vendor: "nftables",
 				File:   "configs/frr/mid/nftables.conf",
 				Line:   12,
 				Raw:    "tcp dport 80 drop",
 			},
-		}},
+		}),
+		ACLBindings: testACLBindings("NFT-DENY-TCP", "mid", "eth2", "egress"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -567,11 +589,11 @@ func TestSymbolicPacketReachabilityRecordsPolicyDeny(t *testing.T) {
 		t.Fatalf("blocked paths = %d, want 1: %#v", got, result.Blocked)
 	}
 	blocked := result.Blocked[0]
-	if blocked.Policy != "NFT-DENY-TCP" || blocked.Node != "mid" || blocked.Interface != "eth2" || blocked.Stage != "egress" {
+	if blocked.ACL != "NFT-DENY-TCP" || blocked.Node != "mid" || blocked.Interface != "eth2" || blocked.Stage != "egress" {
 		t.Fatalf("unexpected blocked policy metadata: %#v", blocked)
 	}
 	if blocked.Source.Vendor != "nftables" || blocked.Source.File == "" || blocked.Source.Raw == "" {
-		t.Fatalf("missing blocked policy source: %#v", blocked.Source)
+		t.Fatalf("missing blocked config source: %#v", blocked.Source)
 	}
 	if !blocked.Cond.Eval(e.FailureContext(failure.None())) {
 		t.Fatalf("blocked condition = %s, want true under no failures", blocked.Cond)
@@ -587,7 +609,7 @@ func TestSymbolicPacketReachabilityRecordsPolicyDeny(t *testing.T) {
 	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "icmp", failure.None()); !ok {
 		t.Fatalf("icmp concrete PacketReachable() ok=false reason=%q, want symbolic/concrete match", reason)
 	}
-	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); ok || reason != "denied by policy NFT-DENY-TCP" {
+	if _, ok, reason := e.PacketReachable("src", "10.0.0.10", "tcp", failure.None()); ok || reason != "denied by acl NFT-DENY-TCP" {
 		t.Fatalf("tcp concrete PacketReachable() ok=%v reason=%q, want policy deny", ok, reason)
 	}
 }
@@ -703,6 +725,14 @@ func TestPacketReachableDetectsForwardingLoop(t *testing.T) {
 	}
 }
 
+func TestPacketReachableReportsDiscardRoute(t *testing.T) {
+	engine := discardRouteEngine(failure.True())
+	_, ok, reason := engine.PacketReachable("src", "10.0.0.10", "icmp", failure.None())
+	if ok || reason != "discard route selected" {
+		t.Fatalf("PacketReachable() = ok %v reason %q, want discard route selected", ok, reason)
+	}
+}
+
 func firstUnreachableReason(result SymbolicReachabilityResult, kind SymbolicUnreachableReasonKind) (SymbolicUnreachableReason, bool) {
 	for _, reason := range result.UnreachableReasons {
 		if reason.Kind == kind {
@@ -719,6 +749,20 @@ func firstUnreachableReasonByLink(result SymbolicReachabilityResult, link string
 		}
 	}
 	return SymbolicUnreachableReason{}, false
+}
+
+func testACLs(name, node string, rules ...model.ACLRule) []model.ACL {
+	return []model.ACL{{
+		Name:          name,
+		Node:          node,
+		Vendor:        model.KindFRR,
+		DefaultAction: model.ACLDefaultPermit,
+		Rules:         rules,
+	}}
+}
+
+func testACLBindings(name, node, iface, direction string) []model.ACLBinding {
+	return []model.ACLBinding{{Node: node, Interface: iface, Direction: direction, ACLName: name}}
 }
 
 func TestDeriveFIBUsesVendorInstallEligibility(t *testing.T) {
@@ -780,5 +824,39 @@ func TestDeriveFIBMarksAddressOnlyNextHopUnresolved(t *testing.T) {
 	entry := fib["rx"][0]
 	if entry.NextHop != "" || entry.NextHopAddress != "192.0.2.1" || entry.ResolutionStatus != NextHopResolutionUnresolvedRecursive {
 		t.Fatalf("FIB next-hop resolution = %#v, want unresolved address-only next-hop", entry)
+	}
+}
+
+func TestDeriveFIBMarksBlackholeRouteAsDiscard(t *testing.T) {
+	prefix := model.MustPrefix("10.0.0.0/24")
+	idx := mustTopologyIndex(&model.Topology{
+		Nodes: []model.Node{{Name: "src", Kind: model.KindFRR}},
+	})
+	rib := map[string]map[string][]controlplane.RIBEntry{
+		"src": {
+			prefix.String(): {
+				{
+					Prefix:       prefix,
+					SourceKind:   model.RouteSourceBlackhole,
+					RouteSource:  model.ConfiguredRoute{Prefix: prefix, Kind: model.RouteSourceBlackhole, Interface: "Null0"},
+					SelectedCond: failure.True(),
+				},
+				{
+					Prefix:       prefix,
+					SourceKind:   model.RouteSourceBGP,
+					NextHop:      "remote",
+					SelectedCond: failure.True(),
+				},
+			},
+		},
+	}
+	fib := map[string][]FIBEntry{}
+	NewEngine(idx, rib, fib).DeriveFIB()
+	if len(fib["src"]) != 1 {
+		t.Fatalf("FIB entries = %#v, want local blackhole selected over same-prefix BGP", fib["src"])
+	}
+	entry := fib["src"][0]
+	if !entry.Discard || entry.SourceKind != model.RouteSourceBlackhole || entry.Interface != "Null0" {
+		t.Fatalf("blackhole FIB entry = %#v, want discard blackhole via Null0", entry)
 	}
 }

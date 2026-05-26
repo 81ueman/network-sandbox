@@ -562,7 +562,7 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		nextNode, _ := e.idx.Node(next)
 		nextBehavior := BehaviorFor(nextNode.Kind)
 		exportMsg := ControlMessage{From: current, To: next, Prefix: route.Prefix.String(), Route: route}
-		if !curBehavior.CheckControlEgress(curNode, exportMsg, e.idx.Topology.Policies) {
+		if !curBehavior.CheckControlEgress(curNode, exportMsg) {
 			continue
 		}
 		routeForExport := e.applyAggregateSuppression(curNode, route)
@@ -576,7 +576,7 @@ func (e *Engine) walkBGP(route RIBEntry) {
 		}
 		exported.Route = exportPolicy.Route
 		importMsg := ControlMessage{From: current, To: next, Prefix: exported.Route.Prefix.String(), Route: exported.Route}
-		if !nextBehavior.CheckControlIngress(nextNode, importMsg, e.idx.Topology.Policies) {
+		if !nextBehavior.CheckControlIngress(nextNode, importMsg) {
 			continue
 		}
 		receiverSession, _ := e.bgpSession(next, current)

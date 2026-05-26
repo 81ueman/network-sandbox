@@ -136,6 +136,24 @@ func TestRecursiveNextHopReasonsMatchConcretePacketReachable(t *testing.T) {
 	}
 }
 
+func TestSymbolicDiscardReasonUsesSelectedCandidateCondition(t *testing.T) {
+	engine := selectedDiscardCandidateEngine()
+	result := engine.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
+	reason := findReason(t, result.UnreachableReasons, UnreachableDiscard, "src", "", "discard route selected")
+	if !reason.Cond.Eval(engine.FailureContext(failure.None())) {
+		t.Fatalf("discard reason should be true when the discard candidate is selected: %s", reason.Cond)
+	}
+	if reason.Cond.Eval(engine.FailureContext(failure.Links("prefer-discard"))) {
+		t.Fatalf("discard reason should be false when the discard candidate is not selected: %s", reason.Cond)
+	}
+	if noNextHop, ok := firstUnreachableReason(result, UnreachableNoNextHop); ok {
+		t.Fatalf("discard route should not be reported as no-next-hop: %#v", noNextHop)
+	}
+	if noRoute, ok := firstUnreachableReason(result, UnreachableNoRoute); !ok || noRoute.Message != "no forwarding route" {
+		t.Fatalf("no-route reason should remain distinct: %#v", result.UnreachableReasons)
+	}
+}
+
 func TestSymbolicUnreachableReasonMatchesConcretePacketReachableReason(t *testing.T) {
 	engine := redundantPathEngine()
 	result := engine.SymbolicPacketReachability("src", "10.0.0.10", "icmp")
@@ -154,6 +172,28 @@ func TestSymbolicUnreachableReasonMatchesConcretePacketReachableReason(t *testin
 			t.Fatalf("no symbolic reason matched concrete reason %q for failures=%s\nreasons=%s", concreteReason, formatFailureSet(failures), formatUnreachableReasons(result.UnreachableReasons))
 		}
 	}
+}
+
+func selectedDiscardCandidateEngine() *Engine {
+	pfx := model.MustPrefix("10.0.0.0/24")
+	idx := mustTopologyIndex(&model.Topology{
+		Nodes: []model.Node{
+			{Name: "src", Kind: model.KindFRR},
+			{Name: "backup", Kind: model.KindFRR},
+			{Name: "dst", Kind: model.KindFRR, Prefixes: []model.Prefix{pfx}},
+		},
+		Links: []model.Link{
+			{Name: "src-backup", A: "src", B: "backup", Cost: 1},
+			{Name: "backup-dst", A: "backup", B: "dst", Cost: 1},
+		},
+	})
+	return NewEngine(idx, nil, map[string][]FIBEntry{
+		"src": {
+			{Prefix: pfx.NetIP(), SourceKind: model.RouteSourceBlackhole, Discard: true, Condition: failure.LinkVar("prefer-discard")},
+			{Prefix: pfx.NetIP(), NextHop: "backup", Condition: failure.True()},
+		},
+		"backup": {{Prefix: pfx.NetIP(), NextHop: "dst", Condition: failure.True()}},
+	})
 }
 
 func selectedProblemCandidateEngine(problemNextHop string) *Engine {

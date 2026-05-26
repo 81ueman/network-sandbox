@@ -31,9 +31,9 @@ func nftablesPolicyNodes(topo *model.Topology) []model.Node {
 		return nil
 	}
 	wanted := map[string]bool{}
-	for _, policy := range topo.Policies {
-		if policy.Source.Vendor == "nftables" {
-			wanted[policy.Node] = true
+	for _, acl := range topo.ACLs {
+		if acl.Source.Vendor == "nftables" {
+			wanted[acl.Node] = true
 		}
 	}
 	var nodes []model.Node

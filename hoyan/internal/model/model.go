@@ -9,11 +9,12 @@ import (
 )
 
 type Topology struct {
-	Name             string   `yaml:"name"`
-	ManagementSubnet string   `yaml:"management_subnet"`
-	Nodes            []Node   `yaml:"nodes"`
-	Links            []Link   `yaml:"links"`
-	Policies         []Policy `yaml:"policies"`
+	Name             string       `yaml:"name"`
+	ManagementSubnet string       `yaml:"management_subnet"`
+	Nodes            []Node       `yaml:"nodes"`
+	Links            []Link       `yaml:"links"`
+	ACLs             []ACL        `yaml:"acls,omitempty" json:"acls,omitempty"`
+	ACLBindings      []ACLBinding `yaml:"acl_bindings,omitempty" json:"acl_bindings,omitempty"`
 }
 
 type Node struct {
@@ -90,13 +91,13 @@ type ConfiguredRoute struct {
 	AdminDistance   int                 `yaml:"admin_distance,omitempty" json:"admin_distance,omitempty"`
 	Metric          int                 `yaml:"metric,omitempty" json:"metric,omitempty"`
 	SummaryOnly     bool                `yaml:"summary_only,omitempty" json:"summary_only,omitempty"`
-	Source          PolicySource        `yaml:"source,omitempty" json:"source,omitempty"`
+	Source          ConfigSource        `yaml:"source,omitempty" json:"source,omitempty"`
 }
 
 type BGPRedistribution struct {
 	Kind     RouteSourceKind `yaml:"kind" json:"kind"`
 	RouteMap string          `yaml:"route_map,omitempty" json:"route_map,omitempty"`
-	Source   PolicySource    `yaml:"source,omitempty" json:"source,omitempty"`
+	Source   ConfigSource    `yaml:"source,omitempty" json:"source,omitempty"`
 }
 
 type BGPNeighbor struct {
@@ -164,24 +165,45 @@ type RoutePolicyRule struct {
 	SetNextHopSelf         bool     `yaml:"set_next_hop_self,omitempty"`
 }
 
-type Policy struct {
-	Name      string       `yaml:"name"`
-	Node      string       `yaml:"node"`
-	Plane     string       `yaml:"plane"`
-	Stage     string       `yaml:"stage"`
-	Interface string       `yaml:"interface,omitempty"`
-	Peer      string       `yaml:"peer"`
-	Action    string       `yaml:"action"`
-	Protocol  string       `yaml:"protocol"`
-	SrcPrefix Prefix       `yaml:"src_prefix"`
-	DstPrefix Prefix       `yaml:"dst_prefix"`
-	SrcPort   PortSet      `yaml:"-"`
-	DstPort   PortSet      `yaml:"-"`
-	Seq       int          `yaml:"seq,omitempty"`
-	Source    PolicySource `yaml:"source,omitempty"`
+type ACLAction string
+
+const (
+	ACLPermit ACLAction = "permit"
+	ACLDeny   ACLAction = "deny"
+)
+
+type ACLDefaultAction string
+
+const (
+	ACLDefaultPermit ACLDefaultAction = "permit"
+	ACLDefaultDeny   ACLDefaultAction = "deny"
+)
+
+type ACLRule struct {
+	Seq    int          `yaml:"seq" json:"seq"`
+	Action ACLAction    `yaml:"action" json:"action"`
+	Match  PacketSpec   `yaml:"-" json:"-"`
+	Source ConfigSource `yaml:"source,omitempty" json:"source,omitempty"`
 }
 
-type PolicySource struct {
+type ACL struct {
+	Name          string           `yaml:"name" json:"name"`
+	Node          string           `yaml:"node" json:"node"`
+	Vendor        DeviceKind       `yaml:"vendor" json:"vendor"`
+	Rules         []ACLRule        `yaml:"rules" json:"rules"`
+	DefaultAction ACLDefaultAction `yaml:"default_action" json:"default_action"`
+	Source        ConfigSource     `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+type ACLBinding struct {
+	Node      string       `yaml:"node" json:"node"`
+	Interface string       `yaml:"interface" json:"interface"`
+	Direction string       `yaml:"direction" json:"direction"`
+	ACLName   string       `yaml:"acl_name" json:"acl_name"`
+	Source    ConfigSource `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+type ConfigSource struct {
 	Vendor string `yaml:"vendor,omitempty" json:"vendor,omitempty"`
 	File   string `yaml:"file,omitempty" json:"file,omitempty"`
 	Line   int    `yaml:"line,omitempty" json:"line,omitempty"`
@@ -348,18 +370,23 @@ func (t *Topology) Validate() error {
 			return fmt.Errorf("link %s references unknown interface %s on node %s", l.Name, l.BIntf, l.B)
 		}
 	}
-	for _, p := range t.Policies {
-		if !seen[p.Node] {
-			return fmt.Errorf("policy %s references unknown node %s", p.Name, p.Node)
+	for _, acl := range t.ACLs {
+		if !seen[acl.Node] {
+			return fmt.Errorf("acl %s references unknown node %s", acl.Name, acl.Node)
 		}
-		if p.Peer != "" && !seen[p.Peer] {
-			return fmt.Errorf("policy %s references unknown peer node %s", p.Name, p.Peer)
-		}
-		if p.Interface != "" && !hasInterface(nodes[p.Node], p.Interface) {
-			return fmt.Errorf("policy %s references unknown interface %s on node %s", p.Name, p.Interface, p.Node)
-		}
-		if err := validatePolicy(p); err != nil {
+		if err := validateACL(acl); err != nil {
 			return err
+		}
+	}
+	for _, binding := range t.ACLBindings {
+		if !seen[binding.Node] {
+			return fmt.Errorf("acl binding %s references unknown node %s", binding.ACLName, binding.Node)
+		}
+		if binding.Interface != "" && !hasInterface(nodes[binding.Node], binding.Interface) {
+			return fmt.Errorf("acl binding %s references unknown interface %s on node %s", binding.ACLName, binding.Interface, binding.Node)
+		}
+		if binding.Direction != "ingress" && binding.Direction != "egress" {
+			return fmt.Errorf("acl binding %s has invalid direction %s", binding.ACLName, binding.Direction)
 		}
 	}
 	return nil
@@ -470,20 +497,27 @@ func validateBGPNeighborReferences(n Node, nodes map[string]Node) error {
 	return nil
 }
 
-func validatePolicy(p Policy) error {
-	if p.Action != "deny" {
-		return fmt.Errorf("policy %s has invalid action %s", p.Name, p.Action)
+func validateACL(acl ACL) error {
+	if acl.Name == "" {
+		return fmt.Errorf("acl name is required")
 	}
-	if p.Plane != "" && p.Plane != "control" && p.Plane != "data" {
-		return fmt.Errorf("policy %s has invalid plane %s", p.Name, p.Plane)
+	if acl.DefaultAction != ACLDefaultPermit && acl.DefaultAction != ACLDefaultDeny {
+		return fmt.Errorf("acl %s has invalid default action %s", acl.Name, acl.DefaultAction)
 	}
-	if p.Stage != "" && p.Stage != "ingress" && p.Stage != "egress" {
-		return fmt.Errorf("policy %s has invalid stage %s", p.Name, p.Stage)
-	}
-	switch p.Protocol {
-	case "", "bgp", "icmp", "tcp", "udp":
-	default:
-		return fmt.Errorf("policy %s has invalid protocol %s", p.Name, p.Protocol)
+	seqs := map[int]bool{}
+	for _, rule := range acl.Rules {
+		if seqs[rule.Seq] {
+			return fmt.Errorf("acl %s has duplicate seq %d", acl.Name, rule.Seq)
+		}
+		seqs[rule.Seq] = true
+		if rule.Action != ACLPermit && rule.Action != ACLDeny {
+			return fmt.Errorf("acl %s rule %d has invalid action %s", acl.Name, rule.Seq, rule.Action)
+		}
+		switch rule.Match.Protocol {
+		case "", "icmp", "tcp", "udp":
+		default:
+			return fmt.Errorf("acl %s rule %d has invalid protocol %s", acl.Name, rule.Seq, rule.Match.Protocol)
+		}
 	}
 	return nil
 }

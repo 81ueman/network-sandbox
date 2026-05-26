@@ -35,6 +35,7 @@ type FIBEntry struct {
 	ResolutionStatus NextHopResolutionStatus
 	ResolutionReason string
 	SourceKind       model.RouteSourceKind
+	Discard          bool
 	ConnectedClass   model.ConnectedRouteClass
 	Path             Path
 	Condition        failure.Cond
@@ -113,6 +114,7 @@ func (e *Engine) DeriveFIB() {
 					ResolutionStatus: resolutionStatus,
 					ResolutionReason: resolutionReason,
 					SourceKind:       route.SourceKind,
+					Discard:          route.SourceKind == model.RouteSourceBlackhole,
 					ConnectedClass:   route.RouteSource.ConnectedClass,
 					Path:             Path{Nodes: route.Nodes, Links: route.Links, Cost: e.idx.PathCost(route.Links)},
 					Condition:        route.SelectedCond,

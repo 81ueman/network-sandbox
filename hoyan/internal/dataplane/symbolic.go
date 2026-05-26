@@ -30,14 +30,17 @@ type SymbolicPacketPath struct {
 }
 
 type SymbolicPacketBlockedPath struct {
-	Path      Path
-	Cond      failure.Cond
-	Reason    string
-	Policy    string
-	Node      string
-	Interface string
-	Stage     string
-	Source    model.PolicySource
+	Path          Path
+	Cond          failure.Cond
+	Reason        string
+	ACL           string
+	RuleSeq       int
+	Action        model.ACLAction
+	Node          string
+	Interface     string
+	Stage         string
+	DefaultAction model.ACLDefaultAction
+	Source        model.ConfigSource
 }
 
 type SymbolicUnreachableReasonKind string
@@ -45,6 +48,7 @@ type SymbolicUnreachableReasonKind string
 const (
 	UnreachableNoRoute                    SymbolicUnreachableReasonKind = "no_route"
 	UnreachableNoNextHop                  SymbolicUnreachableReasonKind = "no_next_hop"
+	UnreachableDiscard                    SymbolicUnreachableReasonKind = "discard"
 	UnreachableRecursiveNextHopUnresolved SymbolicUnreachableReasonKind = "recursive_next_hop_unresolved"
 	UnreachableNextHopNotAdjacent         SymbolicUnreachableReasonKind = "next_hop_not_adjacent"
 	UnreachableNextHopManagementFallback  SymbolicUnreachableReasonKind = "next_hop_management_fallback"
@@ -57,15 +61,19 @@ const (
 )
 
 type SymbolicUnreachableReason struct {
-	Kind       SymbolicUnreachableReasonKind
-	Node       string
-	Link       string
-	Interface  string
-	PolicyName string
-	PolicyRaw  string
-	Path       Path
-	Cond       failure.Cond
-	Message    string
+	Kind          SymbolicUnreachableReasonKind
+	Node          string
+	Link          string
+	Interface     string
+	PolicyName    string
+	ACLName       string
+	RuleSeq       int
+	Action        model.ACLAction
+	DefaultAction model.ACLDefaultAction
+	PolicyRaw     string
+	Path          Path
+	Cond          failure.Cond
+	Message       string
 }
 
 type SymbolicReachabilityResult struct {
@@ -398,19 +406,23 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 	packet := state.Packet
 	packet.Node = state.Node
 	packet.IngressInterface = state.IngressInterface
-	ingressDecision := controlplane.BehaviorFor(currentNode.Kind).CheckDataIngressSymbolic(currentNode, packet, e.idx.Topology.Policies)
+	ingressDecision := e.dataACLDecision(currentNode, packet, "ingress")
 	if ingressDecision.Denied {
 		denyCond := failure.And(state.Cond, ingressDecision.Cond)
 		e.appendBlockedPolicyPath(blocked, state.Path, denyCond, ingressDecision, state.Node, packet.IngressInterface, "ingress")
 		addUnreachableReason(reasons, SymbolicUnreachableReason{
-			Kind:       UnreachableIngressPolicy,
-			Node:       state.Node,
-			Interface:  packet.IngressInterface,
-			PolicyName: ingressDecision.PolicyName,
-			PolicyRaw:  ingressDecision.Source.Raw,
-			Cond:       denyCond,
-			Path:       state.Path,
-			Message:    ingressDecision.Reason,
+			Kind:          UnreachableIngressPolicy,
+			Node:          state.Node,
+			Interface:     packet.IngressInterface,
+			PolicyName:    ingressDecision.PolicyName,
+			ACLName:       ingressDecision.ACLName,
+			RuleSeq:       ingressDecision.RuleSeq,
+			Action:        ingressDecision.Action,
+			DefaultAction: ingressDecision.DefaultAction,
+			PolicyRaw:     ingressDecision.Source.Raw,
+			Cond:          denyCond,
+			Path:          state.Path,
+			Message:       ingressDecision.Reason,
 		})
 		return
 	}
@@ -430,6 +442,16 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 	})
 	for _, candidate := range candidates {
 		entry := candidate.Entry
+		if entry.Discard {
+			addUnreachableReason(reasons, SymbolicUnreachableReason{
+				Kind:    UnreachableDiscard,
+				Node:    state.Node,
+				Cond:    failure.And(state.Cond, candidate.Cond),
+				Path:    state.Path,
+				Message: "discard route selected",
+			})
+			continue
+		}
 		switch entry.effectiveResolutionStatus() {
 		case NextHopResolutionUnresolvedRecursive:
 			addUnreachableReason(reasons, SymbolicUnreachableReason{
@@ -494,19 +516,23 @@ func (e *Engine) symbolicForward(state SymbolicPacketState, dst model.PrefixSet,
 			Links: append(append([]string(nil), state.Path.Links...), link.Name),
 			Cost:  state.Path.Cost + link.Cost,
 		}
-		egressDecision := controlplane.BehaviorFor(currentNode.Kind).CheckDataEgressSymbolic(currentNode, packet, e.idx.Topology.Policies)
+		egressDecision := e.dataACLDecision(currentNode, packet, "egress")
 		if egressDecision.Denied {
 			denyCond := failure.And(state.Cond, candidate.Cond, egressDecision.Cond)
 			e.appendBlockedPolicyPath(blocked, nextPath, denyCond, egressDecision, state.Node, packet.EgressInterface, "egress")
 			addUnreachableReason(reasons, SymbolicUnreachableReason{
-				Kind:       UnreachableEgressPolicy,
-				Node:       state.Node,
-				Interface:  packet.EgressInterface,
-				PolicyName: egressDecision.PolicyName,
-				PolicyRaw:  egressDecision.Source.Raw,
-				Cond:       denyCond,
-				Path:       nextPath,
-				Message:    egressDecision.Reason,
+				Kind:          UnreachableEgressPolicy,
+				Node:          state.Node,
+				Interface:     packet.EgressInterface,
+				PolicyName:    egressDecision.PolicyName,
+				ACLName:       egressDecision.ACLName,
+				RuleSeq:       egressDecision.RuleSeq,
+				Action:        egressDecision.Action,
+				DefaultAction: egressDecision.DefaultAction,
+				PolicyRaw:     egressDecision.Source.Raw,
+				Cond:          denyCond,
+				Path:          nextPath,
+				Message:       egressDecision.Reason,
 			})
 			continue
 		}
@@ -532,14 +558,17 @@ func (e *Engine) appendBlockedPolicyPath(blocked *[]SymbolicPacketBlockedPath, p
 		return
 	}
 	*blocked = append(*blocked, SymbolicPacketBlockedPath{
-		Path:      clonePath(path),
-		Cond:      condOrTrue(cond),
-		Reason:    decision.Reason,
-		Policy:    decision.PolicyName,
-		Node:      node,
-		Interface: iface,
-		Stage:     stage,
-		Source:    decision.Source,
+		Path:          clonePath(path),
+		Cond:          condOrTrue(cond),
+		Reason:        decision.Reason,
+		ACL:           decision.ACLName,
+		RuleSeq:       decision.RuleSeq,
+		Action:        decision.Action,
+		Node:          node,
+		Interface:     iface,
+		Stage:         stage,
+		DefaultAction: decision.DefaultAction,
+		Source:        decision.Source,
 	})
 }
 
@@ -559,18 +588,6 @@ func addUnreachableReason(reasons *[]SymbolicUnreachableReason, reason SymbolicU
 	reason.Path.Nodes = append([]string(nil), reason.Path.Nodes...)
 	reason.Path.Links = append([]string(nil), reason.Path.Links...)
 	*reasons = append(*reasons, reason)
-}
-
-func (e *Engine) policyByName(name string) model.Policy {
-	if e == nil || e.idx == nil || e.idx.Topology == nil {
-		return model.Policy{}
-	}
-	for _, pol := range e.idx.Topology.Policies {
-		if pol.Name == name {
-			return pol
-		}
-	}
-	return model.Policy{}
 }
 
 func policyMessage(name, raw string) string {

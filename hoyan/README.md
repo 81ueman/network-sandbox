@@ -69,6 +69,19 @@ Data-plane policies are parsed from the device startup configs.
 Linux/FRR data-plane ACLs are stored as nftables rulesets under
 `configs/frr/<node>/nftables.conf`; `hoyan-live-check` builds the local
 `hoyan-frr-nftables:10.6.1` image and applies those rulesets after deploy.
+The parser normalizes device ACLs into `model.ACL` plus `ACLBinding` records
+before data-plane simulation. ACL rules are evaluated in sequence order with
+first-match semantics, and both `permit` and `deny` are explicit actions.
+When an ACL is bound to an interface and no rule matches, the model applies
+the ACL's default action. cEOS IPv4 ACLs and SR Linux IPv4 ACL filters use an
+implicit default deny unless an explicit permit rule matches. FRR/Linux
+nftables ACLs use the chain policy; the current lab's nftables chain has
+`policy accept`, so unmatched packets are permitted. `model.ACL` is the single
+data-plane policy IR for parsed configs, manually constructed topologies, and
+`hoyan verify` / `hoyan model symbolic-packet`; the earlier deny-only
+`model.Policy` compatibility path has been removed. Full vendor ACL grammar,
+stateful firewall/conntrack, NAT, PBR, and QoS are intentionally outside the
+current model.
 
 Failure search in the normal verifier path is symbolic-only. Route, packet,
 prefix-set, and prefix-class targets must implement `sim.SymbolicTarget`, and
@@ -259,14 +272,19 @@ go run ./cmd/hoyan fib-compare
 comparable connected FIB entries with live installed FIB entries by node, VRF,
 AFI, source protocol, prefix, and next-hop set. FRR `Null0`, cEOS
 `Null0`/discard, and SR Linux blackhole/discard routes are canonicalized as
-source protocol `blackhole` with no next-hop. When a local blackhole static and
-a BGP `network` route use the same prefix, RIB compare keeps both sources as
-separate entries, while FIB compare expects the local blackhole install and does
-not require a same-prefix local BGP forwarding entry. BGP aggregate routes are
-modeled as BGP control-plane advertisements; they are not treated as local
-blackhole/discard FIB entries unless the device also has an explicit discard
-route. A comparable live BGP route must have a next-hop that resolves to a
-topology data-plane interface; if the kernel route falls back to a
+source protocol `blackhole` with no next-hop, and modeled FIB JSON marks them
+with `discard: true`. Packet reachability reports these as `discard route
+selected`: the route exists and explicitly drops traffic. This is distinct from
+`no forwarding route`, where no selected FIB candidate matches the packet, and
+`selected route has no next-hop`, where a selected non-discard route is missing
+forwarding next-hop metadata. When a local blackhole static and a BGP `network`
+route use the same prefix, RIB compare keeps both sources as separate entries,
+while FIB compare expects the local blackhole install and does not require a
+same-prefix local BGP forwarding entry. BGP aggregate routes are modeled as BGP
+control-plane advertisements; they are not treated as local blackhole/discard
+FIB entries unless the device also has an explicit discard route. A comparable
+live BGP route must have a next-hop that resolves to a topology data-plane
+interface; if the kernel route falls back to a
 management/default interface such as `eth0`, or the recursive next-hop cannot be
 mapped to a topology link, the route is reported as
 `unresolved_or_mgmt_fallback`, `unresolved_recursive_next_hop`, or
