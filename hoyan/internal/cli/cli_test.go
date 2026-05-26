@@ -106,6 +106,78 @@ topology:
 	}
 }
 
+func TestVerifyCommandOutputsPrefixClassJSON(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewVerifyCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--no-collapse",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) <= 13 {
+		t.Fatalf("rows = %d, want class-expanded results", len(rows))
+	}
+	first := rows[0]
+	for _, key := range []string{"class_id", "space", "matched_predicates", "reachable_condition", "unreachable_condition"} {
+		if _, ok := first[key]; !ok {
+			t.Fatalf("verify JSON missing %q: %#v", key, first)
+		}
+	}
+}
+
+func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
+	var collapsed, raw bytes.Buffer
+	collapsedCmd := NewVerifyCommand()
+	collapsedCmd.SetOut(&collapsed)
+	collapsedCmd.SetErr(ioDiscard{})
+	collapsedCmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--format", "json",
+	})
+	if err := collapsedCmd.Execute(); err != nil {
+		t.Fatalf("collapsed Execute() error = %v", err)
+	}
+	rawCmd := NewVerifyCommand()
+	rawCmd.SetOut(&raw)
+	rawCmd.SetErr(ioDiscard{})
+	rawCmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--prefix-classes",
+		"--no-collapse",
+		"--format", "json",
+	})
+	if err := rawCmd.Execute(); err != nil {
+		t.Fatalf("raw Execute() error = %v", err)
+	}
+	var collapsedRows, rawRows []map[string]any
+	if err := json.Unmarshal(collapsed.Bytes(), &collapsedRows); err != nil {
+		t.Fatalf("collapsed json.Unmarshal() error = %v\n%s", err, collapsed.String())
+	}
+	if err := json.Unmarshal(raw.Bytes(), &rawRows); err != nil {
+		t.Fatalf("raw json.Unmarshal() error = %v\n%s", err, raw.String())
+	}
+	if len(collapsedRows) >= len(rawRows) {
+		t.Fatalf("collapsed rows = %d, raw rows = %d; want fewer collapsed rows", len(collapsedRows), len(rawRows))
+	}
+	if _, ok := collapsedRows[0]["class_ids"]; !ok {
+		t.Fatalf("collapsed JSON missing class_ids: %#v", collapsedRows[0])
+	}
+}
+
 func TestModelRIBCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 	var out bytes.Buffer
 	cmd := NewModelRIBCommand()
@@ -187,6 +259,60 @@ func TestModelFIBCommandOutputsECMPMetadataJSON(t *testing.T) {
 	}
 }
 
+func TestModelPrefixClassesCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--prefix", "10.4.0.0/16",
+		"--format", "json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
+	}
+	if len(rows) < 2 {
+		t.Fatalf("rows = %d, want prefix split into multiple classes", len(rows))
+	}
+	for _, row := range rows {
+		if _, ok := row["class_id"]; !ok {
+			t.Fatalf("row missing class_id: %#v", row)
+		}
+		if row["space"] == "" {
+			t.Fatalf("row missing space: %#v", row)
+		}
+		predicates, ok := row["matched_predicates"].([]any)
+		if !ok || len(predicates) == 0 {
+			t.Fatalf("row missing matched_predicates: %#v", row)
+		}
+	}
+}
+
+func TestModelPrefixClassesCommandOutputsTable(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelPrefixClassesCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--prefix", "10.4.1.10/32",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"CLASS", "SPACE", "MATCHED-PREDICATES", "pc-", "10.4.1.10/32"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestModelCommandRejectsUnknownNode(t *testing.T) {
 	cmd := NewModelRIBCommand()
 	cmd.SetOut(ioDiscard{})
@@ -258,12 +384,26 @@ func TestModelSymbolicRouteCommandOutputsJSON(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	var result map[string]any
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+	var results []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v\n%s", err, out.String())
 	}
+	if len(results) < 2 {
+		t.Fatalf("results = %d, want prefix split into multiple classes", len(results))
+	}
+	result := results[0]
 	if result["from"] != "bj-edge1" || result["prefix"] != "10.4.0.0/16" {
 		t.Fatalf("unexpected symbolic route metadata: %#v", result)
+	}
+	if _, ok := result["class_id"]; !ok {
+		t.Fatalf("missing class_id: %#v", result)
+	}
+	if result["space"] == "" {
+		t.Fatalf("missing class space: %#v", result)
+	}
+	predicates, ok := result["matched_predicates"].([]any)
+	if !ok || len(predicates) == 0 {
+		t.Fatalf("missing matched predicates: %#v", result)
 	}
 	if result["reachable_condition"] == "" || result["unreachable_condition"] == "" {
 		t.Fatalf("missing reachability conditions: %#v", result)
@@ -271,6 +411,27 @@ func TestModelSymbolicRouteCommandOutputsJSON(t *testing.T) {
 	paths, ok := result["paths"].([]any)
 	if !ok || len(paths) == 0 {
 		t.Fatalf("missing symbolic route paths: %#v", result)
+	}
+}
+
+func TestModelSymbolicRouteCommandOutputsClassTable(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelSymbolicRouteCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--from", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"class: pc-", "space:", "matched predicates:", "reachable:", "PATH"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
 	}
 }
 
