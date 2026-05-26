@@ -2,6 +2,7 @@ package verify
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/81ueman/network-sandbox/hoyan/internal/model"
@@ -87,5 +88,80 @@ func TestRunWithOptionsCollapsesEquivalentPrefixClassResults(t *testing.T) {
 		if len(result.PrefixClassIDs) == 0 {
 			t.Fatalf("collapsed result missing class list: %#v", result)
 		}
+	}
+}
+
+func TestRouteCheckPrefixClassesEvaluateClassSpace(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{
+				Name: "src",
+				Kind: model.KindFRR,
+				ASN:  65001,
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:  "dst",
+					RemoteAS:  65002,
+					Activated: true,
+				}},
+			},
+			{
+				Name:     "dst",
+				Kind:     model.KindFRR,
+				ASN:      65002,
+				Prefixes: model.MustPrefixes("10.0.1.0/24"),
+				Neighbors: []model.BGPNeighbor{{
+					PeerNode:  "src",
+					RemoteAS:  65001,
+					Activated: true,
+				}},
+			},
+		},
+		Links: []model.Link{{
+			Name: "src-dst",
+			A:    "src",
+			B:    "dst",
+			Cost: 10,
+		}},
+	}
+	queries := &model.Queries{RouteChecks: []model.RouteCheck{{
+		Name:        "src-to-wide-prefix",
+		From:        "src",
+		Prefix:      model.MustPrefix("10.0.0.0/16"),
+		MaxFailures: 1,
+	}}}
+
+	report := RunWithOptions(topo, queries, VerifyOptions{UsePrefixUniverse: true})
+	if len(report.Results) < 2 {
+		t.Fatalf("prefix-class route results = %d, want split classes: %#v", len(report.Results), report.Results)
+	}
+	var routedClass, unroutedClass *model.PrefixClassID
+	for i := range report.Results {
+		result := report.Results[i]
+		if result.QueryType != "route" {
+			continue
+		}
+		if result.ReachableCondition == "" || result.UnreachableCondition == "" {
+			t.Fatalf("route class result missing symbolic conditions: %#v", result)
+		}
+		if strings.Contains(result.PrefixSpace, "10.0.1.0/24") {
+			if !result.Reachable {
+				t.Fatalf("route class for advertised /24 should be reachable: %#v", result)
+			}
+			if len(result.Counterexample) == 0 || result.Counterexample[0] != "src-dst" {
+				t.Fatalf("reachable class counterexample = %v, want src-dst", result.Counterexample)
+			}
+			routedClass = result.PrefixClassID
+			continue
+		}
+		if result.Reachable {
+			t.Fatalf("non-advertised class should be unreachable: %#v", result)
+		}
+		if len(result.Counterexample) != 0 {
+			t.Fatalf("unreachable class should not get a resilience counterexample: %#v", result)
+		}
+		unroutedClass = result.PrefixClassID
+	}
+	if routedClass == nil || unroutedClass == nil || *routedClass == *unroutedClass {
+		t.Fatalf("did not find distinct reachable/unreachable route classes: %#v", report.Results)
 	}
 }

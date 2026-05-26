@@ -174,6 +174,54 @@ func (e *Engine) SymbolicRouteReachability(from, prefix string) SymbolicRouteRea
 	}
 }
 
+func (e *Engine) SymbolicRouteReachabilityForPrefixSet(from string, dst model.PrefixSet) SymbolicRouteReachabilityResult {
+	reachable := failure.False()
+	result := SymbolicRouteReachabilityResult{Reachable: reachable, Unreachable: failure.True()}
+	if e == nil || e.idx == nil {
+		result.Reason = "topology index is unavailable"
+		return result
+	}
+	if dst == nil {
+		result.Reason = "destination prefix set is empty"
+		return result
+	}
+	if _, ok := e.idx.Node(from); !ok {
+		result.Reason = "source node not found"
+		return result
+	}
+	candidates := e.SymbolicLookupFIBForPrefixSet(from, dst)
+	paths := make([]SymbolicRoutePath, 0, len(candidates))
+	conds := make([]failure.Cond, 0, len(candidates))
+	for _, candidate := range candidates {
+		cond := failure.And(failure.NodeVar(from), candidate.Cond)
+		paths = append(paths, SymbolicRoutePath{Path: candidate.Entry.Path, Cond: cond})
+		conds = append(conds, cond)
+	}
+	reachable = failure.Or(conds...)
+	if len(paths) == 0 {
+		result.Reason = "no route for prefix set"
+	}
+	return SymbolicRouteReachabilityResult{
+		Reachable:   reachable,
+		Unreachable: failure.Not(reachable),
+		Paths:       paths,
+		Reason:      result.Reason,
+	}
+}
+
+func (e *Engine) SymbolicRouteReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID) SymbolicRouteReachabilityResult {
+	for _, class := range universe.Classes {
+		if class.ID == classID {
+			return e.SymbolicRouteReachabilityForPrefixSet(from, class.Space)
+		}
+	}
+	return SymbolicRouteReachabilityResult{
+		Reachable:   failure.False(),
+		Unreachable: failure.True(),
+		Reason:      "prefix class not found",
+	}
+}
+
 func (e *Engine) SymbolicPacketReachability(from, to, protocol string) SymbolicReachabilityResult {
 	return e.SymbolicPacketReachabilitySpec(from, to, model.PacketSpec{Protocol: protocol})
 }
@@ -524,7 +572,7 @@ func matchingFIBEntriesForPrefixSet(entries []FIBEntry, dst model.PrefixSet) []F
 	var out []FIBEntry
 	for _, entry := range entries {
 		entrySet := model.ExactPrefixSet{Prefix: model.PrefixFromNetIP(entry.Prefix)}
-		if entrySet.Overlaps(dst) {
+		if prefixSetsOverlap(entrySet, dst) {
 			out = append(out, entry)
 		}
 	}
@@ -558,7 +606,7 @@ func (e *Engine) originNodesForPrefixSet(dst model.PrefixSet) []string {
 	var out []string
 	for _, node := range e.idx.NodesByName {
 		for _, raw := range node.Prefixes {
-			if !raw.IsZero() && (model.ExactPrefixSet{Prefix: raw}).Overlaps(dst) {
+			if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
 				out = append(out, node.Name)
 				break
 			}
@@ -566,6 +614,13 @@ func (e *Engine) originNodesForPrefixSet(dst model.PrefixSet) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func prefixSetsOverlap(a, b model.PrefixSet) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Overlaps(b) || b.Overlaps(a)
 }
 
 func condOrTrue(cond failure.Cond) failure.Cond {

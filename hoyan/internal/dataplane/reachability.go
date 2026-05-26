@@ -32,6 +32,17 @@ func (e *Engine) RouteReachable(from, prefix string, failures failure.Set) (Path
 	return routePath(e.idx, *best), true
 }
 
+func (e *Engine) RouteReachableForPrefixSet(from string, dst model.PrefixSet, failures failure.Set) (Path, bool) {
+	result := e.SymbolicRouteReachabilityForPrefixSet(from, dst)
+	ctx := e.FailureContext(failures)
+	for _, path := range result.Paths {
+		if path.Cond.Eval(ctx) {
+			return path.Path, true
+		}
+	}
+	return Path{}, false
+}
+
 func (e *Engine) PacketReachable(from, to, protocol string, failures failure.Set) (Path, bool, string) {
 	return e.PacketReachableSpec(from, to, model.PacketSpec{Protocol: protocol}, failures)
 }
@@ -175,7 +186,7 @@ func (e *Engine) originatesPrefixSet(node string, dst model.PrefixSet) bool {
 		return false
 	}
 	for _, raw := range n.Prefixes {
-		if !raw.IsZero() && (model.ExactPrefixSet{Prefix: raw}).Overlaps(dst) {
+		if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
 			return true
 		}
 	}
@@ -188,7 +199,7 @@ func (e *Engine) hasOriginForPrefixSet(dst model.PrefixSet) bool {
 	}
 	for _, node := range e.idx.NodesByName {
 		for _, raw := range node.Prefixes {
-			if !raw.IsZero() && (model.ExactPrefixSet{Prefix: raw}).Overlaps(dst) {
+			if !raw.IsZero() && prefixSetsOverlap(model.ExactPrefixSet{Prefix: raw}, dst) {
 				return true
 			}
 		}
