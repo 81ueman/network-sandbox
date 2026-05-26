@@ -9,4 +9,5 @@ Examples:
 ```bash
 go run ./cmd/hoyan verify --lab labs/acl-semantics --prefix-classes
 go run ./cmd/hoyan model packet-classes --lab labs/acl-semantics --prefix 10.4.0.0/16
+go run ./cmd/hoyan live-check --lab labs/acl-semantics --snapshot labs/acl-semantics/snapshots/latest.json --offline
 ```

@@ -24,6 +24,21 @@ jobs:
           go-version-file: hoyan/go.mod
       - run: go test ./...
       - run: go run ./cmd/hoyan verify --strict-config
+      - name: Compare committed live snapshots
+        run: |
+          for lab in labs/*; do
+            if [ ! -d "$lab" ]; then
+              continue
+            fi
+            snapshot="$lab/snapshots/latest.json"
+            if [ ! -f "$snapshot" ]; then
+              echo "missing snapshot: $snapshot" >&2
+              exit 1
+            fi
+            go run ./cmd/hoyan rib-compare --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail
+            go run ./cmd/hoyan fib-compare --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail
+            go run ./cmd/hoyan live-check --lab "$lab" --snapshot "$snapshot" --snapshot-hash-policy fail --offline
+          done
 
   test-z3:
     runs-on: ubuntu-latest

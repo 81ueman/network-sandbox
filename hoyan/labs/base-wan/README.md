@@ -11,4 +11,7 @@ go run ./cmd/hoyan verify --lab labs/base-wan
 go run ./cmd/hoyan live-check --lab labs/base-wan
 go run ./cmd/hoyan rib-compare --lab labs/base-wan
 go run ./cmd/hoyan fib-compare --lab labs/base-wan
+go run ./cmd/hoyan rib-compare --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json
+go run ./cmd/hoyan fib-compare --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json
+go run ./cmd/hoyan live-check --lab labs/base-wan --snapshot labs/base-wan/snapshots/latest.json --offline
 ```
