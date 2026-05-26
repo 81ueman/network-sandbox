@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 )
 
 type PrefixSet interface {
@@ -101,6 +102,50 @@ func (s PrefixRangeSet) String() string {
 	return out
 }
 
+type UnionPrefixSet struct {
+	Sets []PrefixSet
+}
+
+func (s UnionPrefixSet) ContainsPrefix(prefix Prefix) bool {
+	for _, set := range s.Sets {
+		if prefixSetContainsPrefixSpace(set, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s UnionPrefixSet) ContainsAddr(addr netip.Addr) bool {
+	for _, set := range s.Sets {
+		if set != nil && set.ContainsAddr(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s UnionPrefixSet) Overlaps(other PrefixSet) bool {
+	if other == nil {
+		return false
+	}
+	for _, set := range s.Sets {
+		if set != nil && set.Overlaps(other) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s UnionPrefixSet) String() string {
+	parts := make([]string, 0, len(s.Sets))
+	for _, set := range s.Sets {
+		if set != nil {
+			parts = append(parts, set.String())
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
 func NewPrefixSet(prefix string, ge, le int) (PrefixSet, error) {
 	if prefix == "any" {
 		if ge != 0 || le != 0 {
@@ -156,4 +201,22 @@ func prefixRangeSetsOverlap(a, b PrefixRangeSet) bool {
 	minLen := max(a.MinLen, b.MinLen, intersectionBits)
 	maxLen := min(a.MaxLen, b.MaxLen)
 	return minLen <= maxLen
+}
+
+func prefixSetContainsPrefixSpace(set PrefixSet, prefix Prefix) bool {
+	if set == nil || prefix.IsZero() {
+		return false
+	}
+	switch s := set.(type) {
+	case AnyPrefixSet:
+		return true
+	case ExactPrefixSet:
+		return !s.Prefix.IsZero() && s.Prefix.Contains(prefix.Addr()) && prefix.Bits() >= s.Prefix.Bits()
+	case PrefixRangeSet:
+		return s.ContainsPrefix(prefix)
+	case UnionPrefixSet:
+		return s.ContainsPrefix(prefix)
+	default:
+		return set.ContainsPrefix(prefix)
+	}
 }

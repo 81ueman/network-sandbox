@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 )
@@ -66,17 +65,98 @@ func TestPrefixUniverseCollectsPrefixListAndPolicyPredicates(t *testing.T) {
 	}
 }
 
-func TestBuildPrefixUniverseRejectsOverlappingPredicates(t *testing.T) {
+func TestBuildPrefixUniverseSplitsOverlappingPredicates(t *testing.T) {
 	rangeSet, err := NewPrefixSet("10.0.0.0/16", 24, 24)
 	if err != nil {
 		t.Fatalf("NewPrefixSet() error = %v", err)
 	}
-	_, err = BuildPrefixUniverse([]PrefixSet{
+	universe, err := BuildPrefixUniverse([]PrefixSet{
 		ExactPrefixSet{Prefix: MustPrefix("10.0.1.0/24")},
 		rangeSet,
 	})
-	var overlapErr OverlappingPrefixPredicateError
-	if !errors.As(err, &overlapErr) {
-		t.Fatalf("BuildPrefixUniverse() error = %T %v, want OverlappingPrefixPredicateError", err, err)
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverse() error = %v", err)
+	}
+	if got, want := len(universe.Classes), 3; got != want {
+		t.Fatalf("len(Classes) = %d, want %d", got, want)
+	}
+	id, ok := universe.ClassForPrefix(MustPrefix("10.0.1.0/24"))
+	if !ok {
+		t.Fatalf("ClassForPrefix() did not find overlapping exact prefix")
+	}
+	if got, want := universe.PredicatesForClass(id), []PrefixPredicateID{0, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PredicatesForClass(overlap) = %#v, want %#v", got, want)
+	}
+	ids := universe.ClassesMatching(ExactPrefixSet{Prefix: MustPrefix("10.0.0.0/16")})
+	if got, want := len(ids), 3; got != want {
+		t.Fatalf("ClassesMatching(10.0.0.0/16) = %#v, want %d classes", ids, want)
+	}
+}
+
+func TestBuildPrefixUniverseAllowsDefaultAndSpecificRoute(t *testing.T) {
+	universe, err := BuildPrefixUniverse([]PrefixSet{
+		ExactPrefixSet{Prefix: MustPrefix("0.0.0.0/0")},
+		ExactPrefixSet{Prefix: MustPrefix("10.4.0.0/16")},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverse() error = %v", err)
+	}
+	id, ok := universe.ClassForPrefix(MustPrefix("10.4.1.0/24"))
+	if !ok {
+		t.Fatalf("ClassForPrefix() did not find specific route class")
+	}
+	if got, want := universe.PredicatesForClass(id), []PrefixPredicateID{0, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PredicatesForClass(specific) = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildPrefixUniverseRangeAndSpecificPredicateMatches(t *testing.T) {
+	rangeSet, err := NewPrefixSet("10.0.0.0/8", 16, 24)
+	if err != nil {
+		t.Fatalf("NewPrefixSet() error = %v", err)
+	}
+	universe, err := BuildPrefixUniverse([]PrefixSet{
+		rangeSet,
+		ExactPrefixSet{Prefix: MustPrefix("10.4.0.0/16")},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrefixUniverse() error = %v", err)
+	}
+	id, ok := universe.ClassForPrefix(MustPrefix("10.4.1.0/24"))
+	if !ok {
+		t.Fatalf("ClassForPrefix() did not find class for 10.4.1.0/24")
+	}
+	if got, want := universe.PredicatesForClass(id), []PrefixPredicateID{0, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("PredicatesForClass(10.4.1.0/24) = %#v, want %#v", got, want)
+	}
+	ids := universe.ClassesMatching(ExactPrefixSet{Prefix: MustPrefix("10.4.0.0/16")})
+	if got, want := len(ids), 1; got != want {
+		t.Fatalf("ClassesMatching(10.4.0.0/16) = %#v, want %d class", ids, want)
+	}
+}
+
+func TestBuildPrefixUniverseRejectsIPv6Explicitly(t *testing.T) {
+	_, err := BuildPrefixUniverse([]PrefixSet{
+		ExactPrefixSet{Prefix: MustPrefix("2001:db8::/32")},
+	})
+	if err == nil {
+		t.Fatalf("BuildPrefixUniverse() error = nil, want IPv4-only error")
+	}
+}
+
+func TestCollectPrefixPredicateMetadataSources(t *testing.T) {
+	topo := &Topology{
+		Nodes:    []Node{{Name: "dst", Prefixes: MustPrefixes("10.0.0.0/24")}},
+		Policies: []Policy{{Name: "deny-dst", DstPrefix: MustPrefix("192.0.2.0/24")}},
+	}
+	queries := &Queries{RouteChecks: []RouteCheck{{Name: "route", Prefix: MustPrefix("10.0.0.0/24")}}}
+	predicates := CollectPrefixPredicateMetadata(topo, queries)
+	var sources []string
+	for _, predicate := range predicates {
+		sources = append(sources, predicate.Source)
+	}
+	want := []string{"route:dst", "policy:deny-dst", "query-route:route"}
+	if !reflect.DeepEqual(sources, want) {
+		t.Fatalf("sources = %#v, want %#v", sources, want)
 	}
 }
