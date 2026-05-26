@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -98,12 +99,18 @@ func NewVerifyCommand() *cobra.Command {
 	}
 	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
 	addQueriesFlag(cmd, &opts.queriesPath, "query YAML")
+	cmd.Flags().BoolVar(&opts.prefixClasses, "prefix-classes", false, "expand verification by PrefixUniverse prefix classes")
+	cmd.Flags().BoolVar(&opts.noCollapse, "no-collapse", false, "show raw prefix-class results instead of collapsed equivalent groups")
+	cmd.Flags().StringVar(&opts.format, "format", "table", "output format: table or json")
 	return cmd
 }
 
 type verifyOptions struct {
-	topologyPath string
-	queriesPath  string
+	topologyPath  string
+	queriesPath   string
+	prefixClasses bool
+	noCollapse    bool
+	format        string
 }
 
 func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) error {
@@ -118,13 +125,43 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
-	report := verify.Run(topo, queries)
+	verifyOpts := verify.VerifyOptions{
+		UsePrefixUniverse:         opts.prefixClasses,
+		CollapseEquivalentResults: opts.prefixClasses && !opts.noCollapse,
+	}
+	report := verify.RunWithOptions(topo, queries, verifyOpts)
+	if opts.format == "json" {
+		enc := json.NewEncoder(out)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report.Results); err != nil {
+			return err
+		}
+		if !report.OK() {
+			return ExitError{Code: 1, Err: fmt.Errorf("verification failed")}
+		}
+		return nil
+	}
+	if opts.format != "" && opts.format != "table" {
+		return fmt.Errorf("unsupported --format %q", opts.format)
+	}
 	for _, result := range report.Results {
 		status := "PASS"
 		if result.Reachable != result.Expected {
 			status = "FAIL"
 		}
 		fmt.Fprintf(out, "[%s] %s reachable=%v expected=%v\n", status, result.Name, result.Reachable, result.Expected)
+		if len(result.PrefixClassIDs) > 0 {
+			fmt.Fprintf(out, "  classes: %s\n", formatClassIDs(result.PrefixClassIDs))
+		}
+		if len(result.PrefixSpaces) > 0 {
+			fmt.Fprintf(out, "  spaces: %s\n", strings.Join(result.PrefixSpaces, ", "))
+		} else if result.PrefixSpace != "" {
+			fmt.Fprintf(out, "  space: %s\n", result.PrefixSpace)
+		}
+		if len(result.MatchedPredicates) > 0 {
+			fmt.Fprintf(out, "  matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
+		}
 		if len(result.Path.Nodes) > 0 {
 			fmt.Fprintf(out, "  path: %s\n", sim.FormatPath(result.Path))
 		}
@@ -139,6 +176,14 @@ func runVerify(_ context.Context, opts verifyOptions, out, errOut io.Writer) err
 		return ExitError{Code: 1, Err: fmt.Errorf("verification failed")}
 	}
 	return nil
+}
+
+func formatClassIDs(ids []model.PrefixClassID) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("pc-%d", id))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func NewLiveCheckCommand() *cobra.Command {

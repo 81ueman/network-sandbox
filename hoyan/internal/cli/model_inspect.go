@@ -32,6 +32,12 @@ type modelInspectOptions struct {
 	dstPort      int
 }
 
+type prefixClassInspectRow struct {
+	ClassID           model.PrefixClassID `json:"class_id"`
+	Space             string              `json:"space"`
+	MatchedPredicates []string            `json:"matched_predicates,omitempty"`
+}
+
 type ribInspectRow struct {
 	Node              string   `json:"node"`
 	Prefix            string   `json:"prefix"`
@@ -124,12 +130,15 @@ type symbolicPacketInspectBlockedReason struct {
 }
 
 type symbolicRouteInspect struct {
-	From        string                     `json:"from"`
-	Prefix      string                     `json:"prefix"`
-	Reachable   string                     `json:"reachable_condition"`
-	Unreachable string                     `json:"unreachable_condition"`
-	Reason      string                     `json:"reason,omitempty"`
-	Paths       []symbolicRouteInspectPath `json:"paths,omitempty"`
+	From              string                     `json:"from"`
+	Prefix            string                     `json:"prefix"`
+	ClassID           model.PrefixClassID        `json:"class_id"`
+	Space             string                     `json:"space"`
+	MatchedPredicates []string                   `json:"matched_predicates,omitempty"`
+	Reachable         string                     `json:"reachable_condition"`
+	Unreachable       string                     `json:"unreachable_condition"`
+	Reason            string                     `json:"reason,omitempty"`
+	Paths             []symbolicRouteInspectPath `json:"paths,omitempty"`
 }
 
 type symbolicRouteInspectPath struct {
@@ -146,7 +155,27 @@ func NewModelCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand(), NewModelSymbolicRouteCommand())
+	cmd.AddCommand(NewModelRIBCommand(), NewModelFIBCommand(), NewModelSymbolicPacketCommand(), NewModelSymbolicRouteCommand(), NewModelPrefixClassesCommand())
+	return cmd
+}
+
+func NewModelPrefixClassesCommand() *cobra.Command {
+	var opts modelInspectOptions
+	cmd := &cobra.Command{
+		Use:           "prefix-classes",
+		Short:         "Inspect PrefixUniverse prefix classes",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+			}
+			return runModelPrefixClasses(cmd.Context(), opts, cmd.OutOrStdout())
+		},
+	}
+	addTopologyFlag(cmd, &opts.topologyPath, "containerlab topology YAML")
+	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix overlap filter")
+	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	return cmd
 }
 
@@ -285,6 +314,36 @@ func runModelFIB(_ context.Context, opts modelInspectOptions, out io.Writer) err
 	}
 }
 
+func runModelPrefixClasses(_ context.Context, opts modelInspectOptions, out io.Writer) error {
+	topo, err := model.LoadLabTopology(opts.topologyPath)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	var filter model.PrefixSet
+	var request []model.PrefixPredicate
+	if opts.prefix != "" {
+		prefix, err := model.ParsePrefix(opts.prefix)
+		if err != nil {
+			return ExitError{Code: 2, Err: fmt.Errorf("--prefix %q: %w", opts.prefix, err)}
+		}
+		filter = model.ExactPrefixSet{Prefix: prefix}
+		request = append(request, model.PrefixPredicate{Source: "request:prefix-classes:" + prefix.String(), Set: filter})
+	}
+	universe, err := modelPrefixUniverse(topo, request)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	rows := collectPrefixClassRows(universe, filter)
+	switch opts.format {
+	case modelFormatTable:
+		return writePrefixClassTable(out, rows)
+	case modelFormatJSON:
+		return writeJSON(out, rows)
+	default:
+		return ExitError{Code: 2, Err: fmt.Errorf("--format must be %q or %q", modelFormatTable, modelFormatJSON)}
+	}
+}
+
 func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.Writer) error {
 	if opts.from == "" {
 		return ExitError{Code: 2, Err: fmt.Errorf("--from is required")}
@@ -332,12 +391,24 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
 	}
-	result := buildSymbolicRouteInspect(opts.from, prefix, graph.SymbolicRouteReachability(opts.from, prefix))
+	parsedPrefix, err := model.ParsePrefix(prefix)
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	filter := model.ExactPrefixSet{Prefix: parsedPrefix}
+	universe, err := modelPrefixUniverse(topo, []model.PrefixPredicate{{
+		Source: "request:symbolic-route:" + parsedPrefix.String(),
+		Set:    filter,
+	}})
+	if err != nil {
+		return ExitError{Code: 2, Err: err}
+	}
+	results := buildSymbolicRouteClassInspects(opts.from, prefix, universe, filter, graph.SymbolicRouteReachability(opts.from, prefix))
 	switch opts.format {
 	case modelFormatTable:
-		return writeSymbolicRouteTable(out, result)
+		return writeSymbolicRouteTable(out, results)
 	case modelFormatJSON:
-		return writeJSON(out, result)
+		return writeJSON(out, results)
 	default:
 		return ExitError{Code: 2, Err: fmt.Errorf("--format must be %q or %q", modelFormatTable, modelFormatJSON)}
 	}
@@ -375,6 +446,27 @@ func canonicalPrefix(raw string) (string, error) {
 		return "", fmt.Errorf("--prefix %q: %w", raw, err)
 	}
 	return prefix.String(), nil
+}
+
+func modelPrefixUniverse(topo *model.Topology, request []model.PrefixPredicate) (model.PrefixUniverse, error) {
+	predicates := model.CollectPrefixPredicateMetadata(topo, nil)
+	predicates = append(predicates, request...)
+	return model.BuildPrefixUniverseFromPredicates(predicates)
+}
+
+func collectPrefixClassRows(universe model.PrefixUniverse, filter model.PrefixSet) []prefixClassInspectRow {
+	var rows []prefixClassInspectRow
+	for _, class := range universe.Classes {
+		if filter != nil && !class.Space.Overlaps(filter) {
+			continue
+		}
+		rows = append(rows, prefixClassInspectRow{
+			ClassID:           class.ID,
+			Space:             class.Space.String(),
+			MatchedPredicates: matchedPrefixPredicates(universe, class),
+		})
+	}
+	return rows
 }
 
 func collectRIBRows(graph *sim.Graph, nodes []string, prefix string) []ribInspectRow {
@@ -510,13 +602,27 @@ func buildSymbolicPacketInspect(opts modelInspectOptions, result sim.SymbolicRea
 	return out
 }
 
-func buildSymbolicRouteInspect(from, prefix string, result sim.SymbolicRouteReachabilityResult) symbolicRouteInspect {
+func buildSymbolicRouteClassInspects(from, prefix string, universe model.PrefixUniverse, filter model.PrefixSet, result sim.SymbolicRouteReachabilityResult) []symbolicRouteInspect {
+	var out []symbolicRouteInspect
+	for _, class := range universe.Classes {
+		if filter != nil && !class.Space.Overlaps(filter) {
+			continue
+		}
+		out = append(out, buildSymbolicRouteInspect(from, prefix, class, matchedPrefixPredicates(universe, class), result))
+	}
+	return out
+}
+
+func buildSymbolicRouteInspect(from, prefix string, class model.PrefixClass, matched []string, result sim.SymbolicRouteReachabilityResult) symbolicRouteInspect {
 	out := symbolicRouteInspect{
-		From:        from,
-		Prefix:      prefix,
-		Reachable:   condString(result.Reachable),
-		Unreachable: condString(result.Unreachable),
-		Reason:      result.Reason,
+		From:              from,
+		Prefix:            prefix,
+		ClassID:           class.ID,
+		Space:             class.Space.String(),
+		MatchedPredicates: matched,
+		Reachable:         condString(result.Reachable),
+		Unreachable:       condString(result.Unreachable),
+		Reason:            result.Reason,
 	}
 	for _, path := range result.Paths {
 		out.Paths = append(out.Paths, symbolicRouteInspectPath{
@@ -527,6 +633,38 @@ func buildSymbolicRouteInspect(from, prefix string, result sim.SymbolicRouteReac
 		})
 	}
 	return out
+}
+
+func matchedPrefixPredicates(universe model.PrefixUniverse, class model.PrefixClass) []string {
+	byID := map[model.PrefixPredicateID]string{}
+	for _, predicate := range universe.Predicates {
+		byID[predicate.ID] = predicate.Source
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(class.MatchingPredicates))
+	for _, id := range class.MatchingPredicates {
+		source := byID[id]
+		if source == "" || seen[source] {
+			continue
+		}
+		seen[source] = true
+		out = append(out, source)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CLASS\tSPACE\tMATCHED-PREDICATES")
+	for _, row := range rows {
+		fmt.Fprintf(tw, "pc-%d\t%s\t%s\n",
+			row.ClassID,
+			row.Space,
+			strings.Join(row.MatchedPredicates, ","),
+		)
+	}
+	return tw.Flush()
 }
 
 func writeRIBTable(out io.Writer, rows []ribInspectRow) error {
@@ -663,29 +801,43 @@ func formatPolicySource(src model.PolicySource) string {
 	return strings.Join(parts, " ")
 }
 
-func writeSymbolicRouteTable(out io.Writer, result symbolicRouteInspect) error {
-	fmt.Fprintf(out, "from: %s\n", result.From)
-	fmt.Fprintf(out, "prefix: %s\n", result.Prefix)
-	fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
-	fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
-	if result.Reason != "" {
-		fmt.Fprintf(out, "reason: %s\n", result.Reason)
+func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect) error {
+	for i, result := range results {
+		if i > 0 {
+			fmt.Fprintln(out)
+		}
+		fmt.Fprintf(out, "from: %s\n", result.From)
+		fmt.Fprintf(out, "prefix: %s\n", result.Prefix)
+		fmt.Fprintf(out, "class: pc-%d\n", result.ClassID)
+		fmt.Fprintf(out, "space: %s\n", result.Space)
+		if len(result.MatchedPredicates) > 0 {
+			fmt.Fprintf(out, "matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
+		}
+		fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
+		fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+		if result.Reason != "" {
+			fmt.Fprintf(out, "reason: %s\n", result.Reason)
+		}
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "PATH\tCOST\tLINKS\tCONDITION")
+		for _, path := range result.Paths {
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
+				strings.Join(path.PathNodes, "->"),
+				path.Cost,
+				strings.Join(path.PathLinks, "->"),
+				path.Condition,
+			)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
 	}
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PATH\tCOST\tLINKS\tCONDITION")
-	for _, path := range result.Paths {
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
-			strings.Join(path.PathNodes, "->"),
-			path.Cost,
-			strings.Join(path.PathLinks, "->"),
-			path.Condition,
-		)
-	}
-	return tw.Flush()
+	return nil
 }
 
 func writeJSON(out io.Writer, value any) error {
 	enc := json.NewEncoder(out)
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(value)
 }
