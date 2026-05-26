@@ -66,6 +66,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	}
 	nodes := ribcompare.SupportedNodes(topo.Nodes)
 	expected := ribcompare.ExpectedForNodes(topo, nodes)
+	expectedBGP := ribcompare.BGPOnly(expected)
 
 	if err := BuildLocalImages(ctx, runner, opts.Topology, opts.Out); err != nil {
 		return err
@@ -95,16 +96,29 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	if err := ApplyNftablesPolicies(deadlineCtx, runner, topo, opts.Out); err != nil {
 		return err
 	}
-	fmt.Fprintln(opts.Out, "waiting for RIB routes")
-	actual, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expected, opts.PollInterval, opts.MaxPolls, compareOptions)
+	fmt.Fprintf(opts.Out, "waiting for BGP RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expectedBGP)))
+	actualBGP, result, err := WaitForMatchingRIBs(deadlineCtx, runner, nodes, expectedBGP, opts.PollInterval, opts.MaxPolls, compareOptions)
 	if err != nil {
-		if len(actual) > 0 {
+		if len(actualBGP) > 0 {
 			for _, line := range ribcompare.FormatDiffs(result) {
 				fmt.Fprintln(opts.Out, line)
 			}
 		}
 		return err
 	}
+	for _, line := range ribcompare.FormatDiffs(result) {
+		fmt.Fprintln(opts.Out, line)
+	}
+	if !result.OK {
+		return fmt.Errorf("live RIB comparison found diff(s)")
+	}
+	fmt.Fprintln(opts.Out, "live BGP RIBs converged")
+	fmt.Fprintf(opts.Out, "comparing live RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
+	actual, err := ribcompare.CollectWithRunner(deadlineCtx, runner, nodes)
+	if err != nil {
+		return err
+	}
+	result = ribcompare.CompareBgpRib(expected, actual, compareOptions)
 	for _, line := range ribcompare.FormatDiffs(result) {
 		fmt.Fprintln(opts.Out, line)
 	}
@@ -342,23 +356,31 @@ func HasExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribcom
 func CountExpectedRoutes(expected []ribcompare.NormalizedBgpRoute, actual []ribcompare.NormalizedBgpRoute) int {
 	seen := map[string]bool{}
 	for _, route := range actual {
-		seen[route.Node+"|"+route.NetworkInstance+"|"+route.AFI+"|"+route.Prefix] = true
+		seen[ribRouteSourceKey(route)] = true
 	}
 	count := 0
 	for _, route := range expected {
-		ni := route.NetworkInstance
-		if ni == "" {
-			ni = "default"
-		}
-		afi := route.AFI
-		if afi == "" {
-			afi = "ipv4"
-		}
-		if seen[route.Node+"|"+ni+"|"+afi+"|"+route.Prefix] {
+		if seen[ribRouteSourceKey(route)] {
 			count++
 		}
 	}
 	return count
+}
+
+func ribRouteSourceKey(route ribcompare.NormalizedBgpRoute) string {
+	ni := route.NetworkInstance
+	if ni == "" {
+		ni = "default"
+	}
+	afi := route.AFI
+	if afi == "" {
+		afi = "ipv4"
+	}
+	protocol := strings.ToLower(strings.TrimSpace(route.Protocol))
+	if protocol == "" {
+		protocol = "bgp"
+	}
+	return route.Node + "|" + ni + "|" + afi + "|" + protocol + "|" + route.Prefix
 }
 
 func countDiffs(result ribcompare.BgpRibCompareResult) int {

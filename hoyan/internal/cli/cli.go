@@ -336,6 +336,7 @@ func runRIBCompare(ctx context.Context, opts ribCompareOptions, out io.Writer) e
 	}
 	nodes := ribcompare.SupportedNodes(topo.Nodes)
 	expected := ribcompare.ExpectedForNodes(topo, nodes)
+	fmt.Fprintf(out, "comparing RIB routes (sources: %s)\n", ribcompare.FormatSourceSummary(ribcompare.SourceSummary(expected)))
 	actual, err := ribcompare.Collect(ctx, ribcompare.ExecRunner{}, nodes)
 	if err != nil {
 		return ExitError{Code: 2, Err: err}
