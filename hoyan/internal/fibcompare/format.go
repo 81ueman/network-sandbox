@@ -10,6 +10,9 @@ func FormatDiffs(result Result) []string {
 	for _, route := range result.UnresolvedRoutes {
 		out = append(out, fmt.Sprintf("[DIFF] %s unresolved live BGP route reason=%s next-hops=%s", route.RouteKey, route.Reason, formatUnresolvedNextHops(route.NextHops)))
 	}
+	for _, conflict := range result.DuplicateRouteConflicts {
+		out = append(out, fmt.Sprintf("[DIFF] duplicate FIB route conflict %s side=%s reason=%s records=%d", conflict.RouteKey, conflict.Side, conflict.Reason, len(conflict.Routes)))
+	}
 	for _, key := range result.MissingRoutes {
 		out = append(out, fmt.Sprintf("[DIFF] %s route missing", key))
 	}

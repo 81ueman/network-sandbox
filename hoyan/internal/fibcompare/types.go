@@ -109,15 +109,23 @@ type AttributeMismatch struct {
 	Actual   any
 }
 
+type DuplicateRouteConflict struct {
+	RouteKey string               `json:"route_key"`
+	Side     string               `json:"side"`
+	Reason   string               `json:"reason"`
+	Routes   []NormalizedFIBRoute `json:"routes"`
+}
+
 type Result struct {
-	OK                 bool
-	UnsupportedNodes   []string
-	UnresolvedRoutes   []UnresolvedRoute
-	MissingRoutes      []string
-	UnexpectedRoutes   []string
-	MissingNextHops    []NextHopDiff
-	UnexpectedNextHops []NextHopDiff
-	Mismatched         []AttributeMismatch
+	OK                      bool
+	UnsupportedNodes        []string
+	UnresolvedRoutes        []UnresolvedRoute
+	DuplicateRouteConflicts []DuplicateRouteConflict
+	MissingRoutes           []string
+	UnexpectedRoutes        []string
+	MissingNextHops         []NextHopDiff
+	UnexpectedNextHops      []NextHopDiff
+	Mismatched              []AttributeMismatch
 }
 
 type UnsupportedNodesError struct {
