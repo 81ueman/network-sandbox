@@ -102,8 +102,8 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 			if !ok {
 				continue
 			}
-			path, reachable := g.RouteReachable(q.From, q.Prefix.String(), sim.NoFailures())
-			symbolic := g.SymbolicRouteReachability(q.From, q.Prefix.String())
+			symbolic := g.SymbolicRouteReachabilityForPrefixSet(q.From, class.Space)
+			path, reachable := g.RouteReachableForPrefixSet(q.From, class.Space, sim.NoFailures())
 			result := classResult(universe, class, sim.Result{
 				Name:                 q.Name,
 				QueryType:            "route",
@@ -114,9 +114,12 @@ func runPrefixClasses(topo *model.Topology, queries *model.Queries, opts VerifyO
 				UnreachableCondition: symbolic.Unreachable.String(),
 				Reason:               symbolic.Reason,
 			})
-			if cut, ok := g.FindBreakingFailuresWithOptions(q.From, sim.PrefixTarget(q.Prefix.String()), failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
-				result.Counterexample = formatFailureElements(cut)
-				result.Reason = "reachable now but not resilient to requested failure budget"
+			if reachable {
+				target := sim.RouteClassTarget{Universe: universe, ClassID: classID}
+				if cut, ok := g.FindBreakingFailuresWithOptions(q.From, target, failureSearchOptions(q.MaxFailures, q.FailureDomain)); ok {
+					result.Counterexample = formatFailureElements(cut)
+					result.Reason = "reachable now but not resilient to requested failure budget"
+				}
 			}
 			report.Results = append(report.Results, result)
 		}

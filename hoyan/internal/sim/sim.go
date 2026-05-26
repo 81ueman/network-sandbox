@@ -160,6 +160,10 @@ func (g *Graph) RouteReachable(from, prefix string, failures FailureSet) (Path, 
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).RouteReachable(from, prefix, failures)
 }
 
+func (g *Graph) RouteReachableForPrefixSet(from string, dst model.PrefixSet, failures FailureSet) (Path, bool) {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).RouteReachableForPrefixSet(from, dst, failures)
+}
+
 func (g *Graph) PacketReachable(from, to, protocol string, failures FailureSet) (Path, bool, string) {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).PacketReachable(from, to, protocol, failures)
 }
@@ -190,6 +194,14 @@ func (g *Graph) SymbolicPacketReachabilityForClass(from string, universe model.P
 
 func (g *Graph) SymbolicRouteReachability(from, prefix string) SymbolicRouteReachabilityResult {
 	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachability(from, prefix)
+}
+
+func (g *Graph) SymbolicRouteReachabilityForPrefixSet(from string, dst model.PrefixSet) SymbolicRouteReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachabilityForPrefixSet(from, dst)
+}
+
+func (g *Graph) SymbolicRouteReachabilityForClass(from string, universe model.PrefixUniverse, classID model.PrefixClassID) SymbolicRouteReachabilityResult {
+	return dataplane.NewEngine(g.topoIndex, g.rib, g.fib).SymbolicRouteReachabilityForClass(from, universe, classID)
 }
 
 func (g *Graph) FindBreakingFailures(from string, target Target, maxFailures int) ([]string, bool) {
@@ -280,6 +292,12 @@ func (g *Graph) symbolicFailureProblem(from string, target Target, opts FailureS
 	case PrefixTarget:
 		result := g.SymbolicRouteReachability(from, string(t))
 		goal = result.Unreachable
+	case RoutePrefixSetTarget:
+		result := g.SymbolicRouteReachabilityForPrefixSet(from, t.Space)
+		goal = result.Unreachable
+	case RouteClassTarget:
+		result := t.symbolicReachability(g, from)
+		goal = result.Unreachable
 	default:
 		return solver.SymbolicFailureProblem{}, false
 	}
@@ -311,6 +329,29 @@ type PrefixTarget string
 func (t PrefixTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
 	_, ok := g.RouteReachable(from, string(t), failures)
 	return ok
+}
+
+type RoutePrefixSetTarget struct {
+	Space model.PrefixSet
+}
+
+func (t RoutePrefixSetTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	_, ok := g.RouteReachableForPrefixSet(from, t.Space, failures)
+	return ok
+}
+
+type RouteClassTarget struct {
+	Universe model.PrefixUniverse
+	ClassID  model.PrefixClassID
+}
+
+func (t RouteClassTarget) Reachable(g *Graph, from string, failures FailureSet) bool {
+	result := t.symbolicReachability(g, from)
+	return result.Reachable.Eval(g.FailureContext(failures))
+}
+
+func (t RouteClassTarget) symbolicReachability(g *Graph, from string) SymbolicRouteReachabilityResult {
+	return g.SymbolicRouteReachabilityForClass(from, t.Universe, t.ClassID)
 }
 
 type PacketTarget struct {
