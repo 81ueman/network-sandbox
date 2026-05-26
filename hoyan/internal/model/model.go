@@ -69,18 +69,28 @@ const (
 	RouteSourceBlackhole RouteSourceKind = "blackhole"
 )
 
+type ConnectedRouteClass string
+
+const (
+	ConnectedRouteClassLink     ConnectedRouteClass = "link"
+	ConnectedRouteClassLoopback ConnectedRouteClass = "loopback"
+	ConnectedRouteClassService  ConnectedRouteClass = "service"
+	ConnectedRouteClassHost     ConnectedRouteClass = "host"
+)
+
 type ConfiguredRoute struct {
-	Node            string            `yaml:"node,omitempty" json:"node,omitempty"`
-	NetworkInstance NetworkInstanceID `yaml:"network_instance,omitempty" json:"network_instance,omitempty"`
-	AFI             AFI               `yaml:"afi,omitempty" json:"afi,omitempty"`
-	Prefix          Prefix            `yaml:"prefix" json:"prefix"`
-	NextHop         string            `yaml:"next_hop,omitempty" json:"next_hop,omitempty"`
-	Interface       string            `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Kind            RouteSourceKind   `yaml:"kind" json:"kind"`
-	AdminDistance   int               `yaml:"admin_distance,omitempty" json:"admin_distance,omitempty"`
-	Metric          int               `yaml:"metric,omitempty" json:"metric,omitempty"`
-	SummaryOnly     bool              `yaml:"summary_only,omitempty" json:"summary_only,omitempty"`
-	Source          PolicySource      `yaml:"source,omitempty" json:"source,omitempty"`
+	Node            string              `yaml:"node,omitempty" json:"node,omitempty"`
+	NetworkInstance NetworkInstanceID   `yaml:"network_instance,omitempty" json:"network_instance,omitempty"`
+	AFI             AFI                 `yaml:"afi,omitempty" json:"afi,omitempty"`
+	Prefix          Prefix              `yaml:"prefix" json:"prefix"`
+	NextHop         string              `yaml:"next_hop,omitempty" json:"next_hop,omitempty"`
+	Interface       string              `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Kind            RouteSourceKind     `yaml:"kind" json:"kind"`
+	ConnectedClass  ConnectedRouteClass `yaml:"connected_class,omitempty" json:"connected_class,omitempty"`
+	AdminDistance   int                 `yaml:"admin_distance,omitempty" json:"admin_distance,omitempty"`
+	Metric          int                 `yaml:"metric,omitempty" json:"metric,omitempty"`
+	SummaryOnly     bool                `yaml:"summary_only,omitempty" json:"summary_only,omitempty"`
+	Source          PolicySource        `yaml:"source,omitempty" json:"source,omitempty"`
 }
 
 type BGPRedistribution struct {

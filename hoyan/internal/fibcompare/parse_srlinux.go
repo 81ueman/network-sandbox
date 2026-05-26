@@ -48,7 +48,7 @@ func srlinuxRoute(node string, m map[string]any) (NormalizedFIBRoute, bool) {
 	if prefix == "" {
 		return NormalizedFIBRoute{}, false
 	}
-	protocol := strings.ToLower(stringValue(m["Route Type"]))
+	protocol := canonicalProtocol(stringValue(m["Route Type"]))
 	route := NormalizedFIBRoute{
 		Node:       node,
 		VRF:        "default",

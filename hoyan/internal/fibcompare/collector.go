@@ -82,15 +82,17 @@ func (frrCollector) Collect(ctx context.Context, runner Runner, nodes []model.No
 	var out []NormalizedFIBRoute
 	for _, n := range nodes {
 		containerName := n.RuntimeName()
-		data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "ip", "-j", "route", "show", "table", "main")
-		if err != nil {
-			return nil, fmt.Errorf("docker exec -i %s ip -j route show table main: %w", containerName, err)
+		for _, table := range []string{"main", "local"} {
+			data, err := runner.Run(ctx, "docker", "exec", "-i", containerName, "ip", "-j", "route", "show", "table", table)
+			if err != nil {
+				return nil, fmt.Errorf("docker exec -i %s ip -j route show table %s: %w", containerName, table, err)
+			}
+			routes, err := ParseLinuxIPRoute(n.Name, data)
+			if err != nil {
+				return nil, fmt.Errorf("%s Linux kernel FIB table %s: %w", n.Name, table, err)
+			}
+			out = append(out, routes...)
 		}
-		routes, err := ParseLinuxIPRoute(n.Name, data)
-		if err != nil {
-			return nil, fmt.Errorf("%s Linux kernel FIB: %w", n.Name, err)
-		}
-		out = append(out, routes...)
 	}
 	sortRoutes(out)
 	return out, nil

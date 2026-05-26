@@ -40,6 +40,17 @@ func TestParseLinuxIPRoute(t *testing.T) {
 	}
 }
 
+func TestParseLinuxIPRouteCanonicalizesConnectedProtocol(t *testing.T) {
+	routes, err := ParseLinuxIPRoute("r1", []byte(`[{"dst":"192.0.2.0/31","dev":"eth1","protocol":"kernel"}]`))
+	if err != nil {
+		t.Fatalf("ParseLinuxIPRoute() error = %v", err)
+	}
+	route := routeByPrefix(routes, "192.0.2.0/31")
+	if route == nil || route.Protocol != "connected" {
+		t.Fatalf("route = %#v", route)
+	}
+}
+
 func TestParseCEOSRoutes(t *testing.T) {
 	data := []byte(`{
 	  "vrfs": {"default": {"routes": {
@@ -72,6 +83,10 @@ func TestParseCEOSRoutes(t *testing.T) {
 	if got, want := route.NextHops, []NormalizedFIBNextHop{{Address: "192.0.2.1", Interface: "Ethernet1"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("next-hops = %#v, want %#v", got, want)
 	}
+	connected := routeByPrefix(routes, "198.51.100.0/31")
+	if connected == nil || connected.Protocol != "connected" {
+		t.Fatalf("connected route = %#v", connected)
+	}
 }
 
 func TestParseSRLinuxRoutes(t *testing.T) {
@@ -101,6 +116,38 @@ func TestParseSRLinuxRoutes(t *testing.T) {
 	}
 	if got, want := route.NextHops, []NormalizedFIBNextHop{{Address: "192.0.2.1", Interface: "ethernet-1/1.0"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("next-hops = %#v, want %#v", got, want)
+	}
+	connected := routeByPrefix(routes, "198.51.100.0/31")
+	if connected == nil || connected.Protocol != "connected" {
+		t.Fatalf("connected route = %#v", connected)
+	}
+}
+
+func TestComparableRoutesIncludesConnectedClasses(t *testing.T) {
+	topo := &model.Topology{
+		Nodes: []model.Node{
+			{Name: "r1", Kind: model.KindFRR, Interfaces: []model.Interface{
+				{Name: "lo", Address: "10.255.0.1/32"},
+				{Name: "eth1", Address: "192.0.2.1/31"},
+			}},
+			{Name: "r2", Kind: model.KindFRR, Interfaces: []model.Interface{{Name: "eth1", Address: "192.0.2.0/31"}}},
+		},
+		Links: []model.Link{{Name: "r1-r2", A: "r1", B: "r2", AIntf: "eth1", BIntf: "eth1"}},
+	}
+	routes := []NormalizedFIBRoute{
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "192.0.2.0/31", Protocol: "connected", NextHops: []NormalizedFIBNextHop{{Interface: "eth1"}}},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "10.255.0.1/32", Protocol: "kernel", NextHops: []NormalizedFIBNextHop{{Interface: "lo"}}},
+		{Node: "r1", VRF: "default", AFI: "ipv4", Prefix: "203.0.113.1/32", Protocol: "kernel", NextHops: []NormalizedFIBNextHop{{Interface: "dummy0"}}},
+	}
+	filtered := ComparableRoutes(topo, routes, Options{})
+	if len(filtered) != 2 {
+		t.Fatalf("filtered routes = %#v", filtered)
+	}
+	if route := routeByPrefix(filtered, "192.0.2.0/31"); route == nil || route.ConnectedClass != model.ConnectedRouteClassLink {
+		t.Fatalf("link route = %#v", route)
+	}
+	if route := routeByPrefix(filtered, "10.255.0.1/32"); route == nil || route.ConnectedClass != model.ConnectedRouteClassLoopback {
+		t.Fatalf("loopback route = %#v", route)
 	}
 }
 
@@ -159,11 +206,14 @@ func TestCollectRejectsUnsupportedNodes(t *testing.T) {
 func TestCollectFRRKernelRoutes(t *testing.T) {
 	runner := fakeRunner{fn: func(name string, args ...string) ([]byte, error) {
 		got := name + " " + strings.Join(args, " ")
-		want := "docker exec -i clab-test-r1 ip -j route show table main"
-		if got != want {
+		switch got {
+		case "docker exec -i clab-test-r1 ip -j route show table main":
+			return []byte(`[{"dst":"10.0.0.0/24","gateway":"192.0.2.1","dev":"eth1","protocol":"bgp"}]`), nil
+		case "docker exec -i clab-test-r1 ip -j route show table local":
+			return []byte(`[]`), nil
+		default:
 			return nil, errors.New("unexpected command: " + got)
 		}
-		return []byte(`[{"dst":"10.0.0.0/24","gateway":"192.0.2.1","dev":"eth1","protocol":"bgp"}]`), nil
 	}}
 	routes, err := Collect(context.Background(), runner, []model.Node{{Name: "r1", Kind: model.KindFRR, ContainerName: "clab-test-r1"}}, Options{})
 	if err != nil {
@@ -180,6 +230,8 @@ func TestCollectAllSupportedKinds(t *testing.T) {
 		switch {
 		case cmd == "docker exec -i frr1 ip -j route show table main":
 			return []byte(`[{"dst":"10.0.0.0/24","gateway":"192.0.2.1","dev":"eth1","protocol":"bgp"}]`), nil
+		case cmd == "docker exec -i frr1 ip -j route show table local":
+			return []byte(`[]`), nil
 		case cmd == "docker exec -i ceos1 Cli -p 15 -c show ip route vrf default | json":
 			return []byte(`{"vrfs":{"default":{"routes":{"10.0.1.0/24":{"kernelProgrammed":true,"routeType":"eBGP","vias":[{"nexthopAddr":"192.0.2.2","interface":"Ethernet1"}]}}}}}`), nil
 		case strings.HasPrefix(cmd, "script -q /dev/null -c docker exec -it 'srl1' sr_cli"):

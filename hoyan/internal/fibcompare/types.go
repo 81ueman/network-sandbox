@@ -9,15 +9,16 @@ import (
 )
 
 type NormalizedFIBRoute struct {
-	Node       string                 `json:"node"`
-	VRF        string                 `json:"vrf"`
-	AFI        string                 `json:"afi"`
-	Prefix     string                 `json:"prefix"`
-	NextHops   []NormalizedFIBNextHop `json:"next_hops,omitempty"`
-	Protocol   string                 `json:"protocol,omitempty"`
-	Preference int                    `json:"preference,omitempty"`
-	Metric     int                    `json:"metric,omitempty"`
-	Installed  bool                   `json:"installed"`
+	Node           string                    `json:"node"`
+	VRF            string                    `json:"vrf"`
+	AFI            string                    `json:"afi"`
+	Prefix         string                    `json:"prefix"`
+	NextHops       []NormalizedFIBNextHop    `json:"next_hops,omitempty"`
+	Protocol       string                    `json:"protocol,omitempty"`
+	ConnectedClass model.ConnectedRouteClass `json:"connected_class,omitempty"`
+	Preference     int                       `json:"preference,omitempty"`
+	Metric         int                       `json:"metric,omitempty"`
+	Installed      bool                      `json:"installed"`
 }
 
 type NormalizedFIBNextHop struct {
