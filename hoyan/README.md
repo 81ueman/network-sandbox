@@ -89,12 +89,14 @@ go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
 go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protocol tcp
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --format json
+go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --show-conditions
 ```
 
-The RIB view includes route attributes, provenance, condition, and selected
-condition. The FIB view includes next-hop, rank, equivalent-route group, path,
-cost, and install condition. Use `--format json` when feeding the output to
-`jq` or Codex.
+The default table views keep symbolic conditions hidden so route and prefix
+splits stay readable. Add `--show-conditions` to `model rib`, `model fib`,
+`model symbolic-packet`, or `model symbolic-route` when you need route
+existence, selected-route, install, or reachability conditions. JSON output
+still includes condition fields for `jq` or Codex.
 
 The `prefix-classes` view shows the PrefixUniverse classes derived from
 advertised route prefixes, prefix-list predicates, policy destination prefixes,

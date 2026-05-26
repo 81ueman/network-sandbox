@@ -31,6 +31,7 @@ type modelInspectOptions struct {
 	protocol     string
 	dstPort      int
 	strictConfig bool
+	showCond     bool
 }
 
 type prefixClassInspectRow struct {
@@ -237,6 +238,7 @@ func NewModelSymbolicPacketCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.to, "to", "", "destination IP address")
 	cmd.Flags().StringVar(&opts.protocol, "protocol", "tcp", "packet protocol")
 	cmd.Flags().IntVar(&opts.dstPort, "dst-port", 0, "destination transport port")
+	cmd.Flags().BoolVar(&opts.showCond, "show-conditions", false, "show symbolic conditions in table output")
 	return cmd
 }
 
@@ -259,6 +261,7 @@ func NewModelSymbolicRouteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
 	cmd.Flags().StringVar(&opts.from, "from", "", "source node")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "destination prefix")
+	cmd.Flags().BoolVar(&opts.showCond, "show-conditions", false, "show symbolic conditions in table output")
 	return cmd
 }
 
@@ -268,6 +271,7 @@ func addModelCommonFlags(cmd *cobra.Command, opts *modelInspectOptions) {
 	cmd.Flags().StringVar(&opts.node, "node", "", "node name filter")
 	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "prefix filter")
 	cmd.Flags().StringVar(&opts.format, "format", modelFormatTable, "output format: table or json")
+	cmd.Flags().BoolVar(&opts.showCond, "show-conditions", false, "show symbolic conditions in table output")
 }
 
 func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) error {
@@ -286,7 +290,7 @@ func runModelRIB(_ context.Context, opts modelInspectOptions, out io.Writer) err
 	rows := collectRIBRows(graph, nodes, prefix)
 	switch opts.format {
 	case modelFormatTable:
-		return writeRIBTable(out, rows)
+		return writeRIBTable(out, rows, opts.showCond)
 	case modelFormatJSON:
 		return writeJSON(out, rows)
 	default:
@@ -310,7 +314,7 @@ func runModelFIB(_ context.Context, opts modelInspectOptions, out io.Writer) err
 	rows := collectFIBRows(graph, nodes, prefix)
 	switch opts.format {
 	case modelFormatTable:
-		return writeFIBTable(out, rows)
+		return writeFIBTable(out, rows, opts.showCond)
 	case modelFormatJSON:
 		return writeJSON(out, rows)
 	default:
@@ -370,7 +374,7 @@ func runModelSymbolicPacket(_ context.Context, opts modelInspectOptions, out io.
 	result := buildSymbolicPacketInspect(opts, graph.SymbolicPacketReachabilitySpec(opts.from, opts.to, spec))
 	switch opts.format {
 	case modelFormatTable:
-		return writeSymbolicPacketTable(out, result)
+		return writeSymbolicPacketTable(out, result, opts.showCond)
 	case modelFormatJSON:
 		return writeJSON(out, result)
 	default:
@@ -411,7 +415,7 @@ func runModelSymbolicRoute(_ context.Context, opts modelInspectOptions, out io.W
 	results := buildSymbolicRouteClassInspects(opts.from, prefix, universe, filter, graph.SymbolicRouteReachability(opts.from, prefix))
 	switch opts.format {
 	case modelFormatTable:
-		return writeSymbolicRouteTable(out, results)
+		return writeSymbolicRouteTable(out, results, opts.showCond)
 	case modelFormatJSON:
 		return writeJSON(out, results)
 	default:
@@ -674,11 +678,15 @@ func writePrefixClassTable(out io.Writer, rows []prefixClassInspectRow) error {
 	return tw.Flush()
 }
 
-func writeRIBTable(out io.Writer, rows []ribInspectRow) error {
+func writeRIBTable(out io.Writer, rows []ribInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
+	if showCond {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH\tCONDITION\tSELECTED")
+	} else {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tORIGIN\tFROM\tAS-PATH\tLOCAL-PREF\tMED\tORIGIN-CODE\tIBGP\tINVALID\tPATH")
+	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%t\t%t\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%t\t%t\t%s",
 			row.Node,
 			row.Prefix,
 			row.NextHopNode,
@@ -691,18 +699,24 @@ func writeRIBTable(out io.Writer, rows []ribInspectRow) error {
 			row.LearnedIBGP,
 			row.Invalid,
 			strings.Join(row.PathNodes, "->"),
-			row.Condition,
-			row.SelectedCondition,
 		)
+		if showCond {
+			fmt.Fprintf(tw, "\t%s\t%s", row.Condition, row.SelectedCondition)
+		}
+		fmt.Fprintln(tw)
 	}
 	return tw.Flush()
 }
 
-func writeFIBTable(out io.Writer, rows []fibInspectRow) error {
+func writeFIBTable(out io.Writer, rows []fibInspectRow, showCond bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
+	if showCond {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS\tCONDITION")
+	} else {
+		fmt.Fprintln(tw, "NODE\tPREFIX\tNEXT-HOP\tRANK\tGROUP\tEQUIV\tCOST\tPATH\tLINKS")
+	}
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%t\t%d\t%s\t%s",
 			row.Node,
 			row.Prefix,
 			row.NextHop,
@@ -712,33 +726,46 @@ func writeFIBTable(out io.Writer, rows []fibInspectRow) error {
 			row.Cost,
 			strings.Join(row.PathNodes, "->"),
 			strings.Join(row.PathLinks, "->"),
-			row.Condition,
 		)
+		if showCond {
+			fmt.Fprintf(tw, "\t%s", row.Condition)
+		}
+		fmt.Fprintln(tw)
 	}
 	return tw.Flush()
 }
 
-func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error {
+func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect, showCond bool) error {
 	fmt.Fprintf(out, "from: %s\n", result.From)
 	fmt.Fprintf(out, "to: %s\n", result.To)
 	fmt.Fprintf(out, "protocol: %s\n", result.Protocol)
-	fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
-	fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+	if showCond {
+		fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
+		fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+	}
 	if result.Reason != "" {
 		fmt.Fprintf(out, "reason: %s\n", result.Reason)
 	}
 	if len(result.UnreachableReasons) > 0 {
 		fmt.Fprintln(out, "blocked/unreachable reasons:")
 		rtw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(rtw, "KIND\tNODE\tLINK\tINTERFACE\tPOLICY\tCONDITION\tPATH\tMESSAGE")
+		if showCond {
+			fmt.Fprintln(rtw, "KIND\tNODE\tLINK\tINTERFACE\tPOLICY\tCONDITION\tPATH\tMESSAGE")
+		} else {
+			fmt.Fprintln(rtw, "KIND\tNODE\tLINK\tINTERFACE\tPOLICY\tPATH\tMESSAGE")
+		}
 		for _, reason := range result.UnreachableReasons {
-			fmt.Fprintf(rtw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(rtw, "%s\t%s\t%s\t%s\t%s",
 				reason.Kind,
 				reason.Node,
 				reason.Link,
 				reason.Interface,
 				reason.PolicyName,
-				reason.Condition,
+			)
+			if showCond {
+				fmt.Fprintf(rtw, "\t%s", reason.Condition)
+			}
+			fmt.Fprintf(rtw, "\t%s\t%s\n",
 				strings.Join(reason.PathNodes, "->"),
 				reason.Message,
 			)
@@ -748,7 +775,11 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 		}
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "PATH\tCOST\tCONDITION\tHOPS")
+	if showCond {
+		fmt.Fprintln(tw, "PATH\tCOST\tCONDITION\tHOPS")
+	} else {
+		fmt.Fprintln(tw, "PATH\tCOST\tHOPS")
+	}
 	for _, path := range result.Paths {
 		var hops []string
 		for _, state := range path.States {
@@ -758,12 +789,14 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 			}
 			hops = append(hops, hop)
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%d",
 			strings.Join(path.PathNodes, "->"),
 			path.Cost,
-			path.Condition,
-			strings.Join(hops, "->"),
 		)
+		if showCond {
+			fmt.Fprintf(tw, "\t%s", path.Condition)
+		}
+		fmt.Fprintf(tw, "\t%s\n", strings.Join(hops, "->"))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -773,12 +806,20 @@ func writeSymbolicPacketTable(out io.Writer, result symbolicPacketInspect) error
 	}
 	fmt.Fprintln(out, "blocked:")
 	blockedTW := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(blockedTW, "PATH\tCOST\tCONDITION\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+	if showCond {
+		fmt.Fprintln(blockedTW, "PATH\tCOST\tCONDITION\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+	} else {
+		fmt.Fprintln(blockedTW, "PATH\tCOST\tPOLICY\tNODE\tINTERFACE\tSTAGE\tSOURCE\tREASON")
+	}
 	for _, path := range result.Blocked {
-		fmt.Fprintf(blockedTW, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(blockedTW, "%s\t%d",
 			strings.Join(path.PathNodes, "->"),
 			path.Cost,
-			path.Condition,
+		)
+		if showCond {
+			fmt.Fprintf(blockedTW, "\t%s", path.Condition)
+		}
+		fmt.Fprintf(blockedTW, "\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			path.Policy,
 			path.Node,
 			path.Interface,
@@ -808,7 +849,7 @@ func formatPolicySource(src model.PolicySource) string {
 	return strings.Join(parts, " ")
 }
 
-func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect) error {
+func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect, showCond bool) error {
 	for i, result := range results {
 		if i > 0 {
 			fmt.Fprintln(out)
@@ -820,20 +861,29 @@ func writeSymbolicRouteTable(out io.Writer, results []symbolicRouteInspect) erro
 		if len(result.MatchedPredicates) > 0 {
 			fmt.Fprintf(out, "matched predicates: %s\n", strings.Join(result.MatchedPredicates, ", "))
 		}
-		fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
-		fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+		if showCond {
+			fmt.Fprintf(out, "reachable: %s\n", result.Reachable)
+			fmt.Fprintf(out, "unreachable: %s\n", result.Unreachable)
+		}
 		if result.Reason != "" {
 			fmt.Fprintf(out, "reason: %s\n", result.Reason)
 		}
 		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "PATH\tCOST\tLINKS\tCONDITION")
+		if showCond {
+			fmt.Fprintln(tw, "PATH\tCOST\tLINKS\tCONDITION")
+		} else {
+			fmt.Fprintln(tw, "PATH\tCOST\tLINKS")
+		}
 		for _, path := range result.Paths {
-			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%d\t%s",
 				strings.Join(path.PathNodes, "->"),
 				path.Cost,
 				strings.Join(path.PathLinks, "->"),
-				path.Condition,
 			)
+			if showCond {
+				fmt.Fprintf(tw, "\t%s", path.Condition)
+			}
+			fmt.Fprintln(tw)
 		}
 		if err := tw.Flush(); err != nil {
 			return err

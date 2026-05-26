@@ -315,7 +315,32 @@ func TestModelFIBCommandOutputsTable(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"NODE", "PREFIX", "NEXT-HOP", "RANK", "GROUP", "EQUIV", "CONDITION", "bj-edge1", "10.4.0.0/16"} {
+	for _, want := range []string{"NODE", "PREFIX", "NEXT-HOP", "RANK", "GROUP", "EQUIV", "bj-edge1", "10.4.0.0/16"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "CONDITION") || strings.Contains(got, "link:") || strings.Contains(got, "node:") {
+		t.Fatalf("default table output should hide conditions:\n%s", got)
+	}
+}
+
+func TestModelFIBCommandShowsConditionsWhenRequested(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelFIBCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--node", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--show-conditions",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"CONDITION", "link:", "node:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
@@ -536,7 +561,34 @@ func TestModelSymbolicRouteCommandOutputsClassTable(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"class: pc-", "space:", "matched predicates:", "reachable:", "PATH"} {
+	for _, want := range []string{"class: pc-", "space:", "matched predicates:", "PATH"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+	for _, hidden := range []string{"reachable:", "unreachable:", "CONDITION", "link:", "node:"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("default table output should hide %q:\n%s", hidden, got)
+		}
+	}
+}
+
+func TestModelSymbolicRouteCommandShowsConditionsWhenRequested(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewModelSymbolicRouteCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(ioDiscard{})
+	cmd.SetArgs([]string{
+		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--from", "bj-edge1",
+		"--prefix", "10.4.0.0/16",
+		"--show-conditions",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"reachable:", "unreachable:", "CONDITION", "link:", "node:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
