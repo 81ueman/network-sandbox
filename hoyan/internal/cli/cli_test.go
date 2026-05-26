@@ -352,8 +352,8 @@ func TestVerifyCommandOutputsStructuredPrefixClassJSON(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
-		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"),
 		"--prefix-classes",
 		"--no-collapse",
 		"--format", "json",
@@ -438,8 +438,8 @@ func TestVerifyCommandPrefixClassThresholdFails(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
-		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"),
 		"--prefix-classes",
 		"--max-prefix-classes", "1",
 	})
@@ -461,8 +461,8 @@ func TestVerifyCommandShowsPrefixUniverseStats(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
-		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"),
 		"--prefix-classes",
 		"--show-prefix-universe-stats",
 	})
@@ -483,8 +483,8 @@ func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
 	collapsedCmd.SetOut(&collapsed)
 	collapsedCmd.SetErr(ioDiscard{})
 	collapsedCmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
-		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"),
 		"--prefix-classes",
 		"--format", "json",
 	})
@@ -495,8 +495,8 @@ func TestVerifyCommandCollapsesPrefixClassOutputByDefault(t *testing.T) {
 	rawCmd.SetOut(&raw)
 	rawCmd.SetErr(ioDiscard{})
 	rawCmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
-		"--queries", filepath.Join("..", "..", "intent", "queries.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
+		"--queries", filepath.Join("..", "..", "labs", "base-wan", "intent", "queries.yml"),
 		"--prefix-classes",
 		"--no-collapse",
 		"--format", "json",
@@ -528,7 +528,7 @@ func TestModelRIBCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--format", "json",
@@ -559,7 +559,7 @@ func TestModelRIBCommandFiltersProtocolArgument(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"connected",
 		"--format", "json",
@@ -592,7 +592,7 @@ func TestModelRIBCommandUsesRouteSourceTableForNonBGPProtocol(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"connected",
 	})
@@ -631,7 +631,7 @@ func TestModelFIBCommandOutputsTable(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 	})
@@ -655,7 +655,7 @@ func TestModelFIBCommandShowsConditionsWhenRequested(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--show-conditions",
@@ -677,7 +677,7 @@ func TestModelFIBCommandOutputsECMPMetadataJSON(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--format", "json",
@@ -706,7 +706,7 @@ func TestModelFIBCommandOutputsDiscardJSON(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "hz-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--format", "json",
@@ -732,7 +732,7 @@ func TestModelPrefixClassesCommandOutputsJSONAndFiltersPrefix(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--prefix", "10.4.0.0/16",
 		"--format", "json",
 	})
@@ -782,7 +782,7 @@ func TestModelPrefixClassesCommandOutputsTable(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--prefix", "10.4.1.10/32",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -805,7 +805,7 @@ func TestModelPrefixClassesCommandShowsPredicatesWhenRequested(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--prefix", "10.4.1.10/32",
 		"--show-predicates",
 	})
@@ -826,7 +826,7 @@ func TestModelPrefixClassesCommandSummary(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--prefix", "10.4.0.0/16",
 		"--summary",
 	})
@@ -846,7 +846,7 @@ func TestModelPrefixClassesCommandThresholdFails(t *testing.T) {
 	cmd.SetOut(ioDiscard{})
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--max-prefix-classes", "1",
 	})
 	err := cmd.Execute()
@@ -863,7 +863,7 @@ func TestModelCommandRejectsUnknownNode(t *testing.T) {
 	cmd.SetOut(ioDiscard{})
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--node", "missing-node",
 	})
 	err := cmd.Execute()
@@ -878,7 +878,7 @@ func TestModelSymbolicPacketCommandOutputsJSON(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--from", "cust-bj",
 		"--to", "10.4.1.10",
 		"--protocol", "tcp",
@@ -921,7 +921,7 @@ func TestModelSymbolicRouteCommandOutputsJSON(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--from", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--format", "json",
@@ -965,7 +965,7 @@ func TestModelSymbolicRouteCommandOutputsClassTable(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--from", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 	})
@@ -991,7 +991,7 @@ func TestModelSymbolicRouteCommandShowsPredicatesWhenRequested(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--from", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--show-predicates",
@@ -1011,7 +1011,7 @@ func TestModelSymbolicRouteCommandShowsConditionsWhenRequested(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(ioDiscard{})
 	cmd.SetArgs([]string{
-		"--topology", filepath.Join("..", "..", "hoyan.clab.yml"),
+		"--topology", filepath.Join("..", "..", "labs", "base-wan", "hoyan.clab.yml"),
 		"--from", "bj-edge1",
 		"--prefix", "10.4.0.0/16",
 		"--show-conditions",

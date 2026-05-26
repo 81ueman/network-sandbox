@@ -4,20 +4,19 @@ This directory contains a medium-size WAN sandbox inspired by the Hoyan
 SIGCOMM 2020 paper. The lab uses containerlab for the runnable topology and a
 Go verifier for offline route, packet, and failure reachability checks.
 
-The verifier treats `hoyan.clab.yml` plus the referenced device configs as the
-source of truth. `hoyan.clab.yml` provides containerlab inventory and physical
-links; FRR, cEOS, and SR Linux startup configs provide interfaces, BGP ASN,
-router-id, neighbors, and advertised prefixes. Containers use containerlab's
-default `clab-<lab-name>-<node-name>` names. The verifier builds a Hoyan-style
-network model from those configs: each device has control-plane and data-plane
-pipelines made of ingress policy, route selector, and egress policy. BGP route
-updates populate an extended RIB with topology conditions, and the FIB is
-derived from the ranked RIB rules.
+The verifier treats the selected lab directory as the source of truth.
+`labs/base-wan` is the default lab. Each lab's `hoyan.clab.yml` provides
+containerlab inventory and physical links; its FRR, cEOS, and SR Linux startup
+configs provide interfaces, BGP ASN, router-id, neighbors, and advertised
+prefixes. Containers use containerlab's default `clab-<lab-name>-<node-name>`
+names. The verifier builds a Hoyan-style network model from those configs: each
+device has control-plane and data-plane pipelines made of ingress policy, route
+selector, and egress policy. BGP route updates populate an extended RIB with
+topology conditions, and the FIB is derived from the ranked RIB rules.
 
 ## Scenario Labs
 
-Hoyan can run one top-level compatibility lab or scenario labs under
-`labs/<name>/`. A scenario lab contains:
+Hoyan stores runnable inputs under `labs/<name>/`. A scenario lab contains:
 
 ```text
 labs/<name>/
@@ -42,6 +41,7 @@ names or Docker network.
 Use `--lab` to select a scenario. When `--lab` is set, commands default to
 `<lab>/hoyan.clab.yml` and, for query-aware commands, `<lab>/intent/queries.yml`.
 Explicit `--topology` or `--queries` flags still override those defaults.
+Without `--lab`, commands use `labs/base-wan`.
 
 ```bash
 go run ./cmd/hoyan labs list
@@ -77,7 +77,7 @@ Strict config errors include the vendor, config file, line number, raw
 statement, and unsupported reason so CI logs point at the config syntax that
 needs parser support or an intentional non-strict run.
 
-Checks are defined in `intent/queries.yml`:
+Checks are defined in each lab's `intent/queries.yml`:
 
 - route reachability to advertised prefixes
 - packet reachability to host prefixes
@@ -148,7 +148,7 @@ same device state on every run:
 
 ```bash
 go run ./cmd/hoyan live snapshot --lab labs/base-wan --output labs/base-wan/snapshots/latest.json
-go run ./cmd/hoyan live snapshot --topology hoyan.clab.yml --output live-state.json --raw-dir snapshots/raw
+go run ./cmd/hoyan live snapshot --topology labs/base-wan/hoyan.clab.yml --output labs/base-wan/snapshots/live-state.json --raw-dir labs/base-wan/snapshots/raw
 ```
 
 The snapshot includes the topology hash, referenced config file hashes, the
@@ -186,7 +186,7 @@ go run ./cmd/hoyan model fib --node bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16
 go run ./cmd/hoyan model prefix-classes --prefix 10.4.0.0/16 --show-predicates
 go run ./cmd/hoyan model packet-classes --prefix 10.4.0.0/16 --show-predicates
-go run ./cmd/hoyan model packet-classes --queries intent/queries.yml --prefix 10.4.0.0/16 --show-predicates
+go run ./cmd/hoyan model packet-classes --queries labs/base-wan/intent/queries.yml --prefix 10.4.0.0/16 --show-predicates
 go run ./cmd/hoyan model symbolic-packet --from cust-bj --to 10.4.1.10 --protocol tcp
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --format json
 go run ./cmd/hoyan model symbolic-route --from bj-edge1 --prefix 10.4.0.0/16 --show-conditions
@@ -275,20 +275,20 @@ When running Hoyan from multiple git worktrees, render an isolated topology per
 worktree first. The suffix is appended to the lab name and Docker management
 network name, derives a separate `172.86.<n>.0/24` management subnet, keeps
 containerlab's default naming, and keeps the relative config paths valid from
-this directory. Keep the generated topology in the `hoyan` directory so
-startup-config handling for cEOS and SR Linux matches the source topology:
+the selected lab directory. Keep the generated topology in the lab directory
+when you want relative config paths to stay readable:
 
 ```bash
-go run ./cmd/hoyan render-topology --suffix issue-21 --output hoyan.issue-21.clab.yml
+go run ./cmd/hoyan render-topology --lab base-wan --suffix issue-21 --output labs/base-wan/hoyan.issue-21.clab.yml
 ```
 
 For `-suffix issue-21`, containers use containerlab's default names such as
-`clab-hoyan-wan-issue-21-bj-edge1`. Use the generated topology with live
+`clab-hoyan-base-wan-issue-21-bj-edge1`. Use the generated topology with live
 commands:
 
 ```bash
-go run ./cmd/hoyan live-check --topology hoyan.issue-21.clab.yml
-go run ./cmd/hoyan rib-compare --topology hoyan.issue-21.clab.yml
+go run ./cmd/hoyan live-check --topology labs/base-wan/hoyan.issue-21.clab.yml
+go run ./cmd/hoyan rib-compare --topology labs/base-wan/hoyan.issue-21.clab.yml
 ```
 
 To run the full live integration check, including deploy, BGP convergence wait,
@@ -473,9 +473,9 @@ containerlab destroy --cleanup
 Useful FRR checks:
 
 ```bash
-docker exec -it clab-hoyan-wan-bj-edge1 vtysh -c "show ip bgp summary"
-docker exec -it clab-hoyan-wan-bj-edge1 vtysh -c "show ip route bgp"
-docker exec -it clab-hoyan-wan-cust-bj ping -c 3 10.4.1.10
+docker exec -it clab-hoyan-base-wan-bj-edge1 vtysh -c "show ip bgp summary"
+docker exec -it clab-hoyan-base-wan-bj-edge1 vtysh -c "show ip route bgp"
+docker exec -it clab-hoyan-base-wan-cust-bj ping -c 3 10.4.1.10
 ```
 
 ## Z3

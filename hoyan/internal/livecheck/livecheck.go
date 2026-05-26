@@ -41,7 +41,7 @@ type HashPolicy string
 
 func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error) {
 	if opts.Topology == "" {
-		opts.Topology = "hoyan.clab.yml"
+		opts.Topology = "labs/base-wan/hoyan.clab.yml"
 	}
 	if opts.Timeout == 0 {
 		opts.Timeout = 5 * time.Minute
@@ -68,7 +68,7 @@ func Run(ctx context.Context, opts Options, runner ribcompare.Runner) (err error
 	}
 	queriesPath := opts.Queries
 	if queriesPath == "" {
-		queriesPath = "intent/queries.yml"
+		queriesPath = "labs/base-wan/intent/queries.yml"
 	}
 	queries, err := model.LoadQueries(queriesPath)
 	if err != nil {

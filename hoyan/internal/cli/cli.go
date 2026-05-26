@@ -621,12 +621,16 @@ func NewRenderTopologyCommand() *cobra.Command {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 			}
+			if err := resolveLabInputs(cmd, opts.labPath, &opts.topologyPath, nil); err != nil {
+				return err
+			}
 			if err := runRenderTopology(opts, cmd.OutOrStdout()); err != nil {
 				return ExitError{Code: 2, Err: err}
 			}
 			return nil
 		},
 	}
+	addLabFlag(cmd, &opts.labPath)
 	addTopologyFlag(cmd, &opts.topologyPath, "source containerlab topology YAML")
 	cmd.Flags().StringVar(&opts.outputPath, "output", "-", "generated topology path, or - for stdout")
 	cmd.Flags().StringVar(&opts.suffix, "suffix", "", "isolation suffix appended to the lab name")
@@ -637,6 +641,7 @@ func NewRenderTopologyCommand() *cobra.Command {
 }
 
 type renderTopologyOptions struct {
+	labPath      string
 	topologyPath string
 	outputPath   string
 	suffix       string
